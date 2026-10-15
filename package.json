@@ -1,0 +1,25 @@
+{
+  "name": "quarryconnect-e2e",
+  "version": "1.0.0",
+  "private": true,
+  "description": "End-to-end browser tests for QuarryConnect Admin and Identity, runnable against local, dev and prod.",
+  "scripts": {
+    "test": "playwright test",
+    "test:local": "cross-env TEST_ENV=local playwright test",
+    "test:dev": "cross-env TEST_ENV=dev playwright test",
+    "test:prod": "cross-env TEST_ENV=prod playwright test",
+    "test:smoke": "playwright test --grep @smoke",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "report": "node scripts/open-latest-report.mjs",
+    "install:browsers": "playwright install chromium",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^22.0.0",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.4.5",
+    "typescript": "^5.6.0"
+  }
+}
