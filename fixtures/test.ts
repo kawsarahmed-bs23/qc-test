@@ -30,7 +30,7 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
       const page = await context.newPage();
       await page.goto('/hosts');
 
-      const link = page.locator('#hosts-table a.fw-medium', { hasText: env.hostName }).first();
+      const link = page.locator('#hosts-table a[href^="/hosts/"]', { hasText: env.hostName }).first();
       await expect(link, `Host '${env.hostName}' (HOST_NAME) must be registered in HOST_MASTER`).toBeVisible();
 
       const href = (await link.getAttribute('href')) ?? '';

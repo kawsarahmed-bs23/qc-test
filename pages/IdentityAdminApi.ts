@@ -37,6 +37,10 @@ export class IdentityAdminApi {
     return this.send<T>('PUT', path, body);
   }
 
+  delete<T = any>(path: string): Promise<AdminApiResult<T>> {
+    return this.send<T>('DELETE', path);
+  }
+
   private async send<T>(method: string, path: string, body?: unknown): Promise<AdminApiResult<T>> {
     const response = await this.request.fetch(`${env.identityUrl}${ADMIN_API_ROOT}${path}`, {
       method,

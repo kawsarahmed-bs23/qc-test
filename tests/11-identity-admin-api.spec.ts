@@ -11,6 +11,7 @@ const WEB_CLIENT: OidcClient = { clientId: 'e2e-qc738.web', redirectUri: 'http:/
 const MOBILE_CLIENT_ID = 'e2e-qc738.mobile';
 const BRANDING = { displayName: 'E2E QC-738 Host', primaryColor: '#7A1F2B', accentColor: '#F2B134' };
 const DEACTIVATION_USER = 'e2e.qc738.deactivate@quarryconnect.test';
+const QC739_MEMBER = 'e2e.qc739.member@quarryconnect.test';
 const PKCE = { code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', code_challenge_method: 'S256' };
 const SECRET_FIELDS = /passwordHash|securityStamp|clientSecret|"secret"/i;
 
@@ -283,6 +284,111 @@ test.describe('Identity administration API (QC-738)', () => {
 
       const again = await mobile.passwordGrant(DEACTIVATION_USER, env.driver!.password);
       expect(again.status).toBe(400);
+    });
+  });
+
+  test.describe('host user mappings (QC-739)', { tag: '@write' }, () => {
+    test.describe.configure({ mode: 'serial' });
+    test.skip(!canUseIdentityDb(), "Needs Identity's local database to seed the throwaway member and remove the e2e-qc739 hosts, which the API cannot delete once a user was mapped.");
+
+    const hosts: Record<'a' | 'b', number> = { a: 0, b: 0 };
+    let userId = '';
+
+    test.beforeAll(() => {
+      runIdentitySeedScript('identity-qc739.remove.sql');
+      runIdentitySeedScript('identity-qc739-member.apply.sql');
+      userId = queryIdentityDb(`SELECT Id FROM Users WHERE Email = ${sqlText(QC739_MEMBER)}`)!;
+    });
+
+    test.afterAll(() => {
+      runIdentitySeedScript('identity-qc739.remove.sql');
+    });
+
+    test('IDADMIN-16 users are found by part of their email, the page size is capped and no password data comes back', async ({ request }) => {
+      const api = await IdentityAdminApi.signIn(request);
+
+      const found = await api.get('/users?search=e2e.qc739.member');
+      expect(found.status).toBe(200);
+      expect(found.body).toEqual([{ userId, email: QC739_MEMBER, firstName: 'E2E', lastName: 'QC-739 Member', isActive: true }]);
+      expect(found.text).not.toMatch(SECRET_FIELDS);
+
+      expect((await api.get('/users?take=500')).body.length).toBeLessThanOrEqual(50);
+      expect((await api.get(`/users?search=${'x'.repeat(300)}`)).status).toBe(400);
+    });
+
+    test('IDADMIN-17 a mapping is created, then updated, and a bad role, organisation, user or host is refused', async ({ request }) => {
+      const api = await IdentityAdminApi.signIn(request);
+      for (const key of ['a', 'b'] as const) {
+        const created = await api.post('/hosts', { hostKey: `e2e-qc739-${key}`, displayName: `E2E QC-739 ${key.toUpperCase()}` });
+        expect(created.status, created.text).toBe(201);
+        hosts[key] = created.body.hostId;
+      }
+
+      const mapping = `/hosts/${hosts.a}/users/${userId}`;
+      const created = await api.put(mapping, { role: 'HostUser', organisationId: 30 });
+      expect(created.status, created.text).toBe(201);
+      expect(created.body).toMatchObject({ userId, role: 'HostUser', organisationId: 30, isHostAdmin: false });
+
+      const updated = await api.put(mapping, { role: 'Driver', organisationId: 30, isHostAdmin: true });
+      expect(updated.status).toBe(200);
+      expect(updated.body).toMatchObject({ role: 'Driver', isHostAdmin: true });
+
+      expect((await api.put(mapping, { role: 'Admin', organisationId: 30 })).body.errors).toHaveProperty('role');
+      expect((await api.put(mapping, { role: 'Driver' })).body.errors).toHaveProperty('organisationId');
+      expect((await api.put(`/hosts/${hosts.a}/users/no-such-user`, { role: 'Driver', organisationId: 30 })).status).toBe(404);
+      expect((await api.put(`/hosts/2147483647/users/${userId}`, { role: 'Driver', organisationId: 30 })).status).toBe(404);
+    });
+
+    test('IDADMIN-18 a user mapped to two hosts is listed under both, and removing one mapping leaves the other', async ({ request }) => {
+      const api = await IdentityAdminApi.signIn(request);
+      expect((await api.put(`/hosts/${hosts.b}/users/${userId}`, { role: 'HostUser', organisationId: 31 })).status).toBe(201);
+
+      for (const key of ['a', 'b'] as const) {
+        const listed = await api.get(`/hosts/${hosts[key]}/users`);
+        expect(listed.body.map((u: { email: string }) => u.email)).toContain(QC739_MEMBER);
+      }
+
+      const removed = await api.delete(`/hosts/${hosts.a}/users/${userId}`);
+      expect(removed.status, removed.text).toBe(200);
+      expect(removed.body.hosts).toEqual([expect.objectContaining({ hostId: hosts.b, role: 'HostUser', organisationId: 31 })]);
+      expect(removed.body.isActive).toBe(true);
+
+      expect((await api.get(`/hosts/${hosts.a}/users`)).body.map((u: { email: string }) => u.email)).not.toContain(QC739_MEMBER);
+      expect((await api.get(`/hosts/${hosts.b}/users`)).body.map((u: { email: string }) => u.email)).toContain(QC739_MEMBER);
+      expect((await api.delete(`/hosts/${hosts.a}/users/${userId}`)).status).toBe(404);
+    });
+
+    test('IDADMIN-19 deactivating and reactivating the account keeps its host mapping', async ({ request }) => {
+      const api = await IdentityAdminApi.signIn(request);
+
+      const off = await api.post(`/users/${userId}/deactivate`);
+      expect(off.body).toMatchObject({ isActive: false, hosts: [expect.objectContaining({ hostId: hosts.b })] });
+
+      const on = await api.post(`/users/${userId}/reactivate`);
+      expect(on.status).toBe(200);
+      expect(on.body).toMatchObject({ isActive: true, hosts: [expect.objectContaining({ hostId: hosts.b })] });
+      expect((await api.post('/users/no-such-user/reactivate')).status).toBe(404);
+    });
+
+    test('IDADMIN-20 a host that has had users cannot be deleted, an unused one is deleted with its clients, and a deactivated host takes no mappings', async ({ request }) => {
+      const api = await IdentityAdminApi.signIn(request);
+
+      expect((await api.delete(`/hosts/${hosts.a}`)).status).toBe(409);
+      expect((await api.delete(`/hosts/${hosts.b}`)).status).toBe(409);
+
+      const unused = await api.post('/hosts', { hostKey: 'e2e-qc739-c' });
+      expect(unused.status).toBe(201);
+      const client = await api.post(`/hosts/${unused.body.hostId}/clients`, { clientId: 'e2e-qc739.c-web', clientType: 'Host', redirectUris: ['http://localhost:4296/'] });
+      expect(client.status, client.text).toBe(201);
+
+      expect((await api.delete(`/hosts/${unused.body.hostId}`)).status).toBe(200);
+      expect((await api.get(`/hosts/${unused.body.hostId}`)).status).toBe(404);
+      expect(queryIdentityDb("SELECT COUNT(*) FROM Clients WHERE ClientId = 'e2e-qc739.c-web'")).toBe('0');
+
+      expect((await api.post(`/hosts/${hosts.a}/deactivate`)).status).toBe(200);
+      const refused = await api.put(`/hosts/${hosts.a}/users/${userId}`, { role: 'Driver', organisationId: 30 });
+      expect(refused.status).toBe(400);
+      expect(refused.body.errors).toHaveProperty('hostId');
     });
   });
 

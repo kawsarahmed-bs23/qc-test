@@ -7,11 +7,11 @@ export class AdminShell {
 
   constructor(private readonly page: Page) {
     this.heading = page.locator('#page-heading');
-    this.snackBar = page.locator('#status-message');
+    this.snackBar = page.locator('#status-message, [data-status]').first();
     this.profileMenuButton = page.locator('#profile-menu-button');
   }
 
-  nav(name: 'dashboard' | 'hosts' | 'activity'): Locator {
+  nav(name: 'dashboard' | 'hosts' | 'activity' | 'users'): Locator {
     return this.page.locator(`#nav-${name}`);
   }
 
