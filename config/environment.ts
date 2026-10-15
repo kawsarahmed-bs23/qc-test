@@ -20,6 +20,7 @@ export interface TestEnvironment {
   mobileClientId: string | null;
   hostClient: OidcClient | null;
   secondHostClient: OidcClient | null;
+  adminApiClient: ServiceClient | null;
   identitySql: LocalSql | null;
   identityLogDir: string | null;
   allowWrites: boolean;
@@ -40,6 +41,11 @@ export interface LocalSql {
 export interface OidcClient {
   clientId: string;
   redirectUri: string;
+}
+
+export interface ServiceClient {
+  clientId: string;
+  secret: string;
 }
 
 const ENVIRONMENTS: EnvironmentName[] = ['local', 'dev', 'prod'];
@@ -71,6 +77,12 @@ function credentials(emailVar: string, passwordVar: string): Credentials | null 
   const email = process.env[emailVar]?.trim();
   const password = process.env[passwordVar];
   return email && password ? { email, password } : null;
+}
+
+function serviceClient(clientIdVar: string, secretVar: string): ServiceClient | null {
+  const clientId = process.env[clientIdVar]?.trim();
+  const secret = process.env[secretVar]?.trim();
+  return clientId && secret ? { clientId, secret } : null;
 }
 
 function oidcClient(clientIdVar: string, redirectUriVar: string): OidcClient | null {
@@ -112,6 +124,7 @@ export function loadEnvironment(): TestEnvironment {
     mobileClientId: process.env.MOBILE_CLIENT_ID?.trim() || null,
     hostClient: oidcClient('HOST_CLIENT_ID', 'HOST_REDIRECT_URI'),
     secondHostClient: oidcClient('SECOND_HOST_CLIENT_ID', 'SECOND_HOST_REDIRECT_URI'),
+    adminApiClient: serviceClient('ADMIN_API_CLIENT_ID', 'ADMIN_API_CLIENT_SECRET'),
     identityLogDir: name === 'local' && optional('IDENTITY_LOG_DIR') ? path.resolve(__dirname, '..', optional('IDENTITY_LOG_DIR')!) : null,
     identitySql: name === 'local' && sqlServer && identitySqlDatabase ? { server: sqlServer, database: identitySqlDatabase } : null,
     allowWrites: !isProd && flag('ALLOW_WRITES'),

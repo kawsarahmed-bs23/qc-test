@@ -32,6 +32,18 @@ export function canUseIdentityDb(): boolean {
   return env.identitySql !== null;
 }
 
+export function runIdentitySeedScript(fileName: string, variables: Record<string, string> = {}): string {
+  if (!env.identitySql) {
+    throw new Error('LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE are not set, or TEST_ENV is not local.');
+  }
+
+  return execFileSync(
+    'sqlcmd',
+    ['-S', env.identitySql.server, '-d', env.identitySql.database, '-E', '-C', '-I', '-b', '-i', path.join(SEED_DIR, fileName)],
+    { encoding: 'utf8', env: { ...process.env, ...variables } },
+  );
+}
+
 export function queryIdentityDb(query: string): string | null {
   if (!env.identitySql) {
     throw new Error('LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE are not set, or TEST_ENV is not local.');

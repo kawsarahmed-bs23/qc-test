@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { env, type Credentials, type OidcClient } from '../config/environment';
-import { IdentityLoginPage } from './IdentityLoginPage';
+import { escape, IdentityLoginPage } from './IdentityLoginPage';
 import { decodeJwt, type TokenResult } from './PasswordGrantApi';
 
 export const HOST_API_SCOPES = 'openid profile quarryconnect.api';
@@ -21,7 +21,7 @@ export class HostSignInFlow {
 
   async open(): Promise<void> {
     this.page.on('request', (request) => {
-      if (request.url().startsWith(this.client.redirectUri)) {
+      if (!this.callbackUrl && request.url().startsWith(this.client.redirectUri)) {
         this.callbackUrl = request.url();
       }
     });
@@ -57,6 +57,11 @@ export class HostSignInFlow {
   async expectNoAccess(): Promise<void> {
     await expect(this.error).toContainText(NO_HOST_ACCESS);
     await new IdentityLoginPage(this.page).expectVisible();
+  }
+
+  async expectSignInError(error: string): Promise<void> {
+    await expect(this.page).toHaveURL(new RegExp(`^${escape(env.identityUrl)}/Error`, 'i'));
+    await expect(this.page.locator('body')).toContainText(error);
   }
 
   async expectTwoStepEnrolment(): Promise<void> {
