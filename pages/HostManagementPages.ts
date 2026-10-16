@@ -102,6 +102,23 @@ export class HostFeaturesPage {
     await expect(this.save).toBeVisible();
   }
 
+  async openUnreachable(uuid: string): Promise<void> {
+    await this.page.goto(`/hosts/${uuid}/features`);
+    await expect(this.savedCopy).toBeVisible();
+  }
+
+  get savedCopy(): Locator {
+    return this.page.locator('#features-saved-copy');
+  }
+
+  get savedMfa(): Locator {
+    return this.page.locator('#mfa-saved-copy');
+  }
+
+  savedFeature(key: string): Locator {
+    return this.page.locator(`#features-saved-copy [data-saved-feature="${key}"]`);
+  }
+
   feature(key: string): Locator {
     return this.page.locator(`#product-features input[data-feature="${key}"]`);
   }
@@ -145,6 +162,19 @@ export class HostEnvironmentPage {
   async open(uuid: string): Promise<void> {
     await this.page.goto(`/hosts/${uuid}/environment`);
     await expect(this.save).toBeVisible();
+  }
+
+  async openUnreachable(uuid: string): Promise<void> {
+    await this.page.goto(`/hosts/${uuid}/environment`);
+    await expect(this.savedCopy).toBeVisible();
+  }
+
+  get savedCopy(): Locator {
+    return this.page.locator('#environment-saved-copy');
+  }
+
+  rows(): Locator {
+    return this.page.locator('tr[data-key]');
   }
 
   row(key: string): Locator {

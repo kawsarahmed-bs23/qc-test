@@ -22,6 +22,7 @@ export interface TestEnvironment {
   secondHostClient: OidcClient | null;
   adminApiClient: ServiceClient | null;
   identitySql: LocalSql | null;
+  masterSql: LocalSql | null;
   identityLogDir: string | null;
   allowWrites: boolean;
   allowCreateHosts: boolean;
@@ -107,6 +108,7 @@ export function loadEnvironment(): TestEnvironment {
   const sqlServer = optional('LOCAL_SQL_SERVER');
   const sqlDatabase = optional('LOCAL_SQL_DATABASE');
   const identitySqlDatabase = optional('IDENTITY_SQL_DATABASE');
+  const masterSqlDatabase = optional('MASTER_SQL_DATABASE');
 
   return {
     name,
@@ -127,6 +129,7 @@ export function loadEnvironment(): TestEnvironment {
     adminApiClient: serviceClient('ADMIN_API_CLIENT_ID', 'ADMIN_API_CLIENT_SECRET'),
     identityLogDir: name === 'local' && optional('IDENTITY_LOG_DIR') ? path.resolve(__dirname, '..', optional('IDENTITY_LOG_DIR')!) : null,
     identitySql: name === 'local' && sqlServer && identitySqlDatabase ? { server: sqlServer, database: identitySqlDatabase } : null,
+    masterSql: name === 'local' && sqlServer && masterSqlDatabase ? { server: sqlServer, database: masterSqlDatabase } : null,
     allowWrites: !isProd && flag('ALLOW_WRITES'),
     allowCreateHosts: !isProd && flag('ALLOW_CREATE_HOSTS'),
     allowRestart: !isProd && flag('ALLOW_RESTART'),

@@ -52,6 +52,18 @@ export function queryIdentityDb(query: string): string | null {
   return runQuery(env.identitySql, query);
 }
 
+export function canUseMasterDb(): boolean {
+  return env.masterSql !== null;
+}
+
+export function queryMasterDb(query: string): string | null {
+  if (!env.masterSql) {
+    throw new Error('LOCAL_SQL_SERVER / MASTER_SQL_DATABASE are not set, or TEST_ENV is not local.');
+  }
+
+  return runQuery(env.masterSql, query);
+}
+
 function runQuery(sql: LocalSql, query: string): string | null {
   const output = execFileSync(
     'sqlcmd',
