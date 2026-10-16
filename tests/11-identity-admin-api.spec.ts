@@ -148,7 +148,7 @@ test.describe('Identity administration API (QC-738)', () => {
 
       const listed = await api.get(clients);
       expect(listed.body.map((c: { clientId: string }) => c.clientId).sort()).toEqual([WEB_CLIENT.clientId, MOBILE_CLIENT_ID].sort());
-      expect(queryIdentityDb(`SELECT STRING_AGG(GrantType, ',') FROM ClientGrantTypes g JOIN Clients c ON c.Id = g.ClientId WHERE c.ClientId = ${sqlText(MOBILE_CLIENT_ID)}`)).toBe('password');
+      expect(queryIdentityDb(`SELECT STRING_AGG(GrantType, ',') WITHIN GROUP (ORDER BY GrantType) FROM ClientGrantTypes g JOIN Clients c ON c.Id = g.ClientId WHERE c.ClientId = ${sqlText(MOBILE_CLIENT_ID)}`)).toBe('password,urn:quarryconnect:change_password');
     });
 
     test('IDADMIN-07 a client that exists only in the database opens the sign-in page at once with its host branding', async ({ page, request }) => {

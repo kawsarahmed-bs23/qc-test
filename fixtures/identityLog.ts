@@ -34,6 +34,19 @@ export function resetLinkSince(mark: LogMark, email: string): string | null {
   return match ? match[1] : null;
 }
 
+export function resetCodeSince(mark: LogMark, email: string): string | null {
+  const sentTo = new RegExp(`for "?${escapeRegExp(email)}"? was not sent`, 'i');
+  const lines = identityLogSince(mark)
+    .split(/\r?\n/)
+    .filter((line) => sentTo.test(line));
+  const match = lines.at(-1)?.match(/Code: "?(\d{6})"?/);
+  return match ? match[1] : null;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function newestLogFile(): string {
   if (!env.identityLogDir) {
     throw new Error('IDENTITY_LOG_DIR is not set, or TEST_ENV is not local.');

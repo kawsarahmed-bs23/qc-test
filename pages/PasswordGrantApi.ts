@@ -2,6 +2,7 @@ import type { APIRequestContext, APIResponse } from '@playwright/test';
 import { env } from '../config/environment';
 
 export const MOBILE_DRIVER_SCOPES = 'openid profile email quarryconnect.drivers.api offline_access';
+export const CHANGE_PASSWORD_GRANT = 'urn:quarryconnect:change_password';
 
 export interface TokenResponse {
   access_token?: string;
@@ -10,11 +11,23 @@ export interface TokenResponse {
   scope?: string;
   error?: string;
   error_description?: string;
+  password_errors?: string[];
 }
 
 export interface TokenResult {
   status: number;
   body: TokenResponse;
+}
+
+export interface AccountApiResponse {
+  error?: string;
+  error_description?: string;
+  errors?: string[];
+}
+
+export interface AccountApiResult {
+  status: number;
+  body: AccountApiResponse | null;
 }
 
 export class PasswordGrantApi {
@@ -32,6 +45,34 @@ export class PasswordGrantApi {
 
   async refresh(refreshToken: string): Promise<TokenResult> {
     return this.token({ grant_type: 'refresh_token', client_id: this.clientId(), refresh_token: refreshToken });
+  }
+
+  async changePassword(email: string, currentPassword: string, newPassword: string | null): Promise<TokenResult> {
+    const form: Record<string, string> = {
+      grant_type: CHANGE_PASSWORD_GRANT,
+      client_id: this.clientId(),
+      username: email,
+      password: currentPassword,
+      scope: MOBILE_DRIVER_SCOPES,
+    };
+    if (newPassword !== null) {
+      form.new_password = newPassword;
+    }
+    return this.token(form);
+  }
+
+  async forgotPasswordCode(email: string, clientId: string = this.clientId()): Promise<AccountApiResult> {
+    return this.accountApi('forgot', { clientId, email });
+  }
+
+  async resetWithCode(email: string, code: string, newPassword: string, clientId: string = this.clientId()): Promise<AccountApiResult> {
+    return this.accountApi('reset', { clientId, email, code, newPassword });
+  }
+
+  async accountApi(action: 'forgot' | 'reset', data: unknown): Promise<AccountApiResult> {
+    const response = await this.request.post(`${env.identityUrl}/api/account/password/${action}`, { data });
+    const text = await response.text();
+    return { status: response.status(), body: text ? (JSON.parse(text) as AccountApiResponse) : null };
   }
 
   async revoke(refreshToken: string): Promise<number> {
