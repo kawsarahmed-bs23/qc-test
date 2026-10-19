@@ -55,7 +55,17 @@ test.describe('Mobile password grant (QC-706)', () => {
 
       const me = await api.driversMe(issued.access_token!);
       expect(me.status()).toBe(200);
-      expect((await me.json()).data).toMatchObject({ userUuid: decodeJwt(issued.access_token!).claims.sub, role: 'Driver' });
+      const claims = decodeJwt(issued.access_token!).claims;
+      const data = (await me.json()).data;
+      expect(data).toMatchObject({ userUuid: claims.sub, role: 'Driver' });
+      expect(claims.email).toBeTruthy();
+      expect(data).toMatchObject({
+        fullName: claims.name ?? null,
+        firstName: claims.given_name ?? null,
+        lastName: claims.family_name ?? null,
+        email: claims.email,
+        phoneNumber: claims.phone_number ?? null,
+      });
 
       const anonymous = await request.get(`${env.driversApiUrl}/me`);
       expect(anonymous.status()).toBe(401);

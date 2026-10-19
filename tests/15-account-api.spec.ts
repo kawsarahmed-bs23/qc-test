@@ -353,3 +353,17 @@ test.describe('Mobile account API (QC-709)', () => {
     });
   });
 });
+
+test('ACC-17 the password policy endpoint returns the rules Identity enforces', async ({ request }) => {
+  const result = await new PasswordGrantApi(request).passwordPolicy();
+
+  expect(result.status).toBe(200);
+  expect(result.body).toEqual({
+    requiredLength: 10,
+    requireUppercase: true,
+    requireLowercase: true,
+    requireDigit: true,
+    requireNonAlphanumeric: true,
+    requiredUniqueChars: 1,
+  });
+});

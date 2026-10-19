@@ -75,6 +75,11 @@ export class PasswordGrantApi {
     return { status: response.status(), body: text ? (JSON.parse(text) as AccountApiResponse) : null };
   }
 
+  async passwordPolicy(): Promise<{ status: number; body: Record<string, unknown> }> {
+    const response = await this.request.get(`${env.identityUrl}/api/account/password/policy`);
+    return { status: response.status(), body: (await response.json()) as Record<string, unknown> };
+  }
+
   async revoke(refreshToken: string): Promise<number> {
     const response = await this.request.post(`${env.identityUrl}/connect/revocation`, {
       form: { client_id: this.clientId(), token: refreshToken, token_type_hint: 'refresh_token' },
