@@ -1,159 +1,102 @@
 import { expect, type Locator, type Page } from '@playwright/test';
+import { openAdmin } from './AdminShell';
 
-export type HostTab = 'overview' | 'features' | 'environment' | 'settings';
+export type HostTab = 'details' | 'environment' | 'features' | 'users' | 'activity';
 
-export const LOGO_TYPES = ['logo-main', 'logo-menu', 'logo-system', 'logo-icon', 'logo-large'] as const;
+export const HOST_TABS: HostTab[] = ['details', 'environment', 'features', 'users', 'activity'];
 
-export const AREAS = ['Features', 'Environment', 'HostSettings', 'Branding'] as const;
+export const KPIS = ['kpi-hosts', 'kpi-features', 'kpi-mfa', 'kpi-sync'] as const;
 
-export function hostPath(uuid: string, tab: HostTab = 'overview'): string {
-  return tab === 'overview' ? `/hosts/${uuid}` : `/hosts/${uuid}/${tab}`;
+export function hostPath(uuid: string, tab: Exclude<HostTab, 'activity'> = 'details'): string {
+  return tab === 'details' ? `/hosts/${uuid}` : `/hosts/${uuid}/${tab}`;
 }
 
-export class HostOverviewPage {
+export class HostNav {
   constructor(private readonly page: Page) {}
 
-  async open(uuid: string): Promise<void> {
-    await this.page.goto(hostPath(uuid));
-    await expect(this.page.locator('#sync-table')).toBeVisible();
+  tab(name: HostTab): Locator {
+    return this.page.locator(`#tab-${name}`);
   }
 
-  areaRow(area: (typeof AREAS)[number]): Locator {
-    return this.page.locator(`#sync-table tr[data-area="${area}"]`);
-  }
-
-  async driftOf(area: (typeof AREAS)[number]): Promise<string | null> {
-    return this.areaRow(area).locator('[data-drift]').getAttribute('data-drift');
+  all(): Locator {
+    return this.page.locator('[data-testid="host-nav"] a');
   }
 }
 
-export class FeaturesPage {
-  readonly form: Locator;
-  readonly save: Locator;
-  readonly saveLabel: Locator;
-  readonly errors: Locator;
+export class DashboardPage {
+  readonly welcome: Locator;
+  readonly kpis: Locator;
+  readonly hostCards: Locator;
+  readonly addHost: Locator;
+  readonly viewHosts: Locator;
+  readonly viewActivity: Locator;
+  readonly activity: ActivityList;
 
   constructor(private readonly page: Page) {
-    this.form = page.locator('#host-features-form');
-    this.save = page.locator('#features-save');
-    this.saveLabel = this.form.locator('[data-save-label]');
-    this.errors = page.locator('[data-feature-errors]');
+    this.welcome = page.locator('#dashboard-welcome');
+    this.kpis = page.locator('#kpis');
+    this.hostCards = page.locator('#host-cards [data-testid="host-card"]');
+    this.addHost = page.locator('#dashboard-add-host');
+    this.viewHosts = page.locator('#dashboard-view-hosts');
+    this.viewActivity = page.locator('#dashboard-view-activity');
+    this.activity = new ActivityList(page);
   }
 
-  async open(uuid: string): Promise<void> {
-    await this.page.goto(hostPath(uuid, 'features'));
-    await expect(this.form).toBeVisible();
+  async open(): Promise<void> {
+    await openAdmin(this.page, '/');
+    await expect(this.kpis).toBeVisible();
   }
 
-  toggle(key: string): Locator {
-    return this.page.locator(`#feature-${key}`);
+  kpi(id: (typeof KPIS)[number]): Locator {
+    return this.page.locator(`#${id}`);
   }
 
-  async isOn(key: string): Promise<boolean> {
-    return (await this.toggle(key).getAttribute('aria-checked')) === 'true';
-  }
-
-  async setOn(key: string, on: boolean): Promise<void> {
-    if ((await this.isOn(key)) !== on) {
-      await this.toggle(key).click();
-    }
-    await expect(this.toggle(key)).toHaveAttribute('aria-checked', on ? 'true' : 'false');
-  }
-
-  warning(key: string): Locator {
-    return this.page.locator(`[data-key="${key}"] [data-feature-warning]`);
+  hostCard(uuid: string): Locator {
+    return this.page.locator(`#host-cards [data-testid="host-card"][data-host-uuid="${uuid}" i]`);
   }
 }
 
-export class EnvironmentPage {
-  readonly form: Locator;
-  readonly save: Locator;
-  readonly filter: Locator;
-  readonly errors: Locator;
-  readonly restartDialog: Locator;
-  readonly restartCard: Locator;
+export class ActivityList {
+  readonly list: Locator;
+  readonly entries: Locator;
+  readonly empty: Locator;
 
-  constructor(private readonly page: Page) {
-    this.form = page.locator('#environment-form');
-    this.save = page.locator('#environment-save');
-    this.filter = page.locator('#setting-filter');
-    this.errors = page.locator('#environment-errors');
-    this.restartDialog = page.locator('[data-restart-modal]');
-    this.restartCard = page.locator('[data-restart-card]');
+  constructor(page: Page) {
+    this.list = page.locator('#activity-list');
+    this.entries = page.locator('#activity-list [data-testid="activity-entry"]');
+    this.empty = page.locator('#activity-empty');
   }
 
-  async open(uuid: string): Promise<void> {
-    await this.page.goto(hostPath(uuid, 'environment'));
-    await expect(this.form).toBeVisible();
+  text(entry: Locator): Locator {
+    return entry.locator('.qc-activity-text');
   }
 
-  row(key: string): Locator {
-    return this.page.locator(`[data-setting-row][data-search^="${key.toLowerCase()} "]`);
+  meta(entry: Locator): Locator {
+    return entry.locator('.qc-activity-meta');
   }
 
-  input(key: string): Locator {
-    return this.row(key).locator('input, select, textarea').first();
-  }
-
-  async reveal(key: string): Promise<void> {
-    await this.filter.fill(key);
-    await expect(this.row(key)).toBeVisible();
-  }
-
-  async setValue(key: string, value: string): Promise<void> {
-    await this.reveal(key);
-    await this.input(key).fill(value);
+  get latest(): Locator {
+    return this.entries.first();
   }
 }
 
-export class SettingsPage {
-  readonly form: Locator;
-  readonly save: Locator;
+export class ActivityPage {
+  readonly subtitle: Locator;
+  readonly card: Locator;
+  readonly showAll: Locator;
+  readonly error: Locator;
+  readonly list: ActivityList;
 
   constructor(private readonly page: Page) {
-    this.form = page.locator('#host-settings-form');
-    this.save = page.locator('#settings-save');
+    this.subtitle = page.locator('#activity-subtitle');
+    this.card = page.locator('#activity-card');
+    this.showAll = page.locator('#activity-all');
+    this.error = page.locator('#activity-error');
+    this.list = new ActivityList(page);
   }
 
-  async open(uuid: string): Promise<void> {
-    await this.page.goto(hostPath(uuid, 'settings'));
-    await expect(this.form).toBeVisible();
-  }
-
-  field(name: string): Locator {
-    return this.page.locator(`#setting-${name.replace(/\./g, '-')}`);
-  }
-
-  section(name: string): Locator {
-    return this.page.locator(`[data-section="${name}"]`);
-  }
-
-  logoCard(type: (typeof LOGO_TYPES)[number]): Locator {
-    return this.page.locator(`[data-logo-card][data-logo-type="${type}"]`);
-  }
-}
-
-export class BrandingPage {
-  readonly form: Locator;
-  readonly save: Locator;
-  readonly preview: Locator;
-  readonly primaryColor: Locator;
-  readonly displayName: Locator;
-
-  constructor(private readonly page: Page) {
-    this.form = page.locator('#sign-in-branding');
-    this.save = page.locator('#branding-save');
-    this.preview = page.locator('[data-preview]');
-    this.primaryColor = page.locator('#Branding_PrimaryColor');
-    this.displayName = page.locator('#Branding_DisplayName');
-  }
-
-  async open(uuid: string): Promise<void> {
-    await this.page.goto(`${hostPath(uuid, 'settings')}#sign-in-branding`);
-    await expect(this.form).toBeVisible();
-  }
-
-  async previewBrandColor(): Promise<string> {
-    return this.preview.evaluate((el) => getComputedStyle(el).getPropertyValue('--qc-brand').trim().toLowerCase());
+  async open(hostUuid?: string): Promise<void> {
+    await openAdmin(this.page, hostUuid ? `/activity?host=${hostUuid}` : '/activity');
+    await expect(this.list.list.or(this.list.empty).or(this.error).first()).toBeVisible();
   }
 }

@@ -392,6 +392,163 @@ test.describe('Identity administration API (QC-738)', () => {
     });
   });
 
+  test.describe('user list (QC-742)', () => {
+    test.describe.configure({ mode: 'serial' });
+    test.skip(!canUseIdentityDb(), "Needs Identity's local database to seed the e2e.qc742 users and to count users.");
+
+    const LIST = '/users/list';
+    const SEARCH = 'e2e.qc742';
+    const SEEDED = `u.Email LIKE N'e2e.qc742.%'`;
+    const ORDER: Record<string, string> = {
+      'email asc': 'u.Email, u.Id',
+      'email desc': 'u.Email DESC, u.Id',
+      'name asc': 'u.LastName, u.FirstName, u.Email, u.Id',
+      'name desc': 'u.LastName DESC, u.FirstName DESC, u.Email DESC, u.Id',
+      'lastLogin asc': 'u.LastLoginDate, u.Email, u.Id',
+      'lastLogin desc': 'u.LastLoginDate DESC, u.Email, u.Id',
+    };
+
+    const seeded = (n: number) => `e2e.qc742.u${String(n).padStart(2, '0')}@quarryconnect.test`;
+    const countWhere = (where: string) => Number(queryIdentityDb(`SELECT COUNT(*) FROM Users u WHERE ${where}`));
+    const emailsWhere = (where: string, orderBy = 'u.Email, u.Id') =>
+      (queryIdentityDb(`SELECT u.Email FROM Users u WHERE ${where} ORDER BY ${orderBy}`) ?? '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    const list = (api: IdentityAdminApi, query: Record<string, string | number>) =>
+      api.get(`${LIST}?${new URLSearchParams(Object.entries(query).map(([k, v]) => [k, String(v)]))}`);
+    const emailsOf = (body: { items: { email: string }[] }) => body.items.map((item) => item.email);
+
+    test.beforeAll(() => {
+      runIdentitySeedScript('identity-qc742-users.apply.sql');
+    });
+
+    test.afterAll(() => {
+      runIdentitySeedScript('identity-qc742.remove.sql');
+    });
+
+    test('IDADMIN-21 the user list refuses an unknown status, sort, direction or role and an overlong search, naming each field', async ({ request }) => {
+      const api = await IdentityAdminApi.signIn(request);
+
+      for (const [query, key] of [
+        [{ status: 'bogus' }, 'status'],
+        [{ sort: 'createdDate' }, 'sort'],
+        [{ dir: 'sideways' }, 'dir'],
+        [{ role: 'Owner' }, 'role'],
+        [{ search: 'x'.repeat(300) }, 'search'],
+      ] as const) {
+        const refused = await list(api, query);
+        expect(refused.status, JSON.stringify(query)).toBe(400);
+        expect(Object.keys(refused.body.errors)).toEqual([key]);
+      }
+
+      const all = await list(api, { status: 'bogus', sort: 'bogus', dir: 'bogus', role: 'bogus', search: 'x'.repeat(300) });
+      expect(all.status).toBe(400);
+      expect(Object.keys(all.body.errors).sort()).toEqual(['dir', 'role', 'search', 'sort', 'status']);
+
+      const caseInsensitive = await list(api, { status: 'ACTIVE', sort: 'LASTLOGIN', dir: 'DESC', role: 'driver', search: SEARCH });
+      expect(caseInsensitive.status, caseInsensitive.text).toBe(200);
+    });
+
+    test('IDADMIN-22 the page size defaults to 25 and is clamped to 1..100, and a page past the end returns the last page', async ({ request }) => {
+      const api = await IdentityAdminApi.signIn(request);
+
+      const plain = await list(api, {});
+      expect(plain.status).toBe(200);
+      expect(plain.body).toMatchObject({ page: 1, pageSize: 25 });
+      expect(plain.body.items).toHaveLength(Math.min(25, plain.body.totalCount));
+
+      expect((await list(api, { search: SEARCH, pageSize: 0 })).body).toMatchObject({ pageSize: 1, totalCount: 40 });
+      expect((await list(api, { search: SEARCH, pageSize: 0 })).body.items).toHaveLength(1);
+      const capped = await list(api, { pageSize: 500 });
+      expect(capped.body.pageSize).toBe(100);
+      expect(capped.body.items).toHaveLength(Math.min(100, capped.body.totalCount));
+
+      const past = await list(api, { search: SEARCH, pageSize: 15, page: 9999 });
+      expect(past.body).toMatchObject({ page: 3, pageSize: 15, totalCount: 40 });
+      expect(emailsOf(past.body)).toEqual(emailsWhere(SEEDED).slice(30));
+
+      expect((await list(api, { search: SEARCH, page: 0 })).body.page).toBe(1);
+      expect((await list(api, { search: 'zz-no-such-user-zz', page: 5 })).body).toMatchObject({ items: [], totalCount: 0, page: 1 });
+    });
+
+    test('IDADMIN-23 a host role is matched at the chosen host only, while Admin is a platform role', async ({ request }) => {
+      const api = await IdentityAdminApi.signIn(request);
+      const onHost = (hostId: number, role: string) =>
+        `${SEEDED} AND EXISTS (SELECT 1 FROM app.UserHosts m JOIN Roles r ON r.Id = m.RoleID WHERE m.UserID = u.Id AND m.Active = 1 AND m.HostID = ${hostId} AND r.Name = N'${role}')`;
+
+      const hostUsersAt1 = await list(api, { search: SEARCH, hostId: 1, role: 'HostUser', pageSize: 100 });
+      expect(emailsOf(hostUsersAt1.body)).toEqual(emailsWhere(onHost(1, 'HostUser')));
+      expect(emailsOf(hostUsersAt1.body)).toContain(seeded(26));
+      expect(emailsOf(hostUsersAt1.body)).not.toContain(seeded(25));
+
+      const hostUsersAt2 = await list(api, { search: SEARCH, hostId: 2, role: 'HostUser', pageSize: 100 });
+      expect(emailsOf(hostUsersAt2.body)).toEqual(emailsWhere(onHost(2, 'HostUser')));
+      expect(emailsOf(hostUsersAt2.body)).toContain(seeded(25));
+      expect(emailsOf(hostUsersAt2.body)).not.toContain(seeded(26));
+
+      const anyHost = await list(api, { search: SEARCH, role: 'HostUser', pageSize: 100 });
+      expect(anyHost.body.totalCount).toBe(
+        countWhere(`${SEEDED} AND EXISTS (SELECT 1 FROM app.UserHosts m JOIN Roles r ON r.Id = m.RoleID WHERE m.UserID = u.Id AND m.Active = 1 AND r.Name = N'HostUser')`),
+      );
+
+      expect(emailsOf((await list(api, { search: SEARCH, role: 'Admin', hostId: 1 })).body)).toEqual([seeded(5), seeded(10)]);
+      expect((await list(api, { search: SEARCH, role: 'Admin', hostId: 2 })).body.totalCount).toBe(0);
+      expect((await list(api, { search: SEARCH, hostId: 2147483647 })).body.totalCount).toBe(0);
+
+      const both = (await list(api, { search: seeded(26) })).body.items[0];
+      expect(both.hosts).toEqual([
+        { hostId: 1, role: 'HostUser', isHostAdmin: false },
+        { hostId: 2, role: 'Driver', isHostAdmin: false },
+      ]);
+    });
+
+    test('IDADMIN-24 totalCount matches Identity for every status, the items match the page, and no password data comes back', async ({ request }) => {
+      const api = await IdentityAdminApi.signIn(request);
+
+      for (const [status, where] of [['all', '1 = 1'], ['active', 'u.IsActive = 1'], ['deactivated', 'u.IsActive = 0']] as const) {
+        const page = await list(api, { status, pageSize: 100 });
+        expect(page.body.totalCount, status).toBe(countWhere(where));
+        expect(page.body.items, status).toHaveLength(Math.min(100, page.body.totalCount));
+        expect(page.body.items.every((item: { isActive: boolean }) => (status === 'all' ? true : item.isActive === (status === 'active'))), status).toBe(true);
+      }
+
+      const seededPage = await list(api, { search: SEARCH, status: 'deactivated' });
+      expect(emailsOf(seededPage.body)).toEqual([7, 14, 21, 28, 35].map(seeded));
+
+      const admin = (await list(api, { search: seeded(5) })).body;
+      expect(admin.totalCount).toBe(1);
+      expect(admin.items[0]).toEqual({
+        userId: queryIdentityDb(`SELECT Id FROM Users WHERE Email = N'${seeded(5)}'`),
+        email: seeded(5),
+        firstName: 'E2E',
+        lastName: queryIdentityDb(`SELECT LastName FROM Users WHERE Email = N'${seeded(5)}'`),
+        isActive: true,
+        lastLoginDate: expect.any(String),
+        platformRoles: ['Admin'],
+        hosts: [{ hostId: 1, role: 'Driver', isHostAdmin: false }],
+      });
+      expect(JSON.stringify(seededPage.body)).not.toMatch(SECRET_FIELDS);
+    });
+
+    for (const sort of ['email', 'name', 'lastLogin'] as const) {
+      test(`IDADMIN-25 sorting by ${sort} both ways pages through every user once, with no repeats or gaps`, async ({ request }) => {
+        const api = await IdentityAdminApi.signIn(request);
+
+        for (const dir of ['asc', 'desc'] as const) {
+          const seen: string[] = [];
+          for (let page = 1; page <= 6; page++) {
+            const result = await list(api, { search: SEARCH, sort, dir, page, pageSize: 7 });
+            expect(result.body).toMatchObject({ page, pageSize: 7, totalCount: 40 });
+            seen.push(...emailsOf(result.body));
+          }
+          expect(new Set(seen).size, `${sort} ${dir} has no repeats`).toBe(seen.length);
+          expect(seen, `${sort} ${dir}`).toEqual(emailsWhere(SEEDED, ORDER[`${sort} ${dir}`]));
+        }
+      });
+    }
+  });
+
   test('IDADMIN-15 the service client secret never appears in an API response or the Identity log', async ({ request }) => {
     test.skip(!canReadIdentityLog(), "Needs Identity's local log folder (IDENTITY_LOG_DIR).");
     const mark = markIdentityLog();

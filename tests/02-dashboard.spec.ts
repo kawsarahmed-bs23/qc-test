@@ -1,86 +1,144 @@
 import { test, expect } from '../fixtures/test';
+import { canUseMasterDb, queryMasterDb } from '../fixtures/localDb';
+import { adminUrl, openAdmin } from '../pages/AdminShell';
+import { HostListPage } from '../pages/HostManagementPages';
+import { ActivityPage, DashboardPage, HOST_TABS, HostNav, KPIS } from '../pages/HostPages';
+import { env } from '../config/environment';
 
-test.describe('Dashboard and navigation', () => {
-  test('DASH-01 dashboard shows the four summary cards with numbers', { tag: '@smoke' }, async ({ page }) => {
-    await page.goto('/');
-    await expect(page.locator('#page-heading')).toHaveText('Dashboard');
-    for (const id of ['kpi-hosts', 'kpi-features', 'kpi-mfa', 'kpi-sync']) {
-      await expect(page.locator(`#${id}`)).toHaveText(/^\d+$/);
+test.describe('Dashboard and navigation (QC-742)', () => {
+  test('DASH-01 dashboard shows the four summary cards with numbers', { tag: '@smoke' }, async ({ page, shell }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.open();
+    await expect(shell.heading).toHaveText('Dashboard');
+    for (const id of KPIS) {
+      await expect(dashboard.kpi(id)).toHaveText(/^\d+$/);
     }
-    expect(Number(await page.locator('#kpi-hosts').innerText())).toBeGreaterThan(0);
+    expect(Number(await dashboard.kpi('kpi-hosts').innerText())).toBeGreaterThan(0);
   });
 
   test('DASH-02 the target host has a card with its Identity state and quick links', async ({ page, targetHost }) => {
-    await page.goto('/');
-    const card = page.locator(`#host-cards [data-host-card="${targetHost.uuid}" i]`);
+    const dashboard = new DashboardPage(page);
+    await dashboard.open();
+    const card = dashboard.hostCard(targetHost.uuid);
     await expect(card).toBeVisible();
-    await expect(card).toContainText(targetHost.name);
+    await expect(card.locator('[data-testid="host-card-link"]')).toHaveText(targetHost.name);
     await expect(card).toContainText(/Identity linked|Not linked/);
-    for (const link of ['Features', 'Environment', 'Users']) {
-      await expect(card.getByRole('link', { name: link, exact: true })).toBeVisible();
+    for (const [link, path] of [['Features', 'features'], ['Environment', 'environment'], ['Users', 'users']]) {
+      await expect(card.getByRole('link', { name: link, exact: true })).toHaveAttribute('href', `#/hosts/${targetHost.uuid}/${path}`);
     }
   });
 
   test('DASH-03 sidebar menu is Dashboard, Hosts, Users, Activity and reaches each one', async ({ page, shell }) => {
-    await page.goto('/');
-    await expect(page.locator('.sidebar-menu-link .title')).toHaveText(['Dashboard', 'Hosts', 'Users', 'Activity']);
+    await new DashboardPage(page).open();
+    await expect(page.locator('#sidebar .sidebar-menu-link .title')).toHaveText(['Dashboard', 'Hosts', 'Users', 'Activity']);
     await expect(shell.nav('dashboard')).toHaveClass(/active/);
 
     await shell.nav('hosts').click();
-    await expect(page).toHaveURL(/\/hosts$/);
+    await expect(page).toHaveURL(adminUrl('/hosts'));
     await expect(page.locator('#hosts-table')).toBeVisible();
     await expect(shell.nav('hosts')).toHaveClass(/active/);
+    await expect(shell.nav('dashboard')).not.toHaveClass(/active/);
 
     await shell.nav('users').click();
-    await expect(page).toHaveURL(/\/users$/);
-    await expect(page.locator('#page-heading')).toHaveText('Users');
+    await expect(page).toHaveURL(adminUrl('/users'));
+    await expect(shell.heading).toHaveText('Users');
 
     await shell.nav('activity').click();
-    await expect(page).toHaveURL(/\/activity$/);
-    await expect(page.locator('#page-heading')).toHaveText('Activity');
+    await expect(page).toHaveURL(adminUrl('/activity'));
+    await expect(shell.heading).toHaveText('Activity');
 
     await shell.nav('dashboard').click();
     await expect(page.locator('#kpis')).toBeVisible();
   });
 
-  test('DASH-04 host list links to the host page with its four tabs', async ({ page, targetHost }) => {
-    await page.goto('/hosts');
-    await page.locator('#hosts-table tr', { hasText: targetHost.name }).getByRole('link', { name: targetHost.name }).click();
-    await expect(page).toHaveURL(new RegExp(`/hosts/${targetHost.uuid}$`, 'i'));
-    await expect(page.locator('#page-heading')).toHaveText(targetHost.name);
-    await expect(page.locator('.qc-tabs a')).toHaveCount(4);
-    for (const tab of ['details', 'features', 'environment', 'users']) {
-      await expect(page.locator(`#tab-${tab}`)).toBeVisible();
+  test('DASH-04 host list links to the host page with its five tabs', async ({ page, shell, targetHost }) => {
+    const list = new HostListPage(page);
+    await list.open();
+    await list.link(targetHost.uuid).click();
+    await expect(page).toHaveURL(adminUrl(`/hosts/${targetHost.uuid}`));
+    await expect(shell.heading).toHaveText(targetHost.name);
+    await expect(shell.breadcrumb).toContainText(targetHost.name);
+
+    const nav = new HostNav(page);
+    await expect(nav.all()).toHaveCount(HOST_TABS.length);
+    for (const tab of HOST_TABS) {
+      await expect(nav.tab(tab)).toBeVisible();
     }
-    await expect(page.locator('#tab-details')).toHaveClass(/active/);
+    await expect(nav.tab('details')).toHaveClass(/active/);
+    await expect(nav.tab('activity')).toHaveAttribute('href', `#/activity?host=${targetHost.uuid}`);
   });
 
-  test('DASH-05 activity page lists changes or shows the empty state', async ({ page }) => {
-    await page.goto('/activity');
-    await expect(page.locator('#activity-list, #activity-empty').first()).toBeVisible();
+  test('DASH-05 activity page lists changes or shows the empty state', async ({ page, shell }) => {
+    const activity = new ActivityPage(page);
+    await activity.open();
+    await expect(shell.heading).toHaveText('Activity');
+    await expect(activity.list.list.or(activity.list.empty)).toBeVisible();
+    await expect(activity.showAll).toHaveCount(0);
   });
 
-  test('DASH-06 an unknown host UUID returns 404', async ({ page }) => {
-    const response = await page.goto('/hosts/00000000-0000-0000-0000-000000000000');
-    expect(response?.status()).toBe(404);
+  test('DASH-06 an unknown host UUID shows the not-found page, which leads back to the dashboard', async ({ page, shell }) => {
+    await openAdmin(page, '/hosts/00000000-0000-0000-0000-000000000000');
+    await shell.expectNotFound();
+    await page.locator('#not-found-home').click();
+    await expect(page.locator('#kpis')).toBeVisible();
   });
 
-  test('DASH-07 activity for one host shows only that host and links back to every host', async ({ page, targetHost }) => {
-    await page.goto(`/activity?host=${targetHost.uuid}`);
-    await expect(page.locator('.breadcrumb')).toContainText(targetHost.name);
-    await expect(page.locator('#activity-all')).toBeVisible();
-    const items = page.locator('#activity-list li');
-    const count = await items.count();
-    for (let i = 0; i < count; i++) {
-      await expect(items.nth(i).locator('.qc-activity-meta')).toContainText(targetHost.name);
+  test('DASH-07 activity for one host shows only that host and links back to every host', async ({ page, shell, targetHost }) => {
+    const activity = new ActivityPage(page);
+    await activity.open(targetHost.uuid);
+    await expect(shell.breadcrumb).toContainText(targetHost.name);
+    await expect(activity.subtitle).toContainText(targetHost.name);
+    await expect(new HostNav(page).tab('activity')).toHaveClass(/active/);
+    await expect(activity.showAll).toBeVisible();
+    for (const entry of await activity.list.entries.all()) {
+      await expect(entry.locator('[data-testid="activity-host-link"]')).toHaveText(targetHost.name);
     }
+
+    await activity.showAll.click();
+    await expect(page).toHaveURL(adminUrl('/activity'));
+    await expect(activity.showAll).toHaveCount(0);
   });
 
-  test('DASH-08 the pop-up message and user menu use the theme', async ({ page, shell }) => {
-    await page.goto('/');
-    await expect(page.locator('.sidebar-area')).toBeVisible();
+  test('DASH-08 the user menu shows the signed-in admin and a sign-out item', async ({ page, shell }) => {
+    test.skip(!env.admin, 'No admin credentials');
+    await new DashboardPage(page).open();
+    await expect(page.locator('#sidebar')).toBeVisible();
     await shell.profileMenuButton.click();
-    await expect(page.locator('[data-profile-menu]')).toBeVisible();
-    await expect(page.locator('#sign-out')).toBeAttached();
+    await expect(shell.userEmail).toHaveText(env.admin!.email);
+    await expect(shell.userName).not.toBeEmpty();
+    await expect(page.locator('#sign-out')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#sign-out')).toBeHidden();
+  });
+
+  test('DASH-09 an unknown address inside the app shows the not-found page', async ({ page, shell }) => {
+    await openAdmin(page, '/no-such-page');
+    await shell.expectNotFound();
+    await expect(shell.nav('dashboard')).toBeVisible();
+  });
+
+  test('DASH-10 the host count and host cards match the active hosts in HOST_MASTER', async ({ page }) => {
+    test.skip(!canUseMasterDb(), 'Needs MASTER_SQL_DATABASE (local only).');
+    const dashboard = new DashboardPage(page);
+    await dashboard.open();
+    const active = Number(queryMasterDb('SELECT COUNT(*) FROM app.Hosts WHERE Active = 1'));
+    await expect(dashboard.kpi('kpi-hosts')).toHaveText(String(active));
+    await expect(dashboard.hostCards).toHaveCount(active);
+  });
+
+  test('DASH-11 the dashboard buttons reach Add host, the hosts list and the activity log', async ({ page, shell }) => {
+    const dashboard = new DashboardPage(page);
+    await dashboard.open();
+    await dashboard.addHost.click();
+    await expect(page).toHaveURL(adminUrl('/hosts/new'));
+    await expect(shell.heading).toHaveText('Add host');
+
+    await dashboard.open();
+    await dashboard.viewHosts.click();
+    await expect(page).toHaveURL(adminUrl('/hosts'));
+
+    await dashboard.open();
+    await dashboard.viewActivity.click();
+    await expect(page).toHaveURL(adminUrl('/activity'));
   });
 });

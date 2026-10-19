@@ -1,6 +1,6 @@
 import { test as base, expect } from '@playwright/test';
 import { ADMIN_STATE, env } from '../config/environment';
-import { AdminShell } from '../pages/AdminShell';
+import { AdminShell, adminUrl } from '../pages/AdminShell';
 
 export interface TargetHost {
   uuid: string;
@@ -28,13 +28,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
         storageState: ADMIN_STATE,
       });
       const page = await context.newPage();
-      await page.goto('/hosts');
+      await page.goto(adminUrl('/hosts'));
 
-      const link = page.locator('#hosts-table a[href^="/hosts/"]', { hasText: env.hostName }).first();
-      await expect(link, `Host '${env.hostName}' (HOST_NAME) must be registered in HOST_MASTER`).toBeVisible();
+      const row = page.locator('#hosts-table tr[data-host-uuid]').filter({ has: page.locator('[data-testid="host-link"]', { hasText: env.hostName }) }).first();
+      await expect(row, `Host '${env.hostName}' (HOST_NAME) must be registered in HOST_MASTER`).toBeVisible();
 
-      const href = (await link.getAttribute('href')) ?? '';
-      const uuid = href.split('/').filter(Boolean).pop() ?? '';
+      const uuid = ((await row.getAttribute('data-host-uuid')) ?? '').toLowerCase();
       expect(uuid, 'host UUID from the hosts list').toMatch(/^[0-9a-f-]{36}$/i);
 
       await context.close();

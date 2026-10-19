@@ -7,6 +7,7 @@ export type EnvironmentName = 'local' | 'dev' | 'prod';
 export interface TestEnvironment {
   name: EnvironmentName;
   adminUrl: string;
+  adminApiUrl: string | null;
   identityUrl: string;
   hostName: string;
   ignoreHttpsErrors: boolean;
@@ -113,6 +114,7 @@ export function loadEnvironment(): TestEnvironment {
   return {
     name,
     adminUrl: required('ADMIN_URL'),
+    adminApiUrl: optional('ADMIN_API_URL'),
     identityUrl: required('IDENTITY_URL'),
     hostName: required('HOST_NAME'),
     ignoreHttpsErrors: flag('IGNORE_HTTPS_ERRORS'),

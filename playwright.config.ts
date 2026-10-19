@@ -20,6 +20,8 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   forbidOnly: !!process.env.CI,
+  globalSetup: './fixtures/globalSetup.ts',
+  globalTeardown: './fixtures/globalTeardown.ts',
   grepInvert: blockedTags.length ? new RegExp(blockedTags.join('|')) : undefined,
   reporter: [
     ['list'],
@@ -30,6 +32,7 @@ export default defineConfig({
   metadata: {
     environment: env.name,
     adminUrl: env.adminUrl,
+    adminApiUrl: env.adminApiUrl ?? 'not set',
     identityUrl: env.identityUrl,
     host: env.hostName,
     blockedTags: blockedTags.join(', ') || 'none',

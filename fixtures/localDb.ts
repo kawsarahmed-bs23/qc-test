@@ -56,6 +56,31 @@ export function canUseMasterDb(): boolean {
   return env.masterSql !== null;
 }
 
+export function runMasterSeedScript(fileName: string): string {
+  if (!env.masterSql) {
+    throw new Error('LOCAL_SQL_SERVER / MASTER_SQL_DATABASE are not set, or TEST_ENV is not local.');
+  }
+
+  return execFileSync(
+    'sqlcmd',
+    ['-S', env.masterSql.server, '-d', env.masterSql.database, '-E', '-C', '-I', '-b', '-i', path.join(SEED_DIR, fileName)],
+    { encoding: 'utf8' },
+  );
+}
+
+export interface ChangeLogMark {
+  lastId: number;
+}
+
+export function markChangeLogs(): ChangeLogMark {
+  return { lastId: Number(queryMasterDb('SELECT ISNULL(MAX(ChangeLogID), 0) FROM app.ChangeLogs')) };
+}
+
+export function removeChangeLogsSince(mark: ChangeLogMark): void {
+  if (!env.admin) return;
+  queryMasterDb(`DELETE app.ChangeLogs WHERE ChangeLogID > ${mark.lastId} AND CreatedBy = N'${env.admin.email.replace(/'/g, "''")}'`);
+}
+
 export function queryMasterDb(query: string): string | null {
   if (!env.masterSql) {
     throw new Error('LOCAL_SQL_SERVER / MASTER_SQL_DATABASE are not set, or TEST_ENV is not local.');

@@ -35,7 +35,7 @@ function lastSync(id: number, area: string): { status: string; ageSeconds: numbe
   return { status, ageSeconds: Number(age), syncedAt };
 }
 
-test.describe('HOST_MASTER copy of host features and environment (QC-737)', () => {
+test.describe('HOST_MASTER copy of host features and environment (QC-737, Angular since QC-742)', () => {
   test.beforeEach(() => {
     test.skip(!canUseMasterDb(), 'Needs MASTER_SQL_DATABASE (local only).');
   });
@@ -44,11 +44,9 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737)', () =
     const features = new HostFeaturesPage(page);
     await features.open(targetHost.uuid);
 
-    const keys = await page.locator('#product-features input[data-feature]').evaluateAll((boxes) =>
-      boxes.map((box) => (box as HTMLInputElement).dataset.feature!),
-    );
+    const keys = await features.featureKeys();
     const enabled = new Set(await features.enabledKeys());
-    const mfaOn = await features.mfa.isChecked();
+    const mfaOn = await features.mfaOn();
     const id = hostId(targetHost.uuid);
 
     const expected: Record<string, boolean> = { mfa: mfaOn };
@@ -91,11 +89,11 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737)', () =
   test('MIR-03 saving a feature updates HOST_MASTER with the Admin user as the changer', { tag: '@write' }, async ({ page, targetHost, shell }) => {
     const features = new HostFeaturesPage(page);
     await features.open(targetHost.uuid);
-    const original = await features.feature('maps').isChecked();
+    const original = await features.isOn('maps');
     const id = hostId(targetHost.uuid);
 
     try {
-      await features.feature('maps').setChecked(!original);
+      await features.setOn('maps', !original);
       await features.save.click();
       await shell.expectStatus('Saved 1 feature change.');
 
@@ -103,8 +101,8 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737)', () =
       expect(queryMasterDb(`SELECT UpdatedBy FROM app.HostFeatures WHERE HostID_FK = ${id} AND Active = 1 AND FeatureKey = 'maps'`)).toBe(env.admin!.email);
     } finally {
       await features.open(targetHost.uuid);
-      if ((await features.feature('maps').isChecked()) !== original) {
-        await features.feature('maps').setChecked(original);
+      if ((await features.isOn('maps')) !== original) {
+        await features.setOn('maps', original);
         await features.save.click();
         await shell.expectStatus('Saved 1 feature change.');
       }
@@ -125,11 +123,15 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737)', () =
     const syncedBefore = lastSync(id, 'Features').syncedAt;
     const secretRows = Number(queryMasterDb(`SELECT COUNT(*) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND IsSensitive = 1`));
     const originalUrl = queryMasterDb(`SELECT ApiBaseUrl FROM app.Hosts WHERE HostID = ${id}`);
+    const savedValue = queryMasterDb(
+      `SELECT PropertyValue FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND GroupName = N'${SAFE_SETTING.group}' AND SubGroupName IS NULL AND PropertyName = N'${SAFE_SETTING.property}'`,
+    );
 
     try {
       queryMasterDb(`UPDATE app.Hosts SET ApiBaseUrl = ${sqlText(UNREACHABLE_API)} WHERE HostID = ${id}`);
 
       await features.openUnreachable(targetHost.uuid);
+      await expect(features.productError).toContainText('The host API could not be reached');
       await expect(features.save).toHaveCount(0);
       await expect(features.savedCopy).toContainText('Read-only');
       await expect(features.savedFeature('maps')).toContainText(saved.maps ? 'On' : 'Off');
@@ -141,8 +143,11 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737)', () =
       expect(masterFeatures(id), 'a failed read changes no feature row').toEqual(saved);
 
       await environment.openUnreachable(targetHost.uuid);
+      await expect(environment.loadWarning).toContainText('The host API could not be reached');
       await expect(environment.save).toHaveCount(0);
-      await expect(page.locator('input[name^="Values["], input[name^="Secrets["]')).toHaveCount(0);
+      await expect(environment.form).toHaveCount(0);
+      await expect(page.locator('#environment-saved-copy input')).toHaveCount(0);
+      await expect(environment.savedSetting(SAFE_SETTING.group, `:${SAFE_SETTING.property}`).locator('code')).toHaveText(savedValue ?? '');
       await expect(environment.savedCopy.getByText('Secret, not stored')).toHaveCount(secretRows);
     } finally {
       queryMasterDb(`UPDATE app.Hosts SET ApiBaseUrl = ${sqlText(originalUrl)} WHERE HostID = ${id}`);
