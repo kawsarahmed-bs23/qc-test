@@ -42,9 +42,10 @@ test.describe('Activity log (QC-737, Angular since QC-742)', () => {
     const probe = original === '4321' ? '4322' : '4321';
 
     try {
-      await environment.input(SAFE_SETTING).fill(probe);
+      await environment.setValue(SAFE_SETTING, probe);
       await environment.save.click();
       await shell.expectStatus('Saved 1 setting.', 'warning');
+      await environment.countdown.decline();
 
       const activity = new ActivityPage(page);
       await activity.open(targetHost.uuid);
@@ -55,9 +56,10 @@ test.describe('Activity log (QC-737, Angular since QC-742)', () => {
     } finally {
       await environment.open(targetHost.uuid);
       if ((await environment.input(SAFE_SETTING).inputValue()) !== original) {
-        await environment.input(SAFE_SETTING).fill(original);
+        await environment.setValue(SAFE_SETTING, original);
         await environment.save.click();
         await shell.expectStatus('Saved 1 setting.', 'warning');
+        await environment.countdown.decline();
       }
     }
   });

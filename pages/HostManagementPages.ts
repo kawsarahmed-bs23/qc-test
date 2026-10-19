@@ -241,29 +241,71 @@ export class HostFeaturesPage {
   }
 }
 
+export const OPEN_GROUPS_KEY = 'adminEnvironment.openGroups';
+
+export class RestartControls {
+  readonly arm: Locator;
+  readonly confirm: Locator;
+  readonly cancel: Locator;
+
+  constructor(scope: Page | Locator, prefix: 'restart' | 'restart-card') {
+    this.arm = scope.locator(`#${prefix}-arm`);
+    this.confirm = scope.locator(`#${prefix}-confirm`);
+    this.cancel = scope.locator(`#${prefix}-cancel`);
+  }
+}
+
+export class RestartCountdownDialog {
+  readonly root: Locator;
+  readonly keys: Locator;
+  readonly seconds: Locator;
+  readonly restartNow: Locator;
+  readonly notNow: Locator;
+
+  constructor(page: Page) {
+    this.root = page.locator('app-restart-countdown-dialog');
+    this.keys = this.root.locator('.restart-countdown-dialog__keys li');
+    this.seconds = this.root.locator('.restart-countdown-dialog__countdown strong');
+    this.restartNow = this.root.getByRole('button', { name: 'Restart now' });
+    this.notNow = this.root.getByRole('button', { name: 'Not now' });
+  }
+
+  async secondsLeft(): Promise<number> {
+    return Number((await this.seconds.innerText()).trim());
+  }
+
+  async decline(): Promise<void> {
+    await expect(this.root).toBeVisible();
+    await this.notNow.click();
+    await expect(this.root).toHaveCount(0);
+  }
+}
+
 export class HostEnvironmentPage {
   readonly form: Locator;
+  readonly intro: Locator;
   readonly save: Locator;
-  readonly saveBottom: Locator;
-  readonly filter: Locator;
-  readonly errors: Locator;
+  readonly reset: Locator;
   readonly loadWarning: Locator;
   readonly empty: Locator;
   readonly restartCard: Locator;
-  readonly restart: Locator;
-  readonly confirmDialog: ConfirmDialog;
+  readonly restartCardKeys: Locator;
+  readonly restart: RestartControls;
+  readonly cardRestart: RestartControls;
+  readonly countdown: RestartCountdownDialog;
 
   constructor(private readonly page: Page) {
     this.form = page.locator('#environment-form');
+    this.intro = page.locator('#environment-intro');
     this.save = page.locator('#environment-save');
-    this.saveBottom = page.locator('#environment-save-bottom');
-    this.filter = page.locator('#setting-filter');
-    this.errors = page.locator('#environment-errors');
+    this.reset = page.locator('#environment-reset');
     this.loadWarning = page.locator('#environment-error');
     this.empty = page.locator('#environment-empty');
     this.restartCard = page.locator('#restart-card');
-    this.restart = page.locator('#restart-submit');
-    this.confirmDialog = new ConfirmDialog(page);
+    this.restartCardKeys = page.locator('#restart-card li');
+    this.restart = new RestartControls(page, 'restart');
+    this.cardRestart = new RestartControls(page, 'restart-card');
+    this.countdown = new RestartCountdownDialog(page);
   }
 
   async open(uuid: string): Promise<void> {
@@ -282,35 +324,86 @@ export class HostEnvironmentPage {
   }
 
   groups(): Locator {
-    return this.page.locator('[data-group][data-group-name]');
+    return this.page.locator('mat-expansion-panel[data-group][data-group-name]');
+  }
+
+  group(name: string): Locator {
+    return this.page.locator(`mat-expansion-panel[data-group][data-group-name="${name}"]`);
+  }
+
+  groupHeader(name: string): Locator {
+    return this.group(name).locator('mat-expansion-panel-header');
+  }
+
+  groupOf(key: string): Locator {
+    return this.groups().filter({ has: this.page.locator(`[data-key="${key}"]`) });
+  }
+
+  async groupNames(): Promise<string[]> {
+    return this.groups().evaluateAll((panels) => panels.map((panel) => panel.getAttribute('data-group-name')!));
+  }
+
+  async isExpanded(name: string): Promise<boolean> {
+    return (await this.groupHeader(name).getAttribute('aria-expanded')) === 'true';
+  }
+
+  async setExpanded(name: string, open: boolean): Promise<void> {
+    if ((await this.isExpanded(name)) !== open) {
+      await this.groupHeader(name).click();
+    }
+    await expect(this.groupHeader(name)).toHaveAttribute('aria-expanded', String(open));
+  }
+
+  async reveal(key: string): Promise<void> {
+    const name = await this.groupOf(key).getAttribute('data-group-name');
+    await this.setExpanded(name!, true);
+    await expect(this.field(key)).toBeVisible();
   }
 
   rows(): Locator {
-    return this.page.locator('tr[data-key]');
+    return this.page.locator('[data-setting-id][data-key]');
   }
 
-  visibleRows(): Locator {
-    return this.page.locator('tr[data-key]:not([hidden])');
+  field(key: string): Locator {
+    return this.page.locator(`[data-setting-id][data-key="${key}"]`);
   }
 
-  row(key: string): Locator {
-    return this.page.locator(`tr[data-key="${key}"]`);
+  async settingId(key: string): Promise<string> {
+    return (await this.field(key).getAttribute('data-setting-id'))!;
   }
 
   input(key: string): Locator {
-    return this.row(key).locator('input, textarea, mat-select').first();
+    return this.field(key).locator('input, textarea, mat-select').first();
   }
 
   error(key: string): Locator {
-    return this.page.locator(`[data-setting-error="${key}"]`);
+    return this.field(key).locator('mat-error');
+  }
+
+  hint(key: string): Locator {
+    return this.field(key).locator('mat-hint');
   }
 
   secretInputs(): Locator {
-    return this.page.locator('tr[data-key] input[type="password"]');
+    return this.page.locator('[data-setting-id][data-key] input[type="password"]');
   }
 
-  secretStates(): Locator {
-    return this.page.locator('tr[data-key] [data-secret-state]');
+  secretFields(): Locator {
+    return this.rows().filter({ has: this.page.locator('input[type="password"]') });
+  }
+
+  async setValue(key: string, value: string): Promise<void> {
+    await this.reveal(key);
+    await this.input(key).fill(value);
+  }
+
+  async openGroupsStored(): Promise<string[] | null> {
+    const raw = await this.page.evaluate((key) => localStorage.getItem(key), OPEN_GROUPS_KEY);
+    return raw === null ? null : (JSON.parse(raw) as string[]);
+  }
+
+  async forgetOpenGroups(): Promise<void> {
+    await this.page.evaluate((key) => localStorage.removeItem(key), OPEN_GROUPS_KEY);
   }
 
   savedSetting(group: string, subGroupAndProperty: string): Locator {

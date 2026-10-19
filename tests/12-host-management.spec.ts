@@ -235,19 +235,26 @@ test.describe('Host environment (QC-739, Angular since QC-742)', () => {
     expect(await secrets.count()).toBeGreaterThan(0);
     for (const secret of await secrets.all()) {
       await expect(secret).toHaveAttribute('type', 'password');
+      await expect(secret).toHaveAttribute('autocomplete', 'new-password');
       await expect(secret).toHaveValue('');
     }
-    await expect(environment.secretStates().first()).toHaveText(/^\s*(Set|Not set)\s*$/);
+    await expect(environment.secretFields().first().locator('mat-hint')).toHaveText(/^\s*(Set|Not set)\s*$/);
   });
 
-  test('HE-02 a value of the wrong type is refused on its own row and nothing is saved', async ({ page, targetHost }) => {
+  test('HE-02 a value of the wrong type is refused on its own field and nothing is sent', async ({ page, targetHost, shell }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
     const original = await environment.input(SAFE_SETTING).inputValue();
+    const puts: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'PUT') puts.push(request.url());
+    });
 
-    await environment.input(SAFE_SETTING).fill('not-a-number');
+    await environment.setValue(SAFE_SETTING, '2.5');
     await environment.save.click();
-    await expect(environment.error(SAFE_SETTING)).toContainText('whole number');
+    await expect(environment.error(SAFE_SETTING)).toHaveText('Enter a whole number.');
+    await shell.expectStatus('Fix the highlighted fields first.', 'error');
+    expect(puts).toEqual([]);
 
     await environment.open(targetHost.uuid);
     await expect(environment.input(SAFE_SETTING)).toHaveValue(original);
@@ -260,34 +267,36 @@ test.describe('Host environment (QC-739, Angular since QC-742)', () => {
     const probe = original === '21' ? '22' : '21';
 
     try {
-      await environment.input(SAFE_SETTING).fill(probe);
+      await environment.setValue(SAFE_SETTING, probe);
       await environment.save.click();
       await shell.expectStatus('Saved 1 setting.', 'warning');
       await shell.expectStatus(SAFE_SETTING, 'warning');
+      await environment.countdown.decline();
+      await expect(environment.restartCardKeys).toHaveText([SAFE_SETTING]);
+
       await environment.open(targetHost.uuid);
       await expect(environment.input(SAFE_SETTING)).toHaveValue(probe);
-
-      await environment.save.click();
-      await shell.expectStatus('Nothing has changed.', 'info');
+      await expect(environment.save).toBeDisabled();
     } finally {
       await environment.open(targetHost.uuid);
       if ((await environment.input(SAFE_SETTING).inputValue()) !== original) {
-        await environment.input(SAFE_SETTING).fill(original);
+        await environment.setValue(SAFE_SETTING, original);
         await environment.save.click();
         await shell.expectStatus('Saved 1 setting.', 'warning');
+        await environment.countdown.decline();
       }
     }
   });
 
-  test('HE-04 restart waits for confirmation in a dialog that names the host', async ({ page, targetHost }) => {
+  test('HE-04 restart waits for a second click that warns everyone is disconnected', async ({ page, targetHost }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
-    await environment.restart.click();
-    await expect(environment.confirmDialog.root).toBeVisible();
-    await expect(environment.confirmDialog.message).toContainText(`${targetHost.name}'s API will be unavailable while it restarts.`);
-    await expect(environment.confirmDialog.confirm).toHaveText('Restart now');
-    await expect(environment.confirmDialog.confirm).toHaveClass(/daxa-danger/);
-    await environment.confirmDialog.dismiss();
+    await environment.restart.arm.click();
+    await expect(environment.restart.arm).toHaveCount(0);
+    await expect(environment.restart.confirm).toBeVisible();
+    await expect(page.locator('.restart-warning')).toContainText('Every signed-in user is disconnected');
+    await environment.restart.cancel.click();
+    await expect(environment.restart.arm).toBeVisible();
   });
 });
 

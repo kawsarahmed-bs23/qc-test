@@ -1,123 +1,175 @@
 import { test, expect } from '../fixtures/test';
+import { AdminApi, canUseAdminApi } from '../pages/AdminApi';
 import { HostEnvironmentPage } from '../pages/HostManagementPages';
 import { HostNav } from '../pages/HostPages';
 
 const SAFE_SETTING = 'DispatchSnapshot:RateLimitPermitsPerHour';
 
+function writes(urlPart: string, method: string, into: string[]) {
+  return (request: { method(): string; url(): string }) => {
+    if (request.method() === method && request.url().includes(urlPart)) into.push(request.url());
+  };
+}
+
 test.describe('Environment settings (QC-742)', () => {
-  test('ENV-01 settings are grouped, and every secret is an empty masked box that only says whether it is set', { tag: '@smoke' }, async ({ page, targetHost }) => {
+  test('ENV-01 settings are grouped in panels, and every secret is an empty password box that only says whether it is set', { tag: '@smoke' }, async ({ page, targetHost }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
     await expect(new HostNav(page).tab('environment')).toHaveClass(/active/);
+    await expect(environment.intro).toContainText('Blank sensitive fields keep their current value');
     await expect(page.locator('.qc-kpi')).toHaveCount(0);
-    expect(await environment.groups().count()).toBeGreaterThan(0);
+    expect(await environment.groups().count()).toBeGreaterThan(1);
 
-    const secrets = environment.secretInputs();
+    const secrets = environment.secretFields();
     expect(await secrets.count()).toBeGreaterThan(0);
-    await expect(environment.secretStates()).toHaveCount(await secrets.count());
     for (const secret of await secrets.all()) {
-      await expect(secret).toHaveValue('');
-      await expect(secret).toHaveAttribute('placeholder', /^(Set|Not set) \(type to (replace|set)\)$/);
-    }
-    for (const state of await environment.secretStates().all()) {
-      await expect(state).toHaveText(/^\s*(Set|Not set)\s*$/);
+      await expect(secret.locator('input[type="password"]')).toHaveValue('');
+      await expect(secret.locator('mat-hint')).toHaveText(/^\s*(Set|Not set)\s*$/);
     }
   });
 
-  test('ENV-02 the filter narrows the list, and no match hides every group', async ({ page, targetHost }) => {
+  test('ENV-02 the first group starts open, and which panels are open is remembered across a reload', async ({ page, targetHost }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
-    const total = await environment.rows().count();
+    await environment.forgetOpenGroups();
+    await environment.open(targetHost.uuid);
 
-    await environment.filter.fill('timezone');
-    await expect.poll(() => environment.visibleRows().count()).toBeGreaterThan(0);
-    expect(await environment.visibleRows().count()).toBeLessThan(total);
-    await expect(environment.row('TimeZoneSettings:TimeZoneId')).toBeVisible();
+    const [first, second] = await environment.groupNames();
+    expect(await environment.isExpanded(first)).toBe(true);
+    expect(await environment.isExpanded(second)).toBe(false);
+    expect(await environment.openGroupsStored()).toBeNull();
 
-    await environment.filter.fill('zz-no-such-setting-zz');
-    await expect(environment.groups()).toHaveCount(0);
-    await expect(environment.visibleRows()).toHaveCount(0);
+    try {
+      await environment.setExpanded(second, true);
+      await environment.setExpanded(first, false);
+      expect(await environment.openGroupsStored()).toEqual([second]);
 
-    await environment.filter.fill('');
-    await expect(environment.visibleRows()).toHaveCount(total);
+      await environment.open(targetHost.uuid);
+      await expect(environment.groupHeader(second)).toHaveAttribute('aria-expanded', 'true');
+      await expect(environment.groupHeader(first)).toHaveAttribute('aria-expanded', 'false');
+
+      await environment.setExpanded(second, false);
+      expect(await environment.openGroupsStored()).toEqual([]);
+      await environment.open(targetHost.uuid);
+      for (const name of await environment.groupNames()) {
+        await expect(environment.groupHeader(name), `${name} stays collapsed`).toHaveAttribute('aria-expanded', 'false');
+      }
+    } finally {
+      await environment.forgetOpenGroups();
+    }
   });
 
-  test('ENV-03 a non-numeric value in a whole-number setting is refused on its row and nothing is saved', { tag: '@write' }, async ({ page, targetHost }) => {
+  test('ENV-03 a non-whole number is caught in the browser, and the Admin API refuses one sent directly; nothing is saved', { tag: '@write' }, async ({ page, request, targetHost, shell }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
     const original = await environment.input(SAFE_SETTING).inputValue();
+    const id = await environment.settingId(SAFE_SETTING);
+    const puts: string[] = [];
+    page.on('request', writes('/environment', 'PUT', puts));
 
-    await environment.input(SAFE_SETTING).fill('abc');
-    await expect(environment.save).toHaveText(/Save changes \(1\)/);
+    await environment.setValue(SAFE_SETTING, '1.5');
     await environment.save.click();
+    await expect(environment.error(SAFE_SETTING)).toHaveText('Enter a whole number.');
+    await shell.expectStatus('Fix the highlighted fields first.', 'error');
+    expect(puts, 'nothing was sent').toEqual([]);
 
-    await expect(environment.errors).toContainText('The host API refused the change');
-    await expect(environment.error(SAFE_SETTING)).toContainText('whole number');
-    await expect(environment.row(SAFE_SETTING)).toHaveClass(/invalid/);
+    if (canUseAdminApi()) {
+      const refused = await AdminApi.asAdmin(request).put(`/hosts/${targetHost.uuid}/environment`, { values: { [id]: 'abc' }, secrets: {} });
+      expect(refused.status).toBe(400);
+      expect(refused.body.detail).toContain('The host API refused the change');
+      expect(refused.body.errors[id]?.[0]).toContain('whole number');
+    }
 
     await environment.open(targetHost.uuid);
     await expect(environment.input(SAFE_SETTING)).toHaveValue(original);
   });
 
-  test('ENV-04 saving a restart-required setting saves it alone, names the key in a warning, and survives a reload', { tag: '@write' }, async ({ page, targetHost, shell }) => {
+  test('ENV-04 saving a restart-required setting warns, offers a countdown that Not now stops, leaves the amber card, and survives a reload', { tag: '@write' }, async ({ page, targetHost, shell }) => {
+    test.setTimeout(90_000);
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
     const original = await environment.input(SAFE_SETTING).inputValue();
     const probe = original === '21' ? '22' : '21';
+    const restarts: string[] = [];
+    page.on('request', writes('/restart', 'POST', restarts));
 
     try {
-      await environment.input(SAFE_SETTING).fill(probe);
+      await environment.setValue(SAFE_SETTING, probe);
+      await expect(environment.save).toHaveText(/Save \(1\)/);
       await environment.save.click();
       await shell.expectStatus(`Saved 1 setting. Restart the host API for these to take effect: ${SAFE_SETTING}.`, 'warning');
 
+      await expect(environment.countdown.root).toBeVisible();
+      await expect(environment.countdown.keys).toHaveText([SAFE_SETTING]);
+      const first = await environment.countdown.secondsLeft();
+      expect(first).toBeLessThanOrEqual(10);
+      await expect.poll(() => environment.countdown.secondsLeft(), { timeout: 3_000 }).toBeLessThan(first);
+      await environment.countdown.decline();
+
+      await expect(environment.restartCard).toBeVisible();
+      await expect(environment.restartCardKeys).toHaveText([SAFE_SETTING]);
+      await expect(environment.cardRestart.arm).toBeVisible();
+
+      await page.waitForTimeout(11_000);
+      expect(restarts, 'Not now stopped the countdown: no restart was requested').toEqual([]);
+
       await environment.open(targetHost.uuid);
       await expect(environment.input(SAFE_SETTING)).toHaveValue(probe);
-      await expect(environment.restartCard).toBeVisible();
+      await expect(environment.restartCard).toHaveCount(0);
     } finally {
       await environment.open(targetHost.uuid);
       if ((await environment.input(SAFE_SETTING).inputValue()) !== original) {
-        await environment.input(SAFE_SETTING).fill(original);
+        await environment.setValue(SAFE_SETTING, original);
         await environment.save.click();
         await shell.expectStatus('Saved 1 setting.', 'warning');
+        await environment.countdown.decline();
       }
     }
+    expect(restarts).toEqual([]);
   });
 
   test('ENV-05 a confirmed restart is requested and reported', { tag: '@restart' }, async ({ page, targetHost, shell }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
-    await environment.restart.click();
-    await environment.confirmDialog.accept();
+    await environment.restart.arm.click();
+    await environment.restart.confirm.click();
     await shell.expectStatus('Restart requested.');
   });
 
-  test('ENV-06 Restart asks first, and Cancel sends nothing', async ({ page, targetHost }) => {
+  test('ENV-06 Restart takes two clicks, and Cancel sends nothing', async ({ page, targetHost }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
-    const posts: string[] = [];
-    page.on('request', (request) => {
-      if (request.method() === 'POST' && request.url().includes('/restart')) posts.push(request.url());
-    });
+    const restarts: string[] = [];
+    page.on('request', writes('/restart', 'POST', restarts));
 
-    await environment.restart.click();
-    await expect(environment.confirmDialog.title).toHaveText('Restart the host API?');
-    await expect(environment.confirmDialog.message).toContainText(targetHost.name);
-    await environment.confirmDialog.dismiss();
-    await expect(environment.restart).toBeEnabled();
-    expect(posts).toEqual([]);
+    await expect(environment.restart.arm).toContainText('Restart application');
+    await expect(environment.restart.confirm).toHaveCount(0);
+    await environment.restart.arm.click();
+    await expect(environment.restart.confirm).toHaveText(/Yes, restart now/);
+    await expect(page.locator('.restart-warning')).toContainText('Every signed-in user is disconnected');
+    await environment.restart.cancel.click();
+    await expect(environment.restart.arm).toBeVisible();
+    await expect(environment.restart.confirm).toHaveCount(0);
+    expect(restarts).toEqual([]);
   });
 
-  test('ENV-07 Save with nothing changed says so without calling the API', async ({ page, targetHost, shell }) => {
+  test('ENV-07 Save is off until something changes, counts the changes, and Reset throws them away without calling the API', async ({ page, targetHost }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
+    const original = await environment.input(SAFE_SETTING).inputValue();
     const puts: string[] = [];
-    page.on('request', (request) => {
-      if (request.method() === 'PUT') puts.push(request.url());
-    });
+    page.on('request', writes('/environment', 'PUT', puts));
 
-    await expect(environment.save).toHaveText(/^\s*Save changes\s*$/);
-    await environment.saveBottom.click();
-    await shell.expectStatus('Nothing has changed.', 'info');
+    await expect(environment.save).toHaveText(/^\s*Save\s*$/);
+    await expect(environment.save).toBeDisabled();
+
+    await environment.setValue(SAFE_SETTING, String(Number(original) + 1));
+    await expect(environment.save).toHaveText(/Save \(1\)/);
+    await expect(environment.save).toBeEnabled();
+
+    await environment.reset.click();
+    await expect(environment.input(SAFE_SETTING)).toHaveValue(original);
+    await expect(environment.save).toBeDisabled();
     expect(puts).toEqual([]);
   });
 });
