@@ -470,7 +470,7 @@ test.describe('Host selection after sign-in (QC-665)', () => {
     test("HSEL-23 the drivers service token reads a host driver, gets 404 for anyone else, and cannot read the host's settings", async ({ request }) => {
       test.skip(
         !env.driversServiceClient,
-        "The drivers.service client secret lives only in the drivers API's user secrets; set DRIVERS_SERVICE_CLIENT_ID / DRIVERS_SERVICE_CLIENT_SECRET to run this case.",
+        "The host's drivers.service.<HostKey> client secret lives only in the drivers API's user secrets; set DRIVERS_SERVICE_CLIENT_ID / DRIVERS_SERVICE_CLIENT_SECRET to run this case.",
       );
       const host = new HostDriversServiceApi(request);
       const token = await host.clientCredentialsToken(env.driversServiceClient!);
