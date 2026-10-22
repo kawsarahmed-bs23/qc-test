@@ -21,6 +21,7 @@ export interface TestEnvironment {
   mobileClientId: string | null;
   hostClient: OidcClient | null;
   secondHostClient: OidcClient | null;
+  driverUiClient: OidcClient | null;
   adminApiClient: ServiceClient | null;
   identitySql: LocalSql | null;
   masterSql: LocalSql | null;
@@ -128,6 +129,7 @@ export function loadEnvironment(): TestEnvironment {
     mobileClientId: process.env.MOBILE_CLIENT_ID?.trim() || null,
     hostClient: oidcClient('HOST_CLIENT_ID', 'HOST_REDIRECT_URI'),
     secondHostClient: oidcClient('SECOND_HOST_CLIENT_ID', 'SECOND_HOST_REDIRECT_URI'),
+    driverUiClient: oidcClient('DRIVER_UI_CLIENT_ID', 'DRIVER_UI_REDIRECT_URI'),
     adminApiClient: serviceClient('ADMIN_API_CLIENT_ID', 'ADMIN_API_CLIENT_SECRET'),
     identityLogDir: name === 'local' && optional('IDENTITY_LOG_DIR') ? path.resolve(__dirname, '..', optional('IDENTITY_LOG_DIR')!) : null,
     identitySql: name === 'local' && sqlServer && identitySqlDatabase ? { server: sqlServer, database: identitySqlDatabase } : null,

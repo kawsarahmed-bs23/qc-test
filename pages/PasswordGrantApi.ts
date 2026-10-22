@@ -4,6 +4,12 @@ import { env } from '../config/environment';
 export const MOBILE_DRIVER_SCOPES = 'openid profile email quarryconnect.drivers.api offline_access';
 export const CHANGE_PASSWORD_GRANT = 'urn:quarryconnect:change_password';
 
+export interface DriverHost {
+  host_uuid: string;
+  display_name: string | null;
+  logo_url: string | null;
+}
+
 export interface TokenResponse {
   access_token?: string;
   refresh_token?: string;
@@ -12,6 +18,7 @@ export interface TokenResponse {
   error?: string;
   error_description?: string;
   password_errors?: string[];
+  hosts?: DriverHost[];
 }
 
 export interface TokenResult {
@@ -33,27 +40,29 @@ export interface AccountApiResult {
 export class PasswordGrantApi {
   constructor(private readonly request: APIRequestContext) {}
 
-  async passwordGrant(email: string, password: string): Promise<TokenResult> {
+  async passwordGrant(email: string, password: string, host?: string): Promise<TokenResult> {
     return this.token({
       grant_type: 'password',
       client_id: this.clientId(),
       username: email,
       password,
       scope: MOBILE_DRIVER_SCOPES,
+      ...hostParam(host),
     });
   }
 
-  async refresh(refreshToken: string): Promise<TokenResult> {
-    return this.token({ grant_type: 'refresh_token', client_id: this.clientId(), refresh_token: refreshToken });
+  async refresh(refreshToken: string, host?: string): Promise<TokenResult> {
+    return this.token({ grant_type: 'refresh_token', client_id: this.clientId(), refresh_token: refreshToken, ...hostParam(host) });
   }
 
-  async changePassword(email: string, currentPassword: string, newPassword: string | null): Promise<TokenResult> {
+  async changePassword(email: string, currentPassword: string, newPassword: string | null, host?: string): Promise<TokenResult> {
     const form: Record<string, string> = {
       grant_type: CHANGE_PASSWORD_GRANT,
       client_id: this.clientId(),
       username: email,
       password: currentPassword,
       scope: MOBILE_DRIVER_SCOPES,
+      ...hostParam(host),
     };
     if (newPassword !== null) {
       form.new_password = newPassword;
@@ -87,11 +96,22 @@ export class PasswordGrantApi {
     return response.status();
   }
 
-  async driversMe(accessToken: string): Promise<APIResponse> {
+  async driversMe(accessToken: string, options: DriversApiOptions = {}): Promise<APIResponse> {
+    return this.driversApi('/me', accessToken, options);
+  }
+
+  async driversMeHost(accessToken: string, options: DriversApiOptions = {}): Promise<APIResponse> {
+    return this.driversApi('/me/host', accessToken, options);
+  }
+
+  private async driversApi(path: string, accessToken: string, options: DriversApiOptions): Promise<APIResponse> {
     if (!env.driversApiUrl) {
       throw new Error('DRIVERS_API_URL is not set.');
     }
-    return this.request.get(`${env.driversApiUrl}/me`, { headers: { Authorization: `Bearer ${accessToken}` } });
+    return this.request.get(`${env.driversApiUrl}${path}`, {
+      headers: { ...options.headers, Authorization: `Bearer ${accessToken}` },
+      params: options.query,
+    });
   }
 
   private clientId(): string {
@@ -105,6 +125,15 @@ export class PasswordGrantApi {
     const response = await this.request.post(`${env.identityUrl}/connect/token`, { form });
     return { status: response.status(), body: (await response.json()) as TokenResponse };
   }
+}
+
+export interface DriversApiOptions {
+  headers?: Record<string, string>;
+  query?: Record<string, string>;
+}
+
+function hostParam(host: string | undefined): Record<string, string> {
+  return host === undefined ? {} : { host };
 }
 
 export function decodeJwt(token: string): { header: Record<string, unknown>; claims: Record<string, unknown> } {

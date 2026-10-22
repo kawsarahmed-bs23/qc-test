@@ -15,6 +15,7 @@ export class HostSignInFlow {
   constructor(
     private readonly page: Page,
     private readonly client: OidcClient,
+    private readonly scope: string = HOST_API_SCOPES,
   ) {
     this.error = page.locator('.custom-error-message[role="alert"]:not([hidden])');
   }
@@ -29,7 +30,7 @@ export class HostSignInFlow {
       client_id: this.client.clientId,
       redirect_uri: this.client.redirectUri,
       response_type: 'code',
-      scope: HOST_API_SCOPES,
+      scope: this.scope,
       code_challenge: createHash('sha256').update(this.verifier).digest('base64url'),
       code_challenge_method: 'S256',
       state: 'e2e',
@@ -68,7 +69,7 @@ export class HostSignInFlow {
     await expect(this.page).toHaveURL(/\/Account\/EnableAuthenticator/i);
   }
 
-  async exchange(request: APIRequestContext, code: string): Promise<TokenResult> {
+  async exchange(request: APIRequestContext, code: string, extra: Record<string, string> = {}): Promise<TokenResult> {
     const response = await request.post(`${env.identityUrl}/connect/token`, {
       form: {
         grant_type: 'authorization_code',
@@ -76,6 +77,7 @@ export class HostSignInFlow {
         code,
         redirect_uri: this.client.redirectUri,
         code_verifier: this.verifier,
+        ...extra,
       },
     });
     return { status: response.status(), body: await response.json() };
