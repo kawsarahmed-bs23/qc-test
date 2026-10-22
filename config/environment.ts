@@ -14,6 +14,7 @@ export interface TestEnvironment {
   admin: Credentials | null;
   driver: Credentials | null;
   appUrl: string | null;
+  appApiUrl: string | null;
   appTimeZone: string | null;
   appAdmin: Credentials | null;
   localSql: LocalSql | null;
@@ -23,6 +24,7 @@ export interface TestEnvironment {
   secondHostClient: OidcClient | null;
   driverUiClient: OidcClient | null;
   adminApiClient: ServiceClient | null;
+  driversServiceClient: ServiceClient | null;
   identitySql: LocalSql | null;
   masterSql: LocalSql | null;
   identityLogDir: string | null;
@@ -122,6 +124,7 @@ export function loadEnvironment(): TestEnvironment {
     admin: credentials('ADMIN_EMAIL', 'ADMIN_PASSWORD'),
     driver: credentials('DRIVER_EMAIL', 'DRIVER_PASSWORD'),
     appUrl: optional('APP_URL'),
+    appApiUrl: optional('APP_API_URL'),
     appTimeZone: process.env.APP_TIME_ZONE?.trim() || null,
     appAdmin: credentials('APP_ADMIN_EMAIL', 'APP_ADMIN_PASSWORD'),
     localSql: name === 'local' && sqlServer && sqlDatabase ? { server: sqlServer, database: sqlDatabase } : null,
@@ -131,6 +134,7 @@ export function loadEnvironment(): TestEnvironment {
     secondHostClient: oidcClient('SECOND_HOST_CLIENT_ID', 'SECOND_HOST_REDIRECT_URI'),
     driverUiClient: oidcClient('DRIVER_UI_CLIENT_ID', 'DRIVER_UI_REDIRECT_URI'),
     adminApiClient: serviceClient('ADMIN_API_CLIENT_ID', 'ADMIN_API_CLIENT_SECRET'),
+    driversServiceClient: serviceClient('DRIVERS_SERVICE_CLIENT_ID', 'DRIVERS_SERVICE_CLIENT_SECRET'),
     identityLogDir: name === 'local' && optional('IDENTITY_LOG_DIR') ? path.resolve(__dirname, '..', optional('IDENTITY_LOG_DIR')!) : null,
     identitySql: name === 'local' && sqlServer && identitySqlDatabase ? { server: sqlServer, database: identitySqlDatabase } : null,
     masterSql: name === 'local' && sqlServer && masterSqlDatabase ? { server: sqlServer, database: masterSqlDatabase } : null,

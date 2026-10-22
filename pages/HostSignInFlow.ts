@@ -6,6 +6,7 @@ import { decodeJwt, type TokenResult } from './PasswordGrantApi';
 
 export const HOST_API_SCOPES = 'openid profile quarryconnect.api';
 export const NO_HOST_ACCESS = "doesn't have access to this site";
+const FLOW_STATE = 'e2e';
 
 export class HostSignInFlow {
   readonly error: Locator;
@@ -22,7 +23,7 @@ export class HostSignInFlow {
 
   async open(): Promise<void> {
     this.page.on('request', (request) => {
-      if (!this.callbackUrl && request.url().startsWith(this.client.redirectUri)) {
+      if (!this.callbackUrl && request.url().startsWith(this.client.redirectUri) && isFlowCallback(request.url())) {
         this.callbackUrl = request.url();
       }
     });
@@ -33,7 +34,7 @@ export class HostSignInFlow {
       scope: this.scope,
       code_challenge: createHash('sha256').update(this.verifier).digest('base64url'),
       code_challenge_method: 'S256',
-      state: 'e2e',
+      state: FLOW_STATE,
       nonce: 'e2e',
     });
     await this.page.goto(`${env.identityUrl}/connect/authorize?${query}`).catch((error: Error) => {
@@ -88,4 +89,9 @@ export class HostSignInFlow {
     expect(result.status, JSON.stringify(result.body)).toBe(200);
     return decodeJwt(result.body.access_token!).claims;
   }
+}
+
+function isFlowCallback(url: string): boolean {
+  const query = new URL(url).searchParams;
+  return query.get('state') === FLOW_STATE && (query.has('code') || query.has('error'));
 }

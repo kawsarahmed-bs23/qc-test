@@ -8,7 +8,7 @@ export function canSeedLocalDb(): boolean {
   return env.localSql !== null;
 }
 
-export function runSeedScript(fileName: string): string {
+export function runSeedScript(fileName: string, variables: Record<string, string> = {}): string {
   if (!env.localSql) {
     throw new Error('LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE are not set, or TEST_ENV is not local.');
   }
@@ -16,7 +16,7 @@ export function runSeedScript(fileName: string): string {
   return execFileSync(
     'sqlcmd',
     ['-S', env.localSql.server, '-d', env.localSql.database, '-E', '-C', '-I', '-b', '-i', path.join(SEED_DIR, fileName)],
-    { encoding: 'utf8' },
+    { encoding: 'utf8', env: { ...process.env, ...variables } },
   );
 }
 

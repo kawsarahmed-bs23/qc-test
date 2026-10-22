@@ -1,10 +1,11 @@
 import { randomUUID } from 'crypto';
 import { test, expect, signedOut } from '../fixtures/test';
-import { canUseIdentityDb, queryIdentityDb, runIdentitySeedScript } from '../fixtures/localDb';
+import { canSeedLocalDb, canUseIdentityDb, queryIdentityDb, querySingleValue, runIdentitySeedScript, runSeedScript } from '../fixtures/localDb';
 import { canReadIdentityLog, identityLogSince, markIdentityLog } from '../fixtures/identityLog';
+import { HostDriversServiceApi, UNKNOWN_USER_ID } from '../pages/HostDriversServiceApi';
 import { HostSignInFlow } from '../pages/HostSignInFlow';
 import { IdentityAdminApi } from '../pages/IdentityAdminApi';
-import { decodeJwt, PasswordGrantApi, type TokenResponse, type TokenResult } from '../pages/PasswordGrantApi';
+import { decodeJwt, isDriversApiReachable, PasswordGrantApi, type TokenResponse, type TokenResult } from '../pages/PasswordGrantApi';
 import { IdentityRootLanding, NoHostPage, SELECT_HOST_INVALID, SelectHostPage } from '../pages/SelectHostPage';
 import { env, type Credentials } from '../config/environment';
 
@@ -18,6 +19,10 @@ const GRANT_THROTTLE_LINE = 'Password grant refused: too many attempts';
 const GRANT_THROTTLED =
   "Identity's per-IP password-grant throttle (20 per 15 minutes) is spent by the earlier specs in this run; run the HSEL cases on their own after restarting Identity.";
 const HOST_KEY_PREFIX = 'e2e-qc665';
+const TRUCK_ORGANISATION_ID = 43;
+const HOST_DRIVER = { firstName: 'Hostfirst', lastName: 'Hostlast', phoneNumber: '5125550665' };
+const HOST_API_DOWN = 'The host API (APP_API_URL) does not answer /api/drivers-service with 401, so it is down or lacks the QC-665 drivers-service endpoint.';
+const DRIVERS_API_DOWN = 'The drivers API (DRIVERS_API_URL) does not answer /health.';
 
 type SeedUser = 'driver0' | 'driver1' | 'driver2' | 'host1' | 'host2';
 
@@ -64,6 +69,10 @@ function hostUiUrl(hostId: number): string {
 
 function userId(user: SeedUser): string {
   return queryIdentityDb(`SELECT Id FROM Users WHERE NormalizedEmail = UPPER(${sqlText(email(user))})`)!;
+}
+
+function organisationName(where: string): string {
+  return querySingleValue(`SELECT OrganisationName FROM auth.Organisations WHERE ${where}`)!;
 }
 
 function hostsOf(body: TokenResponse): string[] {
@@ -357,6 +366,122 @@ test.describe('Host selection after sign-in (QC-665)', () => {
       const none = await grant(() => api.passwordGrant(email('driver1'), env.driver!.password));
       expect(none.status).toBe(400);
       expect(none.body).toEqual(NO_HOST_AVAILABLE);
+    });
+  });
+
+  test.describe("drivers API /me with the host's own driver profile", () => {
+    test.describe.configure({ mode: 'serial' });
+    test.skip(!canSeedLocalDb(), "Needs the host API's local database (LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE) to seed driver1's host row.");
+    test.skip(!canReadIdentityLog(), "Needs Identity's local log folder (IDENTITY_LOG_DIR) to tell the password-grant throttle from a real refusal.");
+    test.skip(!env.driversApiUrl, 'The drivers API is not configured for this environment (DRIVERS_API_URL).');
+    test.skip(!env.appApiUrl, 'The host API is not configured for this environment (APP_API_URL).');
+
+    const tokens: Partial<Record<'driver1', string>> = {};
+    let driver1Id = '';
+
+    test.beforeAll(async ({ playwright }) => {
+      const request = await playwright.request.newContext({ ignoreHTTPSErrors: true });
+      try {
+        test.skip(!(await HostDriversServiceApi.isReachable(request)), HOST_API_DOWN);
+        test.skip(!(await isDriversApiReachable(request)), DRIVERS_API_DOWN);
+      } finally {
+        await request.dispose();
+      }
+      seedUsers();
+      driver1Id = userId('driver1');
+      runSeedScript('host-qc665-driver.apply.sql', { UserId: driver1Id, TruckOrganisationId: String(TRUCK_ORGANISATION_ID) });
+    });
+
+    test.afterAll(() => {
+      runSeedScript('host-qc665.remove.sql');
+    });
+
+    test("HSEL-20 /me for a one-host driver merges the host's profile, truck, vendor and host name, and a host named in a header or the query changes nothing", async ({ request }) => {
+      const api = new PasswordGrantApi(request);
+      const result = await grant(() => api.passwordGrant(email('driver1'), env.driver!.password));
+      expect(result.status, JSON.stringify(result.body.error)).toBe(200);
+      const token = result.body.access_token!;
+      tokens.driver1 = token;
+
+      const expected = {
+        hostUuid: first,
+        userUuid: driver1Id,
+        role: 'Driver',
+        email: email('driver1'),
+        ...HOST_DRIVER,
+        fullName: `${HOST_DRIVER.firstName} ${HOST_DRIVER.lastName}`,
+        hostDataAvailable: true,
+        host: {
+          hostUuid: first,
+          name: env.hostName,
+          truck: organisationName(`OrganisationID = ${TRUCK_ORGANISATION_ID}`),
+          vendor: organisationName(`OrganisationID = (SELECT ParentOrganisationIdFk FROM auth.Organisations WHERE OrganisationID = ${TRUCK_ORGANISATION_ID})`),
+          isActiveAtHost: true,
+        },
+      };
+      const forged = { 'X-Host-Key': SECOND_HOST_KEY, 'X-Host': second, 'X-Host-Uuid': second };
+
+      for (const [label, options] of [
+        ['plain', {}],
+        ['forged headers', { headers: forged }],
+        ['forged query', { query: { host: second, hostUuid: second } }],
+        ['both', { headers: forged, query: { host: second } }],
+      ] as const) {
+        const me = await api.driversMe(token, options);
+        expect(me.status(), label).toBe(200);
+        expect((await me.json()).data, label).toMatchObject(expected);
+      }
+    });
+
+    test('HSEL-21 /me falls back to the token alone with host null when no host is picked, the host is unknown to the drivers API, or the driver is not in the host database', async ({ request }) => {
+      const api = new PasswordGrantApi(request);
+      const tokenProfile = { role: 'Driver', email: email('driver2'), firstName: 'E2E', lastName: 'QC-665 driver2', host: null, hostDataAvailable: false };
+
+      const unpicked = await grant(() => api.passwordGrant(email('driver2'), env.driver!.password));
+      expect(unpicked.status, JSON.stringify(unpicked.body.error)).toBe(200);
+      const atFirst = await grant(() => api.passwordGrant(email('driver2'), env.driver!.password, first));
+      expect(atFirst.status, JSON.stringify(atFirst.body.error)).toBe(200);
+      const atSecond = await api.refresh(unpicked.body.refresh_token!, second);
+      expect(atSecond.status, JSON.stringify(atSecond.body.error)).toBe(200);
+
+      for (const [label, token, hostUuid] of [
+        ['no host picked', unpicked.body.access_token!, null],
+        [`${SECOND_HOST_KEY}, not in the drivers API's hosts`, atSecond.body.access_token!, second],
+        ['the first host, which has no row for driver2', atFirst.body.access_token!, first],
+      ] as const) {
+        const me = await api.driversMe(token);
+        expect(me.status(), label).toBe(200);
+        expect((await me.json()).data, label).toMatchObject({ ...tokenProfile, hostUuid });
+      }
+    });
+
+    test("HSEL-22 the host's drivers-service endpoint refuses no token and a driver's own token with 401 and the Admin service token with 403", async ({ request }) => {
+      test.skip(!tokens.driver1, GRANT_THROTTLED);
+      const host = new HostDriversServiceApi(request);
+
+      expect((await host.driver(driver1Id)).status).toBe(401);
+      expect((await host.driver(driver1Id, tokens.driver1)).status).toBe(401);
+
+      test.skip(!env.adminApiClient, "Needs Identity's administration service client (ADMIN_API_CLIENT_ID / ADMIN_API_CLIENT_SECRET).");
+      const adminService = await host.clientCredentialsToken(env.adminApiClient!);
+      expect((await host.driver(driver1Id, adminService)).status).toBe(403);
+    });
+
+    test("HSEL-23 the drivers service token reads a host driver, gets 404 for anyone else, and cannot read the host's settings", async ({ request }) => {
+      test.skip(
+        !env.driversServiceClient,
+        "The drivers.service client secret lives only in the drivers API's user secrets; set DRIVERS_SERVICE_CLIENT_ID / DRIVERS_SERVICE_CLIENT_SECRET to run this case.",
+      );
+      const host = new HostDriversServiceApi(request);
+      const token = await host.clientCredentialsToken(env.driversServiceClient!);
+
+      const driver = await host.driver(driver1Id, token);
+      expect(driver.status).toBe(200);
+      expect(driver.body.data).toMatchObject({ ...HOST_DRIVER, email: email('driver1'), isActive: true });
+
+      expect((await host.driver(UNKNOWN_USER_ID, token)).status).toBe(404);
+      expect((await host.driver('not-a-guid', token)).status).toBe(404);
+      expect((await host.environmentSettings(token)).status).toBe(403);
     });
   });
 

@@ -132,6 +132,15 @@ export interface DriversApiOptions {
   query?: Record<string, string>;
 }
 
+export async function isDriversApiReachable(request: APIRequestContext): Promise<boolean> {
+  if (!env.driversApiUrl) return false;
+  try {
+    return (await request.get(`${env.driversApiUrl}/health`, { timeout: 10_000 })).ok();
+  } catch {
+    return false;
+  }
+}
+
 function hostParam(host: string | undefined): Record<string, string> {
   return host === undefined ? {} : { host };
 }
