@@ -483,6 +483,45 @@ test.describe('Host selection after sign-in (QC-665)', () => {
       expect((await host.driver('not-a-guid', token)).status).toBe(404);
       expect((await host.environmentSettings(token)).status).toBe(403);
     });
+
+    test('HSEL-24 a Driver UI (web) sign-in gets the host profile from /me like mobile, and a web pick of a host the drivers API does not know falls back to the token', async ({ page, request }) => {
+      test.skip(!env.driverUiClient, 'The Driver UI client is not configured for this environment (DRIVER_UI_CLIENT_ID / DRIVER_UI_REDIRECT_URI).');
+      const api = new PasswordGrantApi(request);
+
+      const flow = new HostSignInFlow(page, env.driverUiClient!, DRIVER_UI_SCOPES);
+      await flow.signIn(credentials('driver1'));
+      const web = await flow.exchange(request, await flow.expectCallback());
+      expect(web.status, JSON.stringify(web.body.error)).toBe(200);
+      expect(claimsOf(web.body).client_id).toBe(env.driverUiClient!.clientId);
+
+      const me = await api.driversMe(web.body.access_token!);
+      expect(me.status()).toBe(200);
+      expect((await me.json()).data).toMatchObject({
+        hostUuid: first,
+        ...HOST_DRIVER,
+        hostDataAvailable: true,
+        host: {
+          hostUuid: first,
+          name: env.hostName,
+          truck: organisationName(`OrganisationID = ${TRUCK_ORGANISATION_ID}`),
+          vendor: organisationName(`OrganisationID = (SELECT ParentOrganisationIdFk FROM auth.Organisations WHERE OrganisationID = ${TRUCK_ORGANISATION_ID})`),
+          isActiveAtHost: true,
+        },
+      });
+
+      await page.context().clearCookies();
+      const pick = new HostSignInFlow(page, env.driverUiClient!, DRIVER_UI_SCOPES);
+      await pick.signIn(credentials('driver2'));
+      const picker = new SelectHostPage(page);
+      await picker.expectVisible();
+      await picker.choose(second);
+      const picked = await pick.exchange(request, await pick.expectCallback());
+      expect(picked.status, JSON.stringify(picked.body.error)).toBe(200);
+
+      const fallback = await api.driversMe(picked.body.access_token!);
+      expect(fallback.status()).toBe(200);
+      expect((await fallback.json()).data).toMatchObject({ hostUuid: second, email: email('driver2'), host: null, hostDataAvailable: false });
+    });
   });
 
   test.describe("Identity administration API hosts' UUID", { tag: '@write' }, () => {
