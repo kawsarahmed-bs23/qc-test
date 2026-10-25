@@ -55,6 +55,10 @@ export class DashboardPage {
     return this.page.locator(`#host-cards [data-testid="host-card"][data-host-uuid="${uuid}" i]`);
   }
 
+  hostFeatures(uuid: string): Locator {
+    return this.hostCard(uuid).locator('[data-host-features]');
+  }
+
   signInState(uuid: string): Locator {
     return this.hostCard(uuid).locator('.qc-badge').filter({ hasText: /^(Sign-in ready|No return address)$/ });
   }

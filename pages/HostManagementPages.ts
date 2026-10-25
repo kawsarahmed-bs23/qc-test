@@ -131,7 +131,10 @@ export class HostFeaturesPage {
   readonly save: Locator;
   readonly errors: Locator;
   readonly ruleErrors: Locator;
-  readonly productError: Locator;
+  readonly hostError: Locator;
+  readonly pending: Locator;
+  readonly pendingBadges: Locator;
+  readonly lastPushed: Locator;
   readonly empty: Locator;
   readonly mfaForm: Locator;
   readonly mfa: Locator;
@@ -142,7 +145,10 @@ export class HostFeaturesPage {
     this.save = page.locator('#features-save');
     this.errors = page.locator('#feature-errors');
     this.ruleErrors = page.locator('#feature-errors [data-testid="feature-rule-error"]');
-    this.productError = page.locator('#features-error');
+    this.hostError = page.locator('#features-host-error');
+    this.pending = page.locator('#features-pending');
+    this.pendingBadges = page.locator('#product-features [data-testid="feature-pending"]');
+    this.lastPushed = page.locator('#features-last-pushed');
     this.empty = page.locator('#features-empty');
     this.mfaForm = page.locator('#mfa-form');
     this.mfa = page.locator('#mfa-enabled button[role="switch"]');
@@ -155,17 +161,8 @@ export class HostFeaturesPage {
     await waitForIdle(this.page);
   }
 
-  async openUnreachable(uuid: string): Promise<void> {
-    await openAdmin(this.page, `/hosts/${uuid}/features`);
-    await expect(this.savedCopy).toBeVisible();
-  }
-
-  get savedCopy(): Locator {
-    return this.page.locator('#features-saved-copy');
-  }
-
-  savedFeature(key: string): Locator {
-    return this.page.locator(`#features-saved-copy [data-saved-feature="${key}"]`);
+  pendingBadge(key: string): Locator {
+    return this.row(key).locator('[data-testid="feature-pending"]');
   }
 
   feature(key: string): Locator {

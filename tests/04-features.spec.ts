@@ -115,12 +115,12 @@ test.describe('Feature switches (QC-742)', () => {
     await expect(features.rule('maps')).toHaveText('');
   });
 
-  test('FEAT-06 saving with nothing changed says so and changes nothing', async ({ page, targetHost, shell }) => {
+  test('FEAT-06 saving with nothing changed says so, sends the saved set to the host again and changes nothing', { tag: '@write' }, async ({ page, targetHost, shell }) => {
     const features = new HostFeaturesPage(page);
     await features.open(targetHost.uuid);
     const before = await features.enabledKeys();
     await features.save.click();
-    await shell.expectStatus('No changes to save.');
+    await shell.expectStatus('No changes. The host has them now.');
     await features.open(targetHost.uuid);
     expect(await features.enabledKeys()).toEqual(before);
   });

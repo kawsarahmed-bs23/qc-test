@@ -40,25 +40,24 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     test.skip(!canUseMasterDb(), 'Needs MASTER_SQL_DATABASE (local only).');
   });
 
-  test('MIR-01 opening Features copies every product feature into HOST_MASTER, next to the MFA row Admin saves there itself', async ({ page, targetHost }) => {
+  test('MIR-01 the Features page shows the HOST_MASTER value of every catalog feature, and opening it writes nothing to HOST_MASTER (QC-775)', async ({ page, targetHost }) => {
+    const id = hostId(targetHost.uuid);
+    const before = masterFeatures(id);
+    const lastWrite = () => queryMasterDb(`SELECT CONVERT(varchar(30), MAX(Updated), 126) FROM app.HostFeatures WHERE HostID_FK = ${id}`);
+    const writtenBefore = lastWrite();
+    const syncedBefore = lastSync(id, 'Features').syncedAt;
+
     const features = new HostFeaturesPage(page);
     await features.open(targetHost.uuid);
-
-    const keys = await features.featureKeys();
     const enabled = new Set(await features.enabledKeys());
-    const mfaOn = await features.mfaOn();
-    const id = hostId(targetHost.uuid);
-
-    const expected: Record<string, boolean> = { mfa: mfaOn };
-    for (const key of keys) {
-      expected[key] = enabled.has(key);
+    for (const key of await features.featureKeys()) {
+      expect(enabled.has(key), key).toBe(before[key] ?? false);
     }
+    expect(await features.mfaOn()).toBe(before.mfa ?? false);
 
-    expect(masterFeatures(id)).toEqual(expected);
-
-    const sync = lastSync(id, 'Features');
-    expect(sync.status, 'Features sync status').toBe('Succeeded');
-    expect(sync.ageSeconds, 'Features synced just now').toBeLessThan(120);
+    expect(masterFeatures(id)).toEqual(before);
+    expect(lastWrite()).toBe(writtenBefore);
+    expect(lastSync(id, 'Features').syncedAt, 'opening the page sends nothing').toBe(syncedBefore);
   });
 
   test('MIR-02 opening Environment copies every setting into HOST_MASTER, with no secret values', async ({ page, targetHost }) => {
@@ -109,7 +108,7 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     expect(masterFeatures(id).maps).toBe(original);
   });
 
-  test('MIR-04 when the host API is unreachable, both pages show the HOST_MASTER copy read-only', { tag: '@write' }, async ({ page, targetHost }) => {
+  test('MIR-04 when the host API is unreachable, Features still lists the HOST_MASTER values for editing with a warning, and Environment shows the saved copy read-only', { tag: '@write' }, async ({ page, targetHost }) => {
     test.setTimeout(120_000);
     const id = hostId(targetHost.uuid);
     const features = new HostFeaturesPage(page);
@@ -118,7 +117,7 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     await features.open(targetHost.uuid);
     await environment.open(targetHost.uuid);
     const saved = masterFeatures(id);
-    const syncedBefore = lastSync(id, 'Features').syncedAt;
+    const syncBefore = lastSync(id, 'Features');
     const secretRows = Number(queryMasterDb(`SELECT COUNT(*) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND IsSensitive = 1`));
     const originalUrl = queryMasterDb(`SELECT ApiBaseUrl FROM app.Hosts WHERE HostID = ${id}`);
     const savedValue = queryMasterDb(
@@ -128,16 +127,17 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     try {
       queryMasterDb(`UPDATE app.Hosts SET ApiBaseUrl = ${sqlText(UNREACHABLE_API)} WHERE HostID = ${id}`);
 
-      await features.openUnreachable(targetHost.uuid);
-      await expect(features.productError).toContainText('The host API could not be reached');
-      await expect(features.save).toHaveCount(0);
-      await expect(features.savedCopy).toContainText('Read-only');
-      await expect(features.savedFeature('maps')).toContainText(saved.maps ? 'On' : 'Off');
-      await expect(features.savedFeature('mfa')).toHaveCount(0);
+      await features.open(targetHost.uuid);
+      await expect(features.hostError).toContainText('could not be reached');
+      await expect(features.pending).toHaveCount(0);
+      await expect(features.pendingBadges).toHaveCount(0);
+      await expect(features.save).toBeEnabled();
+      await expect(features.checkbox('maps')).toBeEnabled();
+      await expect(features.checkbox('maps')).toBeChecked({ checked: saved.maps ?? false });
+      await expect(features.feature('mfa')).toHaveCount(0);
 
-      const failed = lastSync(id, 'Features');
-      expect(failed.status).toBe('Failed');
-      expect(failed.syncedAt, 'the last good sync time is kept').toBe(syncedBefore);
+      const syncAfter = lastSync(id, 'Features');
+      expect({ status: syncAfter.status, syncedAt: syncAfter.syncedAt }, 'reading an unreachable host records nothing').toEqual({ status: syncBefore.status, syncedAt: syncBefore.syncedAt });
       expect(masterFeatures(id), 'a failed read changes no feature row').toEqual(saved);
 
       await environment.openUnreachable(targetHost.uuid);
@@ -152,7 +152,7 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     }
 
     await features.open(targetHost.uuid);
-    expect(lastSync(id, 'Features').status).toBe('Succeeded');
+    await expect(features.hostError).toHaveCount(0);
     await environment.open(targetHost.uuid);
     expect(lastSync(id, 'Environment').status).toBe('Succeeded');
   });

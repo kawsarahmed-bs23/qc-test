@@ -110,8 +110,8 @@ test.describe('Hosts: list, add, details (QC-742)', () => {
 
       const features = new HostFeaturesPage(page);
       await page.goto(adminUrl(`/hosts/${uuid}/features`));
-      await expect(features.productError).toBeVisible();
-      await expect(features.save).toHaveCount(0);
+      await expect(features.hostError).toContainText('no API address');
+      await expect(features.save).toBeVisible();
 
       await form.openDetail(uuid);
       await form.deactivate.click();
