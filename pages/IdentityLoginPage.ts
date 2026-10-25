@@ -35,6 +35,29 @@ export class IdentityLoginPage {
   }
 }
 
+export class IdentityBrandingView {
+  readonly logo: Locator;
+  readonly favicon: Locator;
+  readonly subtitle: Locator;
+  readonly background: Locator;
+
+  constructor(private readonly page: Page) {
+    this.logo = page.locator('.daxa-form .title .logo img');
+    this.favicon = page.locator('head link[rel="icon"]');
+    this.subtitle = page.locator('.daxa-form .title p');
+    this.background = page.locator('.qc-host-background');
+  }
+
+  async logoLoaded(): Promise<boolean> {
+    return this.logo.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0);
+  }
+
+  async backgroundImageUrl(): Promise<string | null> {
+    const style = await this.background.getAttribute('style');
+    return style?.match(/background-image:\s*url\('([^']+)'\)/)?.[1] ?? null;
+  }
+}
+
 export class IdentityTwoStepPage {
   readonly code: Locator;
   readonly digits: Locator;

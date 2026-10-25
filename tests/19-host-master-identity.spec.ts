@@ -5,6 +5,7 @@ import {
   canSeedLocalDb,
   canUseDriversDb,
   canUseMasterDb,
+  querySingleValue,
   queryMasterDb,
   runDriversSeedScript,
   runMasterSeedScript,
@@ -20,10 +21,11 @@ import {
 } from '../fixtures/throwawayUsers';
 import { AdminApi, accessTokenFromPage, adminTokenFromState, canUseAdminApi } from '../pages/AdminApi';
 import { adminUrl, openAdmin } from '../pages/AdminShell';
-import { HostFeaturesPage, HostSignInSettingsPage, type HostAllowedUrls, type HostBranding } from '../pages/HostManagementPages';
+import { BRANDING_IMAGE_TYPES, HostFeaturesPage, HostSignInSettingsPage, type BrandingImageType, type HostAllowedUrls, type HostBranding } from '../pages/HostManagementPages';
+import { HostBrandingApi, oversizedPng, publicImageUrl, solidPng } from '../pages/HostBrandingApi';
 import { DashboardPage, HostNav } from '../pages/HostPages';
 import { authorizeUrl, HostSignInFlow, identityLanding } from '../pages/HostSignInFlow';
-import { IdentityLoginPage, IdentityTwoStepPage } from '../pages/IdentityLoginPage';
+import { escape, IdentityBrandingView, IdentityLoginPage, IdentityTwoStepPage } from '../pages/IdentityLoginPage';
 import { decodeJwt, isDriversApiReachable, PasswordGrantApi, type TokenResponse } from '../pages/PasswordGrantApi';
 import { env, type OidcClient } from '../config/environment';
 
@@ -173,17 +175,18 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await identity.context().close();
     });
 
-    test('HMI-05 the Sign-in page refuses an insecure logo, a bad colour, a relative return address and an empty return list, and saves nothing', async ({ page, shell }) => {
+    test('HMI-05 the Sign-in page refuses an empty display name, bad colours, a relative return address and an empty return list, and saves nothing', async ({ page, shell }) => {
       const settings = new HostSignInSettingsPage(page);
       await settings.open(hostUuid);
       const branding = await settings.readBranding();
       const urls = await settings.readUrls();
 
-      await settings.fillBranding({ logoUrl: 'http://insecure.example/logo.png', primaryColor: 'red' });
+      await settings.fillBranding({ displayName: '', primaryColor: 'red', accentColor: '#12345' });
       await settings.brandingSave.click();
-      await expect(settings.fieldError('logoUrl')).toHaveText("Enter the logo's full address, starting with https://.");
+      await expect(settings.fieldError('displayName')).toHaveText('Display name is required.');
       await expect(settings.fieldError('primaryColor')).toHaveText('Use a colour like #2c72ee.');
-      await expect(settings.fieldError('displayName')).toHaveCount(0);
+      await expect(settings.fieldError('accentColor')).toHaveText('Use a colour like #c8102e.');
+      await expect(settings.fieldError('loginSubtitle')).toHaveCount(0);
 
       await settings.fillUrls({ returnUrls: ['/relative'] });
       await settings.urlsSave.click();
@@ -197,6 +200,21 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await settings.open(hostUuid);
       expect(await settings.readBranding()).toEqual(branding);
       expect(await settings.readUrls()).toEqual(urls);
+    });
+
+    test('HMI-20 a host with no API address shows the no-API warning, cannot copy or upload, and lists all six images as not set', async ({ page }) => {
+      const settings = new HostSignInSettingsPage(page);
+      await settings.open(hostUuid);
+      await expect(settings.noApi).toBeVisible();
+      await expect(settings.copyFromHost).toBeDisabled();
+      for (const type of BRANDING_IMAGE_TYPES) {
+        await expect(settings.imageCard(type), type).toBeVisible();
+        await expect(settings.imageEmpty(type), type).toHaveText('Not set');
+        await expect(settings.imagePreview(type), type).toHaveCount(0);
+        await expect(settings.imageUpload(type), type).toBeDisabled();
+        await expect(settings.imageRemove(type), type).toHaveCount(0);
+      }
+      await expect(page.locator('#branding-logoUrl, #branding-faviconUrl')).toHaveCount(0);
     });
 
     test('HMI-06 a return address added on the Sign-in page is accepted by Identity, and once removed sends people to the public site', async ({ page, shell }) => {
@@ -293,6 +311,281 @@ test.describe('Identity holds no host information (QC-775)', () => {
         removeIdentityUsers(user.email);
       }
       expect(mfaRow()).toBe('0');
+    });
+  });
+
+  test.describe('host branding mirrors the host database', { tag: '@write' }, () => {
+    test.describe.configure({ mode: 'serial' });
+    test.skip(!canUseMasterDb() || !canSeedLocalDb(), "Needs HOST_MASTER and the host's local database (MASTER_SQL_DATABASE, LOCAL_SQL_DATABASE).");
+    test.skip(!env.appApiUrl || !env.hostClient, 'Needs the host API (APP_API_URL) and the target host client (HOST_CLIENT_ID).');
+
+    const SAFE_IMAGE: BrandingImageType = 'login-background';
+    const UNSET_IMAGE: BrandingImageType = 'logo-large';
+    const COPIED_IMAGES: BrandingImageType[] = ['logo-main', 'logo-menu', 'logo-system', 'logo-icon'];
+    const SUBTITLE = 'E2E QC-775 branding subtitle';
+    const PATH_COLUMNS: Record<BrandingImageType, string> = {
+      'logo-main': 'LogoMainPath',
+      'logo-menu': 'LogoMenuPath',
+      'logo-system': 'LogoSystemPath',
+      'logo-icon': 'LogoIconPath',
+      'logo-large': 'LogoLargePath',
+      'login-background': 'LoginBackgroundPath',
+    };
+
+    let hostUuid = '';
+    let hostId = '';
+    let apiBaseUrl = '';
+    let orgId = '';
+    let lastChangeLog = 0;
+    let original: { loginSubtitle: string | null; primaryColor: string | null; accentColor: string | null };
+    let slotsFree = false;
+
+    const masterColumn = (column: string) => queryMasterDb(`SELECT ${column} FROM app.HostBrandings WHERE HostID_FK = ${hostId} AND Active = 1`);
+    const hostColumn = (column: string) => querySingleValue(`SELECT ${column} FROM app.HostSettings WHERE OrganisationID_FK = ${orgId}`);
+    const uploadedKey = () => `logo/${orgId}/${SAFE_IMAGE}.png`;
+    const publicRoute = (type: BrandingImageType) => new RegExp(`^${escape(publicImageUrl(apiBaseUrl, type))}\\?v=\\d{14}$`);
+    const sqlText = (value: string | null) => (value === null ? 'NULL' : `N'${value.replace(/'/g, "''")}'`);
+
+    async function hostSignInPage(browser: Browser): Promise<{ identity: Page; view: IdentityBrandingView; reload: () => Promise<void> }> {
+      const identity = await signedOutPage(browser);
+      const view = new IdentityBrandingView(identity);
+      const reload = async () => {
+        await new HostSignInFlow(identity, env.hostClient!).open();
+        await new IdentityLoginPage(identity).expectVisible();
+      };
+      return { identity, view, reload };
+    }
+
+    test.beforeAll(({ targetHost }) => {
+      hostUuid = targetHost.uuid;
+      const where = `LOWER(CONVERT(nvarchar(36), HostUUID)) = N'${hostUuid}'`;
+      hostId = queryMasterDb(`SELECT HostID FROM app.Hosts WHERE ${where}`)!;
+      apiBaseUrl = queryMasterDb(`SELECT ApiBaseUrl FROM app.Hosts WHERE ${where}`) ?? '';
+      orgId = queryMasterDb(`SELECT HostOrganisationID FROM app.Hosts WHERE ${where}`) ?? '';
+      expect(apiBaseUrl, 'the target host has an API address in HOST_MASTER').toMatch(/^https?:\/\//);
+      expect(orgId, 'the target host has an organisation id').toMatch(/^\d+$/);
+      lastChangeLog = Number(queryMasterDb('SELECT ISNULL(MAX(ChangeLogID), 0) FROM app.ChangeLogs'));
+      original = {
+        loginSubtitle: masterColumn('LoginSubtitle'),
+        primaryColor: masterColumn('PrimaryColor'),
+        accentColor: masterColumn('AccentColor'),
+      };
+      slotsFree = hostColumn(PATH_COLUMNS[SAFE_IMAGE]) === null && hostColumn(PATH_COLUMNS[UNSET_IMAGE]) === null;
+    });
+
+    test.afterAll(async ({ request }) => {
+      if (hostColumn(PATH_COLUMNS[SAFE_IMAGE]) === uploadedKey()) {
+        await new HostBrandingApi(request).adminDeleteImage(hostUuid, SAFE_IMAGE, adminTokenFromState());
+      }
+      if (hostColumn('LoginSubtitle') === SUBTITLE) {
+        querySingleValue(`UPDATE app.HostSettings SET LoginSubtitle = NULL WHERE OrganisationID_FK = ${orgId}`);
+      }
+      const restore = `LoginSubtitle = ${sqlText(original.loginSubtitle)}, PrimaryColor = ${sqlText(original.primaryColor)}, AccentColor = ${sqlText(original.accentColor)}`;
+      const differs = `ISNULL(LoginSubtitle, N'') <> ISNULL(${sqlText(original.loginSubtitle)}, N'') OR ISNULL(PrimaryColor, N'') <> ISNULL(${sqlText(original.primaryColor)}, N'') OR ISNULL(AccentColor, N'') <> ISNULL(${sqlText(original.accentColor)}, N'')`;
+      queryMasterDb(`UPDATE app.HostBrandings SET ${restore} WHERE HostID_FK = ${hostId} AND Active = 1 AND (${differs})`);
+      if (hostColumn(PATH_COLUMNS[SAFE_IMAGE]) === null) {
+        queryMasterDb(`UPDATE app.HostBrandings SET LoginBackgroundPath = NULL WHERE HostID_FK = ${hostId} AND Active = 1 AND LoginBackgroundPath IS NOT NULL`);
+      }
+      queryMasterDb(`DELETE app.ChangeLogs WHERE ChangeLogID > ${lastChangeLog} AND HostID_FK = ${hostId} AND Summary <> N'Copied branding from the host' AND (Summary LIKE N'%branding%' OR Summary LIKE N'%login background%')`);
+    });
+
+    test('HMI-21 Copy from host fills the HOST_MASTER image paths and display name from the host database, and the Sign-in tab shows four previews and two empty slots', async ({ page, shell }) => {
+      const settings = new HostSignInSettingsPage(page);
+      await settings.open(hostUuid);
+      await expect(settings.noApi).toHaveCount(0);
+      await expect(page.locator('#branding-logoUrl, #branding-faviconUrl')).toHaveCount(0);
+      const organisationName = querySingleValue(`SELECT OrganisationName FROM auth.Organisations WHERE OrganisationID = ${orgId}`);
+
+      await settings.copyBrandingFromHost();
+      await shell.expectStatus('Branding copied from the host.');
+
+      for (const type of COPIED_IMAGES) {
+        const key = hostColumn(PATH_COLUMNS[type]);
+        expect(key, `the host database has a ${type}`).not.toBeNull();
+        expect(masterColumn(PATH_COLUMNS[type]), `HOST_MASTER ${PATH_COLUMNS[type]}`).toBe(key);
+      }
+      for (const type of [UNSET_IMAGE, SAFE_IMAGE]) {
+        expect(masterColumn(PATH_COLUMNS[type]), `HOST_MASTER ${PATH_COLUMNS[type]}`).toBe(hostColumn(PATH_COLUMNS[type]));
+      }
+      expect(masterColumn('DisplayName')).toBe(organisationName);
+      expect(masterColumn('LoginSubtitle')).toBe(hostColumn('LoginSubtitle'));
+      expect(masterColumn('PrimaryColor'), 'colours are kept').toBe(original.primaryColor);
+      expect(masterColumn('AccentColor'), 'colours are kept').toBe(original.accentColor);
+
+      await settings.open(hostUuid);
+      await expect(settings.branding('displayName')).toHaveValue(organisationName!);
+      for (const type of COPIED_IMAGES) {
+        await expect(settings.imagePreview(type), type).toBeVisible();
+        await expect(settings.imagePreview(type), type).toHaveAttribute('src', publicRoute(type));
+        await expect.poll(() => settings.previewLoaded(type), { message: `the ${type} preview loads`, timeout: 30_000 }).toBe(true);
+        await expect(settings.imageRemove(type), type).toBeVisible();
+      }
+      if (slotsFree) {
+        for (const type of [UNSET_IMAGE, SAFE_IMAGE]) {
+          await expect(settings.imageEmpty(type), type).toHaveText('Not set');
+          await expect(settings.imageUpload(type), type).toBeEnabled();
+        }
+      }
+    });
+
+    test("HMI-22 Identity's sign-in page for the host shows the main logo from the host's public route and uses the host icon as favicon", async ({ browser, request }) => {
+      test.skip(masterColumn(PATH_COLUMNS['logo-main']) === null || masterColumn(PATH_COLUMNS['logo-icon']) === null, 'HOST_MASTER has no main logo or icon for the target host (HMI-21 copies them).');
+      test.setTimeout(cacheWindow() + 90_000);
+      const { identity, view, reload } = await hostSignInPage(browser);
+
+      await expect
+        .poll(
+          async () => {
+            await reload();
+            return (await view.logo.count()) ? await view.logo.getAttribute('src') : null;
+          },
+          { message: 'the sign-in page shows the host main logo', timeout: cacheWindow(), intervals: [2_000, 5_000, 10_000] },
+        )
+        .toMatch(publicRoute('logo-main'));
+      await expect(view.favicon).toHaveAttribute('href', publicRoute('logo-icon'));
+      await expect.poll(() => view.logoLoaded(), { message: 'the main logo loads through the public route', timeout: 30_000 }).toBe(true);
+
+      const icon = await request.get((await view.favicon.getAttribute('href'))!, { maxRedirects: 0, ignoreHTTPSErrors: env.ignoreHttpsErrors });
+      expect(icon.status(), 'the icon route redirects to the stored file').toBe(302);
+      await identity.context().close();
+    });
+
+    test("HMI-23 a login subtitle saved on the Sign-in tab reaches the host database and Identity's Login page, and clearing it empties both", async ({ browser, page, shell }) => {
+      test.setTimeout(cacheWindow() + 120_000);
+      const settings = new HostSignInSettingsPage(page);
+      await settings.open(hostUuid);
+      const before = await settings.readBranding();
+      expect(before.loginSubtitle, 'the target host starts with no login subtitle').toBe('');
+      expect(hostColumn('LoginSubtitle')).toBeNull();
+      const { identity, view, reload } = await hostSignInPage(browser);
+
+      try {
+        await settings.fillBranding({ loginSubtitle: SUBTITLE });
+        await settings.brandingSave.click();
+        await shell.expectStatus("the host's login page has the new subtitle");
+        expect(masterColumn('LoginSubtitle')).toBe(SUBTITLE);
+        expect(hostColumn('LoginSubtitle')).toBe(SUBTITLE);
+
+        await settings.open(hostUuid);
+        await expect(settings.branding('loginSubtitle')).toHaveValue(SUBTITLE);
+
+        await expect
+          .poll(
+            async () => {
+              await reload();
+              return (await view.subtitle.count()) ? (await view.subtitle.textContent())?.trim() : null;
+            },
+            { message: "Identity's Login page shows the host subtitle", timeout: cacheWindow(), intervals: [2_000, 5_000, 10_000] },
+          )
+          .toBe(SUBTITLE);
+      } finally {
+        await settings.open(hostUuid);
+        if ((await settings.branding('loginSubtitle').inputValue()) !== before.loginSubtitle) {
+          await settings.fillBranding({ loginSubtitle: before.loginSubtitle });
+          await settings.brandingSave.click();
+          await shell.expectStatus('Branding saved.');
+        }
+        await identity.context().close();
+      }
+
+      expect(masterColumn('LoginSubtitle')).toBeNull();
+      expect(hostColumn('LoginSubtitle')).toBeNull();
+    });
+
+    test('HMI-24 a login background uploaded on the Sign-in tab is stored by the host and HOST_MASTER and shows on Identity, and Remove clears both and the public route', async ({ browser, page, request, shell }) => {
+      test.skip(!slotsFree, 'The target host already has a login background or large logo; the run only uploads to empty slots.');
+      test.setTimeout(cacheWindow() + 150_000);
+      const api = new HostBrandingApi(request);
+      const settings = new HostSignInSettingsPage(page);
+      await settings.open(hostUuid);
+      expect((await api.publicImage(SAFE_IMAGE)).status).toBe(404);
+      const { identity, view, reload } = await hostSignInPage(browser);
+
+      try {
+        await settings.uploadImage(SAFE_IMAGE, solidPng('e2e-qc775-background.png', 64, 64));
+        await shell.expectStatus('Login background uploaded.');
+        expect(hostColumn(PATH_COLUMNS[SAFE_IMAGE])).toBe(uploadedKey());
+        expect(masterColumn(PATH_COLUMNS[SAFE_IMAGE])).toBe(uploadedKey());
+
+        await expect(settings.imagePreview(SAFE_IMAGE)).toBeVisible();
+        await expect(settings.imagePreview(SAFE_IMAGE)).toHaveAttribute('src', publicRoute(SAFE_IMAGE));
+        await expect.poll(() => settings.previewLoaded(SAFE_IMAGE), { message: 'the uploaded preview loads', timeout: 30_000 }).toBe(true);
+        expect((await api.publicImage(SAFE_IMAGE)).status).toBe(302);
+
+        await expect
+          .poll(
+            async () => {
+              await reload();
+              return (await view.background.count()) ? await view.backgroundImageUrl() : null;
+            },
+            { message: "Identity's sign-in area has the host login background", timeout: cacheWindow(), intervals: [2_000, 5_000, 10_000] },
+          )
+          .toMatch(publicRoute(SAFE_IMAGE));
+        await expect(view.background).toHaveClass(/sign-in-area/);
+      } finally {
+        await settings.open(hostUuid);
+        if (await settings.imageRemove(SAFE_IMAGE).isVisible()) {
+          await settings.removeImage(SAFE_IMAGE);
+          await shell.expectStatus('Login background removed.');
+        }
+        await identity.context().close();
+      }
+
+      expect(hostColumn(PATH_COLUMNS[SAFE_IMAGE])).toBeNull();
+      expect(masterColumn(PATH_COLUMNS[SAFE_IMAGE])).toBeNull();
+      expect((await api.publicImage(SAFE_IMAGE)).status).toBe(404);
+      await settings.open(hostUuid);
+      await expect(settings.imageEmpty(SAFE_IMAGE)).toHaveText('Not set');
+    });
+
+    test('HMI-25 an image of the wrong type or over 5 MB is refused with a field error and nothing is stored', async ({ page, request, shell }) => {
+      test.skip(!slotsFree, 'The target host already has a login background or large logo; the run only uploads to empty slots.');
+      const api = new HostBrandingApi(request);
+      const settings = new HostSignInSettingsPage(page);
+      await settings.open(hostUuid);
+
+      try {
+        await settings.uploadImage(SAFE_IMAGE, { name: 'e2e-qc775.txt', mimeType: 'text/plain', buffer: Buffer.from('not an image') });
+        await expect(settings.fieldError(SAFE_IMAGE)).toHaveText('Use .png, .jpg, .jpeg, .svg, .ico.');
+
+        await settings.uploadImage(SAFE_IMAGE, oversizedPng('e2e-qc775-big.png'));
+        await expect(settings.fieldError(SAFE_IMAGE)).toHaveText('Use an image of 5 MB or less.', { timeout: 30_000 });
+        await expect(settings.imageEmpty(SAFE_IMAGE)).toHaveText('Not set');
+      } finally {
+        await settings.open(hostUuid);
+        if (await settings.imageRemove(SAFE_IMAGE).isVisible()) {
+          await settings.removeImage(SAFE_IMAGE);
+          await shell.expectStatus('Login background removed.');
+        }
+      }
+
+      expect(hostColumn(PATH_COLUMNS[SAFE_IMAGE])).toBeNull();
+      expect(masterColumn(PATH_COLUMNS[SAFE_IMAGE])).toBeNull();
+      expect((await api.publicImage(SAFE_IMAGE)).status).toBe(404);
+    });
+
+    test("HMI-26 the host's public image route answers anyone with a redirect or 404, and the branding endpoints of the host API and Admin API refuse a caller without a token", async ({ request }) => {
+      const api = new HostBrandingApi(request);
+      const main = await api.publicImage('logo-main');
+      if (hostColumn(PATH_COLUMNS['logo-main']) !== null) {
+        expect(main.status).toBe(302);
+        expect(main.location?.startsWith('https://') ?? false, 'redirects to an https link').toBe(true);
+        expect(main.location?.includes(`logo/${orgId}/logo-main`) ?? false, 'redirects to the stored main logo').toBe(true);
+      } else {
+        expect(main.status).toBe(404);
+      }
+      if (hostColumn(PATH_COLUMNS[UNSET_IMAGE]) === null) {
+        expect((await api.publicImage(UNSET_IMAGE)).status, `${UNSET_IMAGE} is not set`).toBe(404);
+      }
+      expect((await api.publicImage('no-such-image')).status).toBe(404);
+
+      for (const [call, status] of Object.entries(await api.anonymousHostStatuses(UNSET_IMAGE))) {
+        expect(status, call).toBe(401);
+      }
+      for (const [call, status] of Object.entries(await api.adminStatuses(hostUuid, UNSET_IMAGE, null))) {
+        expect(status, call).toBe(401);
+      }
+      expect(hostColumn(PATH_COLUMNS[UNSET_IMAGE])).toBeNull();
     });
   });
 

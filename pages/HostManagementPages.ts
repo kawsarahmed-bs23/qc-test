@@ -389,14 +389,17 @@ export class HostEnvironmentPage {
   }
 }
 
-export type BrandingField = 'displayName' | 'logoUrl' | 'faviconUrl' | 'primaryColor' | 'accentColor';
+export type BrandingField = 'displayName' | 'loginSubtitle' | 'primaryColor' | 'accentColor';
+
+export type BrandingImageType = 'logo-main' | 'logo-menu' | 'logo-system' | 'logo-icon' | 'logo-large' | 'login-background';
+
+export const BRANDING_IMAGE_TYPES: BrandingImageType[] = ['logo-main', 'logo-menu', 'logo-system', 'logo-icon', 'logo-large', 'login-background'];
 
 export type AllowedUrlField = 'returnUrls' | 'signOutUrls' | 'corsOrigins' | 'backChannelLogoutUrl';
 
 export interface HostBranding {
   displayName: string;
-  logoUrl: string;
-  faviconUrl: string;
+  loginSubtitle: string;
   primaryColor: string;
   accentColor: string;
 }
@@ -408,12 +411,16 @@ export interface HostAllowedUrls {
   backChannelLogoutUrl: string;
 }
 
-export const BRANDING_FIELDS: BrandingField[] = ['displayName', 'logoUrl', 'faviconUrl', 'primaryColor', 'accentColor'];
+export const BRANDING_FIELDS: BrandingField[] = ['displayName', 'loginSubtitle', 'primaryColor', 'accentColor'];
 
 export class HostSignInSettingsPage {
   readonly brandingForm: Locator;
   readonly brandingSave: Locator;
   readonly brandingError: Locator;
+  readonly copyFromHost: Locator;
+  readonly noApi: Locator;
+  readonly images: Locator;
+  readonly confirmDialog: ConfirmDialog;
   readonly urlsForm: Locator;
   readonly urlsSave: Locator;
   readonly urlsError: Locator;
@@ -423,6 +430,10 @@ export class HostSignInSettingsPage {
     this.brandingForm = page.locator('#branding-form');
     this.brandingSave = page.locator('#branding-save');
     this.brandingError = page.locator('#branding-error');
+    this.copyFromHost = page.locator('#branding-copy');
+    this.noApi = page.locator('#branding-no-api');
+    this.images = page.locator('#branding-images');
+    this.confirmDialog = new ConfirmDialog(page);
     this.urlsForm = page.locator('#urls-form');
     this.urlsSave = page.locator('#urls-save');
     this.urlsError = page.locator('#urls-error');
@@ -444,8 +455,46 @@ export class HostSignInSettingsPage {
     return this.page.locator(`#urls-${field}`);
   }
 
-  fieldError(field: BrandingField | AllowedUrlField): Locator {
+  fieldError(field: BrandingField | AllowedUrlField | BrandingImageType): Locator {
     return this.page.locator(`[data-field-error="${field}"]`);
+  }
+
+  imageCard(type: BrandingImageType): Locator {
+    return this.images.locator(`[data-image="${type}"]`);
+  }
+
+  imagePreview(type: BrandingImageType): Locator {
+    return this.imageCard(type).locator(`img[data-image-preview="${type}"]`);
+  }
+
+  imageEmpty(type: BrandingImageType): Locator {
+    return this.imageCard(type).locator(`[data-image-empty="${type}"]`);
+  }
+
+  imageUpload(type: BrandingImageType): Locator {
+    return this.page.locator(`#branding-upload-${type}`);
+  }
+
+  imageRemove(type: BrandingImageType): Locator {
+    return this.page.locator(`#branding-remove-${type}`);
+  }
+
+  async previewLoaded(type: BrandingImageType): Promise<boolean> {
+    return this.imagePreview(type).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0);
+  }
+
+  async copyBrandingFromHost(): Promise<void> {
+    await this.copyFromHost.click();
+    await this.confirmDialog.accept();
+  }
+
+  async uploadImage(type: BrandingImageType, file: { name: string; mimeType: string; buffer: Buffer }): Promise<void> {
+    await this.imageUpload(type).setInputFiles(file);
+  }
+
+  async removeImage(type: BrandingImageType): Promise<void> {
+    await this.imageRemove(type).click();
+    await this.confirmDialog.accept();
   }
 
   async readBranding(): Promise<HostBranding> {
