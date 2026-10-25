@@ -1,18 +1,34 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { Credentials } from '../config/environment';
+import { IdentityLoginPage } from './IdentityLoginPage';
 
 export class AppSignInPage {
-  constructor(private readonly page: Page) {}
+  private readonly localEmail: Locator;
+  private readonly identityEmail: Locator;
 
+  constructor(private readonly page: Page) {
+    this.localEmail = page.locator('#email');
+    this.identityEmail = page.locator('input[type="email"]');
+  }
+
+  // Since QC-614 the host app sends sign-in to Identity; older builds still show their own form at #/authentication.
   async open(): Promise<void> {
     await this.page.goto('/#/authentication');
-    await expect(this.page.locator('#email')).toBeVisible({ timeout: 30_000 });
+    await expect(this.localEmail.or(this.identityEmail).first()).toBeVisible({ timeout: 30_000 });
   }
 
   async signIn(credentials: Credentials): Promise<void> {
-    await this.page.locator('#email').fill(credentials.email);
-    await this.page.locator('#password').fill(credentials.password);
-    await this.page.getByRole('button', { name: 'Sign In' }).click();
+    if (await this.localEmail.isVisible()) {
+      await this.localEmail.fill(credentials.email);
+      await this.page.locator('#password').fill(credentials.password);
+      await this.page.getByRole('button', { name: 'Sign In' }).click();
+      return;
+    }
+
+    const identityOrigin = new URL(this.page.url()).origin;
+    await new IdentityLoginPage(this.page).signIn(credentials);
+    await this.page.waitForURL(url => url.origin !== identityOrigin, { timeout: 30_000 });
+    await this.page.waitForLoadState('networkidle');
   }
 }
 
