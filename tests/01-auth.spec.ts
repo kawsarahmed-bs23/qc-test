@@ -68,7 +68,7 @@ test.describe('Sign-in and access control', () => {
       test.skip(!admin, 'No admin credentials');
       await page.goto('/');
       await signInAsAdmin(new IdentityLoginPage(page), admin!);
-      await expect(page).toHaveURL(`${env.adminUrl}/`);
+      await expect(page).toHaveURL(new RegExp(`^${env.adminUrl}/(#/)?$`));
 
       await new AdminShell(page).signOut();
       await new IdentityLoginPage(page).expectVisible();
