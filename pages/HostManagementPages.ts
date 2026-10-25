@@ -3,7 +3,7 @@ import { ConfirmDialog, openAdmin, waitForIdle } from './AdminShell';
 
 export type HostField = 'Name' | 'HostKey' | 'ClientId' | 'DatabaseName' | 'HostOrganisationId' | 'UiUrl' | 'ApiBaseUrl';
 
-export type HostErrorKey = 'name' | 'hostKey' | 'clientId' | 'databaseName' | 'hostOrganisationId' | 'uiUrl' | 'apiBaseUrl' | 'identityHostId';
+export type HostErrorKey = 'name' | 'hostKey' | 'clientId' | 'databaseName' | 'hostOrganisationId' | 'uiUrl' | 'apiBaseUrl';
 
 export interface NewHost {
   name: string;
@@ -67,16 +67,10 @@ export class HostFormPage {
   readonly cancel: Locator;
   readonly save: Locator;
   readonly formError: Locator;
-  readonly identityState: Locator;
   readonly facts: Locator;
   readonly uuid: Locator;
   readonly hostKey: Locator;
   readonly clientId: Locator;
-  readonly linkField: Locator;
-  readonly linkSelect: Locator;
-  readonly identityPanel: Locator;
-  readonly identityHostState: Locator;
-  readonly identityClients: Locator;
   readonly dangerZone: Locator;
   readonly deactivate: Locator;
   readonly confirmDialog: ConfirmDialog;
@@ -88,16 +82,10 @@ export class HostFormPage {
     this.cancel = page.locator('#host-cancel');
     this.save = page.locator('#host-save');
     this.formError = page.locator('#host-form-error');
-    this.identityState = page.locator('#host-identity-state');
     this.facts = page.locator('#host-facts');
     this.uuid = page.locator('#host-uuid');
     this.hostKey = page.locator('#host-key');
     this.clientId = page.locator('#host-client-id');
-    this.linkField = page.locator('#identity-link');
-    this.linkSelect = page.locator('#Input_IdentityHostId');
-    this.identityPanel = page.locator('#identity-panel');
-    this.identityHostState = page.locator('#identity-host-state');
-    this.identityClients = page.locator('#identity-clients-table tr[data-client-id]');
     this.dangerZone = page.locator('#host-danger-zone');
     this.deactivate = page.locator('#host-deactivate');
     this.confirmDialog = new ConfirmDialog(page);
@@ -127,10 +115,6 @@ export class HostFormPage {
     return this.page.locator('.qc-field').filter({ has: this.field(name) }).locator('.qc-field-error:not([data-field-error])');
   }
 
-  identityClient(clientId: string): Locator {
-    return this.page.locator(`#identity-clients-table tr[data-client-id="${clientId}"]`);
-  }
-
   async fill(host: NewHost): Promise<void> {
     await this.field('Name').fill(host.name);
     await this.field('HostKey').fill(host.hostKey);
@@ -152,7 +136,6 @@ export class HostFeaturesPage {
   readonly mfaForm: Locator;
   readonly mfa: Locator;
   readonly mfaSave: Locator;
-  readonly mfaError: Locator;
 
   constructor(private readonly page: Page) {
     this.form = page.locator('#product-features');
@@ -164,7 +147,6 @@ export class HostFeaturesPage {
     this.mfaForm = page.locator('#mfa-form');
     this.mfa = page.locator('#mfa-enabled button[role="switch"]');
     this.mfaSave = page.locator('#mfa-save');
-    this.mfaError = page.locator('#mfa-error');
   }
 
   async open(uuid: string): Promise<void> {
@@ -180,10 +162,6 @@ export class HostFeaturesPage {
 
   get savedCopy(): Locator {
     return this.page.locator('#features-saved-copy');
-  }
-
-  get savedMfa(): Locator {
-    return this.page.locator('#mfa-saved-copy');
   }
 
   savedFeature(key: string): Locator {
@@ -414,72 +392,94 @@ export class HostEnvironmentPage {
   }
 }
 
-export class HostUsersPage {
-  readonly members: Locator;
-  readonly empty: Locator;
-  readonly error: Locator;
-  readonly search: Locator;
-  readonly searchSubmit: Locator;
-  readonly searchEmpty: Locator;
-  readonly candidates: Locator;
-  readonly confirmDialog: ConfirmDialog;
+export type BrandingField = 'displayName' | 'logoUrl' | 'faviconUrl' | 'primaryColor' | 'accentColor';
+
+export type AllowedUrlField = 'returnUrls' | 'signOutUrls' | 'corsOrigins' | 'backChannelLogoutUrl';
+
+export interface HostBranding {
+  displayName: string;
+  logoUrl: string;
+  faviconUrl: string;
+  primaryColor: string;
+  accentColor: string;
+}
+
+export interface HostAllowedUrls {
+  returnUrls: string[];
+  signOutUrls: string[];
+  corsOrigins: string[];
+  backChannelLogoutUrl: string;
+}
+
+export const BRANDING_FIELDS: BrandingField[] = ['displayName', 'logoUrl', 'faviconUrl', 'primaryColor', 'accentColor'];
+
+export class HostSignInSettingsPage {
+  readonly brandingForm: Locator;
+  readonly brandingSave: Locator;
+  readonly brandingError: Locator;
+  readonly urlsForm: Locator;
+  readonly urlsSave: Locator;
+  readonly urlsError: Locator;
+  readonly loadError: Locator;
 
   constructor(private readonly page: Page) {
-    this.members = page.locator('#host-users-table tr[data-member]');
-    this.empty = page.locator('#host-users-empty');
-    this.error = page.locator('#host-users-error');
-    this.search = page.locator('#host-user-search');
-    this.searchSubmit = page.locator('#host-user-search-submit');
-    this.searchEmpty = page.locator('#host-user-search-empty');
-    this.candidates = page.locator('#candidates-table tr[data-candidate]');
-    this.confirmDialog = new ConfirmDialog(page);
+    this.brandingForm = page.locator('#branding-form');
+    this.brandingSave = page.locator('#branding-save');
+    this.brandingError = page.locator('#branding-error');
+    this.urlsForm = page.locator('#urls-form');
+    this.urlsSave = page.locator('#urls-save');
+    this.urlsError = page.locator('#urls-error');
+    this.loadError = page.locator('#sign-in-load-error');
   }
 
-  async open(uuid: string, search?: string): Promise<void> {
-    await openAdmin(this.page, `/hosts/${uuid}/users${search ? `?search=${encodeURIComponent(search)}` : ''}`);
-    await expect(this.members.first().or(this.empty).or(this.error)).toBeVisible();
-    if (search) {
-      await expect(this.candidates.first().or(this.searchEmpty)).toBeVisible();
-    }
+  async open(uuid: string): Promise<void> {
+    await openAdmin(this.page, `/hosts/${uuid}/sign-in`);
+    await expect(this.brandingForm).toBeVisible();
+    await expect(this.urlsForm).toBeVisible();
     await waitForIdle(this.page);
   }
 
-  member(email: string): Locator {
-    return this.page.locator(`#host-users-table tr[data-member="${email}"]`);
+  branding(field: BrandingField): Locator {
+    return this.page.locator(`#branding-${field}`);
   }
 
-  candidate(email: string): Locator {
-    return this.page.locator(`#candidates-table tr[data-candidate="${email}"]`);
+  urls(field: AllowedUrlField): Locator {
+    return this.page.locator(`#urls-${field}`);
   }
 
-  async add(email: string, role: 'Driver' | 'HostUser'): Promise<void> {
-    const row = this.candidate(email);
-    await chooseOption(this.page, row.locator('[data-testid="candidate-role"]'), new RegExp(`^\\s*${role}\\s*$`));
-    await row.locator('[data-testid="candidate-add"]').click();
+  fieldError(field: BrandingField | AllowedUrlField): Locator {
+    return this.page.locator(`[data-field-error="${field}"]`);
   }
 
-  async update(email: string, role: 'Driver' | 'HostUser', hostAdmin: boolean): Promise<void> {
-    const row = this.member(email);
-    await chooseOption(this.page, row.locator('[data-testid="member-role"]'), new RegExp(`^\\s*${role}\\s*$`));
-    await this.hostAdmin(email).setChecked(hostAdmin);
-    await row.locator('[data-testid="member-update"]').click();
+  async readBranding(): Promise<HostBranding> {
+    const values = await Promise.all(BRANDING_FIELDS.map((field) => this.branding(field).inputValue()));
+    return Object.fromEntries(BRANDING_FIELDS.map((field, i) => [field, values[i]])) as unknown as HostBranding;
   }
 
-  async remove(email: string): Promise<void> {
-    await this.member(email).locator('[data-testid="member-remove"]').click();
-    await this.confirmDialog.accept();
+  async fillBranding(branding: Partial<HostBranding>): Promise<void> {
+    for (const [field, value] of Object.entries(branding) as [BrandingField, string][]) {
+      await this.branding(field).fill(value);
+    }
   }
 
-  role(email: string): Locator {
-    return selectedText(this.member(email).locator('[data-testid="member-role"]'));
+  async readUrls(): Promise<HostAllowedUrls> {
+    const lines = async (field: AllowedUrlField) =>
+      (await this.urls(field).inputValue())
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    return {
+      returnUrls: await lines('returnUrls'),
+      signOutUrls: await lines('signOutUrls'),
+      corsOrigins: await lines('corsOrigins'),
+      backChannelLogoutUrl: (await this.urls('backChannelLogoutUrl').inputValue()).trim(),
+    };
   }
 
-  hostAdmin(email: string): Locator {
-    return this.member(email).locator('[data-testid="member-host-admin"] input[type="checkbox"]');
-  }
-
-  memberLink(email: string): Locator {
-    return this.member(email).locator('[data-testid="member-link"]');
+  async fillUrls(urls: Partial<HostAllowedUrls>): Promise<void> {
+    for (const [field, value] of Object.entries(urls) as [AllowedUrlField, string | string[]][]) {
+      await this.urls(field).fill(Array.isArray(value) ? value.join('\n') : value);
+    }
   }
 }
 
@@ -487,9 +487,8 @@ export class UserDetailPage {
   readonly state: Locator;
   readonly facts: Locator;
   readonly email: Locator;
-  readonly platformRoles: Locator;
-  readonly hosts: Locator;
-  readonly hostsEmpty: Locator;
+  readonly platformAdmin: Locator;
+  readonly twoFactor: Locator;
   readonly deactivate: Locator;
   readonly reactivate: Locator;
   readonly error: Locator;
@@ -499,9 +498,8 @@ export class UserDetailPage {
     this.state = page.locator('#account-state');
     this.facts = page.locator('#user-facts');
     this.email = page.locator('#user-email');
-    this.platformRoles = page.locator('#user-platform-roles');
-    this.hosts = page.locator('#user-hosts');
-    this.hostsEmpty = page.locator('#user-hosts-empty');
+    this.platformAdmin = page.locator('#user-platform-admin');
+    this.twoFactor = page.locator('#user-two-factor');
     this.deactivate = page.locator('#account-deactivate');
     this.reactivate = page.locator('#account-reactivate');
     this.error = page.locator('#user-error');

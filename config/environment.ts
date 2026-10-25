@@ -21,13 +21,15 @@ export interface TestEnvironment {
   driversApiUrl: string | null;
   mobileClientId: string | null;
   hostClient: OidcClient | null;
-  secondHostClient: OidcClient | null;
   driverUiClient: OidcClient | null;
   adminApiClient: ServiceClient | null;
   driversServiceClient: ServiceClient | null;
   identitySql: LocalSql | null;
   masterSql: LocalSql | null;
+  driversSql: LocalSql | null;
   identityLogDir: string | null;
+  landingUrl: string | null;
+  identityHostCacheSeconds: number;
   allowWrites: boolean;
   allowCreateHosts: boolean;
   allowRestart: boolean;
@@ -113,6 +115,7 @@ export function loadEnvironment(): TestEnvironment {
   const sqlDatabase = optional('LOCAL_SQL_DATABASE');
   const identitySqlDatabase = optional('IDENTITY_SQL_DATABASE');
   const masterSqlDatabase = optional('MASTER_SQL_DATABASE');
+  const driversSqlDatabase = optional('DRIVERS_SQL_DATABASE');
 
   return {
     name,
@@ -131,13 +134,15 @@ export function loadEnvironment(): TestEnvironment {
     driversApiUrl: optional('DRIVERS_API_URL'),
     mobileClientId: process.env.MOBILE_CLIENT_ID?.trim() || null,
     hostClient: oidcClient('HOST_CLIENT_ID', 'HOST_REDIRECT_URI'),
-    secondHostClient: oidcClient('SECOND_HOST_CLIENT_ID', 'SECOND_HOST_REDIRECT_URI'),
     driverUiClient: oidcClient('DRIVER_UI_CLIENT_ID', 'DRIVER_UI_REDIRECT_URI'),
     adminApiClient: serviceClient('ADMIN_API_CLIENT_ID', 'ADMIN_API_CLIENT_SECRET'),
     driversServiceClient: serviceClient('DRIVERS_SERVICE_CLIENT_ID', 'DRIVERS_SERVICE_CLIENT_SECRET'),
     identityLogDir: name === 'local' && optional('IDENTITY_LOG_DIR') ? path.resolve(__dirname, '..', optional('IDENTITY_LOG_DIR')!) : null,
     identitySql: name === 'local' && sqlServer && identitySqlDatabase ? { server: sqlServer, database: identitySqlDatabase } : null,
     masterSql: name === 'local' && sqlServer && masterSqlDatabase ? { server: sqlServer, database: masterSqlDatabase } : null,
+    driversSql: name === 'local' && sqlServer && driversSqlDatabase ? { server: sqlServer, database: driversSqlDatabase } : null,
+    landingUrl: process.env.LANDING_URL?.trim() || null,
+    identityHostCacheSeconds: Number(process.env.IDENTITY_HOST_CACHE_SECONDS?.trim() || '330'),
     allowWrites: !isProd && flag('ALLOW_WRITES'),
     allowCreateHosts: !isProd && flag('ALLOW_CREATE_HOSTS'),
     allowRestart: !isProd && flag('ALLOW_RESTART'),

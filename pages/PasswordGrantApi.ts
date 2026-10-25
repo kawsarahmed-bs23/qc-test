@@ -4,21 +4,16 @@ import { env } from '../config/environment';
 export const MOBILE_DRIVER_SCOPES = 'openid profile email quarryconnect.drivers.api offline_access';
 export const CHANGE_PASSWORD_GRANT = 'urn:quarryconnect:change_password';
 
-export interface DriverHost {
-  host_uuid: string;
-  display_name: string | null;
-  logo_url: string | null;
-}
-
 export interface TokenResponse {
   access_token?: string;
+  id_token?: string;
   refresh_token?: string;
   expires_in?: number;
   scope?: string;
   error?: string;
   error_description?: string;
   password_errors?: string[];
-  hosts?: DriverHost[];
+  hosts?: unknown;
 }
 
 export interface TokenResult {
@@ -40,29 +35,27 @@ export interface AccountApiResult {
 export class PasswordGrantApi {
   constructor(private readonly request: APIRequestContext) {}
 
-  async passwordGrant(email: string, password: string, host?: string): Promise<TokenResult> {
+  async passwordGrant(email: string, password: string): Promise<TokenResult> {
     return this.token({
       grant_type: 'password',
       client_id: this.clientId(),
       username: email,
       password,
       scope: MOBILE_DRIVER_SCOPES,
-      ...hostParam(host),
     });
   }
 
-  async refresh(refreshToken: string, host?: string): Promise<TokenResult> {
-    return this.token({ grant_type: 'refresh_token', client_id: this.clientId(), refresh_token: refreshToken, ...hostParam(host) });
+  async refresh(refreshToken: string): Promise<TokenResult> {
+    return this.token({ grant_type: 'refresh_token', client_id: this.clientId(), refresh_token: refreshToken });
   }
 
-  async changePassword(email: string, currentPassword: string, newPassword: string | null, host?: string): Promise<TokenResult> {
+  async changePassword(email: string, currentPassword: string, newPassword: string | null): Promise<TokenResult> {
     const form: Record<string, string> = {
       grant_type: CHANGE_PASSWORD_GRANT,
       client_id: this.clientId(),
       username: email,
       password: currentPassword,
       scope: MOBILE_DRIVER_SCOPES,
-      ...hostParam(host),
     };
     if (newPassword !== null) {
       form.new_password = newPassword;
@@ -104,6 +97,10 @@ export class PasswordGrantApi {
     return this.driversApi('/me/host', accessToken, options);
   }
 
+  async driversMeHosts(accessToken: string): Promise<APIResponse> {
+    return this.driversApi('/me/hosts', accessToken, {});
+  }
+
   private async driversApi(path: string, accessToken: string, options: DriversApiOptions): Promise<APIResponse> {
     if (!env.driversApiUrl) {
       throw new Error('DRIVERS_API_URL is not set.');
@@ -139,10 +136,6 @@ export async function isDriversApiReachable(request: APIRequestContext): Promise
   } catch {
     return false;
   }
-}
-
-function hostParam(host: string | undefined): Record<string, string> {
-  return host === undefined ? {} : { host };
 }
 
 export function decodeJwt(token: string): { header: Record<string, unknown>; claims: Record<string, unknown> } {

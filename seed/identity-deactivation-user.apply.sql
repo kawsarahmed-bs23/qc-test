@@ -1,8 +1,8 @@
 -- QC-738: a throwaway driver for the Identity administration API's user cases (IDADMIN-13, IDADMIN-14),
 -- so deactivating a user never touches the shared test accounts.
 -- It signs in with the test driver's password: its PasswordHash is copied from $(SourceEmail), which works
--- because an ASP.NET Identity password hash carries its own salt. It is mapped as Driver to the host of
--- $(MobileClientId), so the password grant accepts it. Re-running replaces the user; remove.sql deletes it.
+-- because an ASP.NET Identity password hash carries its own salt. Since QC-775 the password grant needs no host
+-- mapping or role, so the user has none. Re-running replaces the user; remove.sql deletes it.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
@@ -17,10 +17,6 @@ DELETE Users WHERE NormalizedEmail = UPPER(@Email);
 DECLARE @PasswordHash nvarchar(max) = (SELECT PasswordHash FROM Users WHERE NormalizedEmail = UPPER(N'$(SourceEmail)'));
 IF @PasswordHash IS NULL
     THROW 50001, 'The source test driver does not exist or has no password.', 1;
-
-DECLARE @HostId int = (SELECT HostID FROM app.HostClients WHERE ClientID = N'$(MobileClientId)' AND Active = 1);
-IF @HostId IS NULL
-    THROW 50002, 'The mobile client belongs to no active host.', 1;
 
 DECLARE @UserId nvarchar(450) = CONVERT(nvarchar(450), NEWID());
 
@@ -37,8 +33,5 @@ VALUES
     0, 0, 1, 0, N'E2E', N'QC-738 Deactivate',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), 0, 1
 );
-
-INSERT app.UserHosts (UserID, HostID, OrganisationID, RoleID, CreatedBy, UpdatedBy)
-SELECT @UserId, @HostId, 1, Id, N'e2e', N'e2e' FROM Roles WHERE Name = N'Driver';
 
 COMMIT TRANSACTION;

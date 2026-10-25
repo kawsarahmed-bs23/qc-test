@@ -8,28 +8,22 @@ export class UserListPage {
   readonly card: Locator;
   readonly reset: Locator;
   readonly search: Locator;
-  readonly host: Locator;
-  readonly role: Locator;
   readonly status: Locator;
   readonly table: Locator;
   readonly rows: Locator;
   readonly paginator: Locator;
   readonly empty: Locator;
-  readonly unknownHost: Locator;
   readonly error: Locator;
 
   constructor(private readonly page: Page) {
     this.card = page.locator('#users-card');
     this.reset = page.locator('#users-reset');
     this.search = page.locator('#user-search');
-    this.host = page.locator('#user-host');
-    this.role = page.locator('#user-role');
     this.status = page.locator('#user-status');
     this.table = page.locator('#users-table');
     this.rows = page.locator('#users-table tr[data-user-id]');
     this.paginator = page.locator('[data-testid="table-paginator"]');
     this.empty = page.locator('[data-testid="table-empty"]');
-    this.unknownHost = page.locator('#users-unknown-host');
     this.error = page.locator('#users-error');
   }
 
@@ -53,7 +47,7 @@ export class UserListPage {
     return this.rows.filter({ has: this.page.locator('[data-testid="user-email"]', { hasText: email }) });
   }
 
-  cell(row: Locator, name: 'user-name' | 'user-email' | 'user-roles' | 'user-hosts' | 'user-last-login' | 'user-account'): Locator {
+  cell(row: Locator, name: 'user-name' | 'user-email' | 'user-platform-admin' | 'user-last-login' | 'user-account'): Locator {
     return row.locator(`[data-testid="${name}"]`);
   }
 
@@ -79,16 +73,6 @@ export class UserListPage {
   async searchFor(text: string): Promise<void> {
     await this.search.fill(text);
     await this.waitForQuery((q) => (q.get('search') ?? '') === text.trim());
-  }
-
-  async chooseHost(name: string | RegExp): Promise<void> {
-    await chooseOption(this.page, this.host, name);
-    await this.settled();
-  }
-
-  async chooseRole(role: 'Admin' | 'Driver' | 'HostUser' | 'All roles'): Promise<void> {
-    await chooseOption(this.page, this.role, new RegExp(`^\\s*${role}\\s*$`));
-    await this.settled();
   }
 
   async chooseStatus(label: 'All accounts' | 'Active' | 'Deactivated'): Promise<void> {

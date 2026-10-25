@@ -1,19 +1,20 @@
 import { test, expect } from '../fixtures/test';
-import { canUseIdentityDb, canUseMasterDb, queryMasterDb, runIdentitySeedScript, runMasterSeedScript } from '../fixtures/localDb';
+import { canUseMasterDb, queryMasterDb, runMasterSeedScript } from '../fixtures/localDb';
 import { adminUrl } from '../pages/AdminShell';
-import { HostFeaturesPage, HostFormPage, HostListPage } from '../pages/HostManagementPages';
+import { HostFeaturesPage, HostFormPage, HostListPage, HostSignInSettingsPage } from '../pages/HostManagementPages';
 import { HostNav } from '../pages/HostPages';
 
 test.describe('Hosts: list, add, details (QC-742)', () => {
-  test('HOST-01 the hosts list shows the target host with its key, client, database, Identity link and host API', { tag: '@smoke' }, async ({ page, targetHost }) => {
+  test('HOST-01 the hosts list shows the target host with its key, client, database and host API, and no Identity column (QC-775)', { tag: '@smoke' }, async ({ page, targetHost }) => {
     const list = new HostListPage(page);
     await list.open();
     const row = list.row(targetHost.uuid);
     await expect(list.link(targetHost.uuid)).toHaveText(targetHost.name);
     await expect(list.link(targetHost.uuid)).toHaveAttribute('href', `#/hosts/${targetHost.uuid}`);
-    await expect(row.locator('[data-testid="host-identity"]')).toHaveText(/^(Linked|Not linked)$/);
     await expect(row.locator('[data-testid="host-api"]')).toHaveText(/^(Set|Not set)$/);
-    await expect(row.locator('td')).toHaveCount(6);
+    await expect(row.locator('[data-testid="host-identity"]')).toHaveCount(0);
+    await expect(row.locator('td')).toHaveCount(5);
+    await expect(list.table.locator('th', { hasText: 'Identity' })).toHaveCount(0);
   });
 
   test('HOST-02 a host page shows its UUID, key and sign-in client, and its URL carries only the UUID', async ({ page, targetHost }) => {
@@ -81,7 +82,6 @@ test.describe('Hosts: list, add, details (QC-742)', () => {
 
   test.describe('a created host', () => {
     test.afterAll(() => {
-      if (canUseIdentityDb()) runIdentitySeedScript('identity-qc742.remove.sql');
       if (canUseMasterDb()) runMasterSeedScript('master-e2e-hosts.remove.sql');
     });
 
@@ -100,10 +100,9 @@ test.describe('Hosts: list, add, details (QC-742)', () => {
         uiUrl: 'http://localhost:4294',
       });
       await form.create.click();
-      await shell.expectStatus(`Host '${name}' created. It can be signed into now.`);
+      await shell.expectStatus(`Host '${name}' created.`);
       await expect(page).toHaveURL(/#\/hosts\/[0-9a-f-]{36}$/);
       const uuid = page.url().split('/').pop()!;
-      await expect(form.identityState).toHaveText('Linked to Identity');
 
       const list = new HostListPage(page);
       await list.open();
@@ -148,7 +147,7 @@ test.describe('Hosts: list, add, details (QC-742)', () => {
 
     await form.deactivate.click();
     await expect(form.confirmDialog.title).toHaveText(`Deactivate ${targetHost.name}?`);
-    await expect(form.confirmDialog.message).toContainText('Nobody will be able to sign in');
+    await expect(form.confirmDialog.message).toContainText('Identity stops new sign-ins and token refreshes for it within 5 minutes.');
     await expect(form.confirmDialog.confirm).toHaveText(`Deactivate ${targetHost.name}`);
     await form.confirmDialog.dismiss();
 
@@ -158,13 +157,18 @@ test.describe('Hosts: list, add, details (QC-742)', () => {
     await expect(form.uuid).toHaveText(targetHost.uuid);
   });
 
-  test('HOST-08 a linked host shows its Identity host and clients and offers no link picker', async ({ page, targetHost }) => {
+  test('HOST-08 a host page has no Identity link, panel or picker, and its Sign-in tab holds the return addresses (QC-775)', async ({ page, targetHost }) => {
     const form = new HostFormPage(page);
     await form.openDetail(targetHost.uuid);
-    test.skip((await form.identityState.innerText()).trim() !== 'Linked to Identity', 'The target host is not linked to Identity.');
-    await expect(form.linkField).toHaveCount(0);
-    await expect(form.identityHostState).toContainText('is active.');
-    await expect(form.identityClient((await form.clientId.innerText()).trim())).toBeVisible();
+    for (const id of ['#host-identity-state', '#identity-link', '#Input_IdentityHostId', '#identity-panel', '#identity-clients-table']) {
+      await expect(page.locator(id), id).toHaveCount(0);
+    }
     await expect(new HostNav(page).tab('details')).toHaveClass(/active/);
+
+    await new HostNav(page).tab('sign-in').click();
+    await expect(page).toHaveURL(adminUrl(`/hosts/${targetHost.uuid}/sign-in`));
+    const settings = new HostSignInSettingsPage(page);
+    await expect(settings.urlsForm).toBeVisible();
+    expect((await settings.readUrls()).returnUrls.length).toBeGreaterThan(0);
   });
 });

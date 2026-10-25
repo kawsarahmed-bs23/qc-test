@@ -1,7 +1,7 @@
 import { test, expect } from '../fixtures/test';
 import { canUseMasterDb, queryMasterDb } from '../fixtures/localDb';
 import { HostEnvironmentPage, HostFeaturesPage } from '../pages/HostManagementPages';
-import { env } from '../config/environment';
+import { adminAccount } from '../fixtures/throwawayUsers';
 
 const UNREACHABLE_API = 'https://localhost:9';
 const SAFE_SETTING = { group: 'DispatchSnapshot', property: 'RateLimitPermitsPerHour', key: 'DispatchSnapshot:RateLimitPermitsPerHour' };
@@ -40,7 +40,7 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     test.skip(!canUseMasterDb(), 'Needs MASTER_SQL_DATABASE (local only).');
   });
 
-  test('MIR-01 opening Features copies every product feature and MFA into HOST_MASTER', async ({ page, targetHost }) => {
+  test('MIR-01 opening Features copies every product feature into HOST_MASTER, next to the MFA row Admin saves there itself', async ({ page, targetHost }) => {
     const features = new HostFeaturesPage(page);
     await features.open(targetHost.uuid);
 
@@ -56,11 +56,9 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
 
     expect(masterFeatures(id)).toEqual(expected);
 
-    for (const area of ['Features', 'Mfa']) {
-      const sync = lastSync(id, area);
-      expect(sync.status, `${area} sync status`).toBe('Succeeded');
-      expect(sync.ageSeconds, `${area} synced just now`).toBeLessThan(120);
-    }
+    const sync = lastSync(id, 'Features');
+    expect(sync.status, 'Features sync status').toBe('Succeeded');
+    expect(sync.ageSeconds, 'Features synced just now').toBeLessThan(120);
   });
 
   test('MIR-02 opening Environment copies every setting into HOST_MASTER, with no secret values', async ({ page, targetHost }) => {
@@ -98,7 +96,7 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
       await shell.expectStatus('Saved 1 feature change.');
 
       expect(masterFeatures(id).maps).toBe(!original);
-      expect(queryMasterDb(`SELECT UpdatedBy FROM app.HostFeatures WHERE HostID_FK = ${id} AND Active = 1 AND FeatureKey = 'maps'`)).toBe(env.admin!.email);
+      expect(queryMasterDb(`SELECT UpdatedBy FROM app.HostFeatures WHERE HostID_FK = ${id} AND Active = 1 AND FeatureKey = 'maps'`)).toBe(adminAccount()!.email);
     } finally {
       await features.open(targetHost.uuid);
       if ((await features.isOn('maps')) !== original) {

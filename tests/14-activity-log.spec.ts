@@ -1,8 +1,9 @@
-import { test, expect } from '../fixtures/test';
-import { AdminShell } from '../pages/AdminShell';
+import { test, expect, signedOut } from '../fixtures/test';
+import { AdminShell, adminUrl } from '../pages/AdminShell';
 import { HostEnvironmentPage, HostFeaturesPage } from '../pages/HostManagementPages';
 import { ActivityPage, DashboardPage } from '../pages/HostPages';
-import { escape } from '../pages/IdentityLoginPage';
+import { escape, IdentityLoginPage } from '../pages/IdentityLoginPage';
+import { adminAccount, adminAuthenticatorKey } from '../fixtures/throwawayUsers';
 import { env } from '../config/environment';
 
 const SAFE_SETTING = 'DispatchSnapshot:RateLimitPermitsPerHour';
@@ -23,7 +24,7 @@ test.describe('Activity log (QC-737, Angular since QC-742)', () => {
       const latest = activity.list.latest;
       await expect(latest).toHaveAttribute('data-activity-area', 'Features');
       await expect(activity.list.text(latest)).toHaveText(original ? 'Switched off Maps' : 'Switched on Maps');
-      await expect(activity.list.meta(latest)).toContainText(env.admin!.email);
+      await expect(activity.list.meta(latest)).toContainText(adminAccount()!.email);
       await expect(latest.locator('[data-testid="activity-host-link"]')).toHaveText(targetHost.name);
     } finally {
       await features.open(targetHost.uuid);
@@ -75,11 +76,16 @@ test.describe('Activity log (QC-737, Angular since QC-742)', () => {
     await expect(dashboard.activity.text(dashboard.activity.latest)).toHaveText(text);
   });
 
-  test('ACT-04 the user menu signs out through Identity', async ({ browser, page }) => {
-    test.skip(!env.admin, 'No admin credentials');
-    const context = await browser.newContext({ storageState: await page.context().storageState(), ignoreHTTPSErrors: env.ignoreHttpsErrors });
+  test('ACT-04 the user menu signs out through Identity', async ({ browser }) => {
+    const admin = adminAccount();
+    test.skip(!admin, 'No admin credentials');
+    const context = await browser.newContext({ ...signedOut, ignoreHTTPSErrors: env.ignoreHttpsErrors });
     const own = await context.newPage();
     try {
+      await own.goto(adminUrl('/'));
+      const key = adminAuthenticatorKey();
+      const login = new IdentityLoginPage(own);
+      await (key ? login.signInWithTwoStep(admin!, key) : login.signIn(admin!));
       await new DashboardPage(own).open();
       await new AdminShell(own).signOut();
       await expect(own).toHaveURL(new RegExp(`^${escape(env.identityUrl)}`));

@@ -1,36 +1,40 @@
 import { test, expect } from '../fixtures/test';
-import { canUseIdentityDb, canUseMasterDb, queryIdentityDb, runIdentitySeedScript, runMasterSeedScript } from '../fixtures/localDb';
+import { canUseIdentityDb, canUseMasterDb, queryIdentityDb, queryMasterDb, runIdentitySeedScript, runMasterSeedScript } from '../fixtures/localDb';
+import { adminAccount } from '../fixtures/throwawayUsers';
 import { AdminApi, canUseAdminApi } from '../pages/AdminApi';
 import { adminUrl } from '../pages/AdminShell';
-import { authorizeRedirect } from '../pages/IdentityAdminApi';
-import { HostEnvironmentPage, HostFeaturesPage, HostFormPage, HostListPage, HostUsersPage, UserDetailPage } from '../pages/HostManagementPages';
+import { authorizeUrl, identityLanding } from '../pages/HostSignInFlow';
+import { HostEnvironmentPage, HostFeaturesPage, HostFormPage, HostListPage, UserDetailPage } from '../pages/HostManagementPages';
+import { HostNav } from '../pages/HostPages';
 import { UserListPage } from '../pages/UserListPage';
 import { env } from '../config/environment';
 
 const MEMBER = 'e2e.qc739.member@quarryconnect.test';
 const SAFE_SETTING = 'DispatchSnapshot:RateLimitPermitsPerHour';
-const PKCE = { code_challenge: 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM', code_challenge_method: 'S256' };
 
 function sqlText(value: string): string {
   return `N'${value.replace(/'/g, "''")}'`;
 }
 
 test.describe('Hosts (QC-739, Angular since QC-742)', () => {
-  test('HM-01 the hosts list links each host by its UUID and shows the Identity link', { tag: '@smoke' }, async ({ page, targetHost }) => {
+  test('HM-01 the hosts list links each host by its UUID and shows its sign-in client, with no Identity link column', { tag: '@smoke' }, async ({ page, targetHost }) => {
     const list = new HostListPage(page);
     await list.open();
     const row = list.row(targetHost.uuid);
     await expect(row).toContainText(targetHost.name);
-    await expect(row.locator('[data-testid="host-identity"]')).toHaveText('Linked');
+    if (env.hostClient) {
+      await expect(row.locator('td.mat-column-clientId')).toHaveText(env.hostClient.clientId);
+    }
+    await expect(row.locator('[data-testid="host-identity"]')).toHaveCount(0);
     await expect(list.link(targetHost.uuid)).toHaveAttribute('href', `#/hosts/${targetHost.uuid}`);
   });
 
-  test("HM-02 a host's page shows its UUID and its Identity clients, never a numeric id", async ({ page, targetHost }) => {
+  test("HM-02 a host's page shows its UUID and sign-in client and links to its Sign-in tab, never a numeric id", async ({ page, targetHost }) => {
     const form = new HostFormPage(page);
     await form.openDetail(targetHost.uuid);
     await expect(form.facts).toContainText(targetHost.uuid);
-    await expect(form.identityPanel).toContainText('is active');
-    await expect(form.identityClients.first()).toBeVisible();
+    await expect(form.clientId).not.toHaveText('-');
+    await expect(new HostNav(page).tab('sign-in')).toHaveAttribute('href', `#/hosts/${targetHost.uuid}/sign-in`);
     expect(page.url()).not.toMatch(/\/hosts\/\d+(\/|$)/);
   });
 
@@ -60,50 +64,13 @@ test.describe('Hosts (QC-739, Angular since QC-742)', () => {
     await expect(page).toHaveURL(adminUrl('/hosts/new'));
   });
 
-  test.describe('creation rollback', { tag: '@write' }, () => {
-    test.skip(!canUseIdentityDb(), "Needs Identity's local database to prove nothing was left behind.");
-
-    test.afterAll(() => {
-      runIdentitySeedScript('identity-qc739.remove.sql');
-    });
-
-    test('HM-04 when Identity refuses the sign-in client, the Identity host it just made is removed and HOST_MASTER is untouched', async ({ page }) => {
-      const list = new HostListPage(page);
-      await list.open();
-      const registered = await list.clientIds();
-      const identityClients = (queryIdentityDb("SELECT STRING_AGG(ClientId, ',') FROM Clients WHERE ClientId LIKE 'host.%'") ?? '').split(',');
-      const taken = identityClients.find((clientId) => clientId && !registered.includes(clientId));
-      test.skip(!taken, 'Every Identity host client is also registered in HOST_MASTER, so none can collide in Identity alone.');
-
-      const form = new HostFormPage(page);
-      await form.openNew();
-      await form.fill({
-        name: 'E2E QC-739 rollback',
-        hostKey: 'e2e-qc739-rollback',
-        clientId: taken!,
-        databaseName: 'QuarryConnect_Dev',
-        organisationId: '99',
-        uiUrl: 'http://localhost:4298',
-      });
-      await form.create.click();
-
-      await expect(form.formError).toContainText("Identity refused the host's sign-in client");
-      await expect(page).toHaveURL(adminUrl('/hosts/new'));
-      await expect(form.error('clientId')).toContainText('already exists');
-      expect(queryIdentityDb("SELECT COUNT(*) FROM app.Hosts WHERE HostKey = 'e2e-qc739-rollback'")).toBe('0');
-
-      await list.open();
-      await expect(list.table).not.toContainText('E2E QC-739 rollback');
-    });
-  });
-
   test.describe('a created host', () => {
     test.afterAll(() => {
-      if (canUseIdentityDb()) runIdentitySeedScript('identity-qc739.remove.sql');
       if (canUseMasterDb()) runMasterSeedScript('master-e2e-hosts.remove.sql');
     });
 
-    test('HM-05 a created host can be signed into at once, and deactivating it after confirming stops sign-in', { tag: '@create' }, async ({ page, request, shell }) => {
+    test('HM-05 a created host can be signed into once Identity reads the HOST_MASTER feed, and deactivating it after confirming stops sign-in', { tag: '@create' }, async ({ page, shell }) => {
+      test.setTimeout(2 * env.identityHostCacheSeconds * 1000 + 90_000);
       const stamp = Date.now().toString(36);
       const clientId = `e2e-qc739.web${stamp}`;
       const uiUrl = 'http://localhost:4297';
@@ -121,23 +88,24 @@ test.describe('Hosts (QC-739, Angular since QC-742)', () => {
       await form.create.click();
 
       await expect(page).toHaveURL(/#\/hosts\/[0-9a-f-]{36}$/);
-      await shell.expectStatus('can be signed into now');
-      await expect(form.identityClient(clientId)).toBeVisible();
+      await shell.expectStatus('created');
+      await expect(form.clientId).toHaveText(clientId);
 
-      const query = { client_id: clientId, response_type: 'code', scope: 'openid', redirect_uri: `${uiUrl}/`, ...PKCE };
-      expect(await authorizeRedirect(request, query)).toMatch(/\/Account\/Login/i);
+      const flow = authorizeUrl({ client_id: clientId, redirect_uri: `${uiUrl}/` });
+      const wait = { timeout: env.identityHostCacheSeconds * 1000, intervals: [2_000, 5_000, 10_000] };
+      await expect.poll(() => identityLanding(flow), { message: 'Identity reads the new host', ...wait }).toMatch(/\/Account\/Login/i);
 
       await form.deactivate.click();
       await form.confirmDialog.accept();
       await expect(page).toHaveURL(adminUrl('/hosts'));
-      await shell.expectStatus('Nobody can sign in to it any more.');
-      expect(await authorizeRedirect(request, query)).toMatch(/\/Error\?errorId=/);
+      await shell.expectStatus('deactivated');
+      await expect.poll(() => identityLanding(flow), { message: 'Identity drops the deactivated host', ...wait }).toBe(env.landingUrl ?? 'https://www.quarryconnect.com/');
     });
   });
 });
 
 test.describe('Host features (QC-739, Angular since QC-742)', () => {
-  test('HF-01 product features come from the host API with their rules, and MFA from Identity', { tag: '@smoke' }, async ({ page, targetHost }) => {
+  test('HF-01 product features come from the host API with their rules, and MFA from HOST_MASTER', { tag: '@smoke' }, async ({ page, targetHost }) => {
     const features = new HostFeaturesPage(page);
     await features.open(targetHost.uuid);
     for (const key of ['quickbooks', 'sage', 'dispatch', 'dispatch_statewide', 'maps']) {
@@ -194,7 +162,7 @@ test.describe('Host features (QC-739, Angular since QC-742)', () => {
       await shell.expectStatus('Saved 1 feature change.');
       await features.open(targetHost.uuid);
       await expect(features.checkbox('maps')).toBeChecked({ checked: !original });
-      await expect(features.row('maps')).toContainText(`Changed by ${env.admin!.email}`);
+      await expect(features.row('maps')).toContainText(`Changed by ${adminAccount()!.email}`);
     } finally {
       await features.open(targetHost.uuid);
       if ((await features.isOn('maps')) !== original) {
@@ -205,25 +173,17 @@ test.describe('Host features (QC-739, Angular since QC-742)', () => {
     }
   });
 
-  test('HF-05 the MFA switch saves through Identity', { tag: '@write' }, async ({ page, targetHost, shell }) => {
+  test("HF-05 the MFA switch shows the host's HOST_MASTER mfa row and says Identity applies it within 5 minutes (QC-775)", async ({ page, targetHost }) => {
+    test.skip(!canUseMasterDb(), 'Needs MASTER_SQL_DATABASE (local only).');
     const features = new HostFeaturesPage(page);
     await features.open(targetHost.uuid);
-    const original = await features.mfaOn();
-
-    try {
-      await features.setMfa(!original);
-      await features.mfaSave.click();
-      await shell.expectStatus(original ? 'no longer required' : 'now required');
-      await features.open(targetHost.uuid);
-      await expect(features.mfa).toHaveAttribute('aria-checked', String(!original));
-    } finally {
-      await features.open(targetHost.uuid);
-      if ((await features.mfaOn()) !== original) {
-        await features.setMfa(original);
-        await features.mfaSave.click();
-        await shell.expectStatus(/required at this host/);
-      }
-    }
+    const stored = queryMasterDb(
+      `SELECT CAST(f.IsEnabled AS int) FROM app.HostFeatures f JOIN app.Hosts h ON h.HostID = f.HostID_FK WHERE h.HostUUID = '${targetHost.uuid}' AND f.Active = 1 AND f.FeatureKey = 'mfa'`,
+    );
+    await expect(features.mfa).toHaveAttribute('aria-checked', stored === '1' ? 'true' : 'false');
+    await expect(page.locator('#mfa-error')).toHaveCount(0);
+    await expect(page.locator('#mfa-saved-copy')).toHaveCount(0);
+    await expect(page.getByText('Identity reads it and applies it')).toBeVisible();
   });
 });
 
@@ -300,7 +260,7 @@ test.describe('Host environment (QC-739, Angular since QC-742)', () => {
   });
 });
 
-test.describe('Host users (QC-739, Angular since QC-742)', { tag: '@write' }, () => {
+test.describe('Users (QC-739, Angular since QC-742; no host mappings since QC-775)', { tag: '@write' }, () => {
   test.describe.configure({ mode: 'serial' });
   test.skip(!canUseIdentityDb(), "Needs Identity's local database to seed and remove the throwaway member user.");
 
@@ -312,59 +272,32 @@ test.describe('Host users (QC-739, Angular since QC-742)', { tag: '@write' }, ()
     runIdentitySeedScript('identity-qc739.remove.sql');
   });
 
-  test('HU-01 an existing user is found and added to the host with a role', async ({ page, targetHost, shell }) => {
-    const users = new HostUsersPage(page);
-    await users.open(targetHost.uuid, 'e2e.qc739.member');
-    await users.add(MEMBER, 'HostUser');
-    await shell.expectStatus(`can now sign in to ${targetHost.name} as HostUser`);
-    await expect(users.role(MEMBER)).toHaveText('HostUser');
-    await expect(page).toHaveURL(adminUrl(`/hosts/${targetHost.uuid}/users`));
-
-    await users.open(targetHost.uuid, 'e2e.qc739.member');
-    await expect(users.candidate(MEMBER).locator('[data-testid="candidate-mapped"]')).toHaveText('Already at this host');
-  });
-
-  test("HU-02 changing the role and host-admin flag updates only this host's mapping", async ({ page, targetHost, shell }) => {
-    const users = new HostUsersPage(page);
-    await users.open(targetHost.uuid);
-    await users.update(MEMBER, 'Driver', true);
-    await shell.expectStatus('is now Driver and a host admin');
-    await users.open(targetHost.uuid);
-    await expect(users.role(MEMBER)).toHaveText('Driver');
-    await expect(users.hostAdmin(MEMBER)).toBeChecked();
-    expect(queryIdentityDb(`SELECT COUNT(*) FROM app.UserHosts m JOIN Users u ON u.Id = m.UserID WHERE u.Email = ${sqlText(MEMBER)} AND m.Active = 1`)).toBe('1');
-  });
-
-  test('HU-03 the user page lists the host, and the account is switched off and on after confirming, without touching the mapping', async ({ page, targetHost, shell }) => {
-    const users = new HostUsersPage(page);
-    await users.open(targetHost.uuid);
-    await users.memberLink(MEMBER).click();
+  test('HU-03 the user page shows the account with no hosts, says whether it is a platform admin, and switches it off and on after confirming', async ({ page, shell }) => {
+    const list = new UserListPage(page);
+    await list.open({ search: 'e2e.qc739.member' });
+    await list.rowByEmail(MEMBER).locator('[data-testid="user-name"]').click();
     await expect(page).toHaveURL(/#\/users\/[0-9a-f-]{36}$/i);
 
     const detail = new UserDetailPage(page);
-    await expect(detail.hosts).toContainText(targetHost.name);
     await expect(detail.state).toHaveText('Account active');
+    await expect(detail.platformAdmin).toHaveText('No');
+    await expect(detail.twoFactor).toHaveText('Off');
+    for (const id of ['#user-hosts', '#user-hosts-table', '#user-platform-roles']) {
+      await expect(page.locator(id), id).toHaveCount(0);
+    }
 
     await detail.deactivate.click();
     await detail.confirmDialog.dismiss();
     await expect(detail.state).toHaveText('Account active');
 
     await detail.setActive(false);
-    await shell.expectStatus('host mappings are kept');
+    await shell.expectStatus('deactivated and every session was ended');
     await expect(detail.state).toHaveText('Account deactivated');
-    await expect(detail.hosts).toContainText(targetHost.name);
+    expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM Users WHERE Email = ${sqlText(MEMBER)}`)).toBe('0');
 
     await detail.setActive(true);
     await shell.expectStatus('active again');
     await expect(detail.state).toHaveText('Account active');
-  });
-
-  test('HU-04 removing the last host mapping after confirming leaves the account active', async ({ page, targetHost, shell }) => {
-    const users = new HostUsersPage(page);
-    await users.open(targetHost.uuid);
-    await users.remove(MEMBER);
-    await shell.expectStatus('not mapped to any host now, but their account is still active');
-    await expect(users.member(MEMBER)).toHaveCount(0);
     expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM Users WHERE Email = ${sqlText(MEMBER)}`)).toBe('1');
   });
 
@@ -374,5 +307,6 @@ test.describe('Host users (QC-739, Angular since QC-742)', { tag: '@write' }, ()
     const link = list.rowByEmail(MEMBER).locator('[data-testid="user-name"]');
     await expect(link).toHaveText('E2E QC-739 Member');
     await expect(link).toHaveAttribute('href', /^#\/users\/[0-9a-f-]{36}$/i);
+    await expect(list.cell(list.rowByEmail(MEMBER), 'user-platform-admin')).toHaveCount(0);
   });
 });

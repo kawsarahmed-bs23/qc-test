@@ -1,5 +1,5 @@
 -- QC-738: removes the throwaway driver added by identity-deactivation-user.apply.sql, with its grants and sessions.
--- Its host mapping, roles and claims go with the user (cascade).
+-- Its roles and claims go with the user (cascade).
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 

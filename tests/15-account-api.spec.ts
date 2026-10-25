@@ -112,7 +112,7 @@ test.describe('Mobile account API (QC-709)', () => {
     let resetDone = false;
 
     test.beforeAll(() => {
-      runIdentitySeedScript('identity-qc709-driver.apply.sql', { Email: RESET_USER, SourceEmail: env.driver!.email, MobileClientId: env.mobileClientId! });
+      runIdentitySeedScript('identity-qc709-driver.apply.sql', { Email: RESET_USER, SourceEmail: env.driver!.email });
     });
 
     test.afterAll(() => {
@@ -241,7 +241,7 @@ test.describe('Mobile account API (QC-709)', () => {
       const { claims } = decodeJwt(changed.body.access_token!);
       expect(claims.sub).toBe(userId(RESET_USER));
       expect(claims.client_id).toBe(env.mobileClientId);
-      expect(claims.role).toBe('Driver');
+      expect(claims).not.toHaveProperty('role');
 
       const stale = await api.refresh(afterReset!.refresh_token!);
       expect(stale.status).toBe(400);
@@ -249,7 +249,7 @@ test.describe('Mobile account API (QC-709)', () => {
 
       const me = await api.driversMe(changed.body.access_token!);
       expect(me.status()).toBe(200);
-      expect((await me.json()).data).toMatchObject({ userUuid: claims.sub, role: 'Driver' });
+      expect((await me.json()).data).toMatchObject({ userUuid: claims.sub, hostUuid: null });
 
       const refreshed = await api.refresh(changed.body.refresh_token!);
       expect(refreshed.status, JSON.stringify(refreshed.body)).toBe(200);
@@ -282,7 +282,7 @@ test.describe('Mobile account API (QC-709)', () => {
     let current: string | undefined;
 
     test.beforeAll(() => {
-      runIdentitySeedScript('identity-qc709-driver.apply.sql', { Email: LIMITS_USER, SourceEmail: env.driver!.email, MobileClientId: env.mobileClientId! });
+      runIdentitySeedScript('identity-qc709-driver.apply.sql', { Email: LIMITS_USER, SourceEmail: env.driver!.email });
     });
 
     test.afterAll(() => {

@@ -1,5 +1,5 @@
--- QC-739: a throwaway Identity user with no host mappings, for the host-user cases (IDADMIN-16..20, HU-*).
--- It never signs in, so it has no password. Mapping, removing, deactivating and reactivating it never touches
+-- QC-739: a throwaway Identity user for the user cases (IDADMIN-16, IDADMIN-19, HU-03, HU-05).
+-- It never signs in, so it has no password. Deactivating and reactivating it never touches
 -- the shared test accounts. Re-running replaces the user; identity-qc739.remove.sql deletes it.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;

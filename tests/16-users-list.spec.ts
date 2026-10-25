@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures/test';
-import { canUseIdentityDb, canUseMasterDb, queryIdentityDb, queryMasterDb, runIdentitySeedScript } from '../fixtures/localDb';
+import { canUseIdentityDb, queryIdentityDb, runIdentitySeedScript } from '../fixtures/localDb';
+import { PLATFORM_ADMIN_EMAIL } from '../fixtures/throwawayUsers';
 import { adminUrl } from '../pages/AdminShell';
 import { UserListPage, type UserSortColumn } from '../pages/UserListPage';
 
@@ -22,14 +23,6 @@ function emails(where: string, orderBy = 'u.Email, u.Id'): string[] {
     .filter(Boolean);
 }
 
-function onHost(hostId: number, role?: 'Driver' | 'HostUser'): string {
-  return `EXISTS (SELECT 1 FROM app.UserHosts m JOIN Roles r ON r.Id = m.RoleID WHERE m.UserID = u.Id AND m.Active = 1 AND m.HostID = ${hostId}${role ? ` AND r.Name = N'${role}'` : ''})`;
-}
-
-function withRole(role: 'Driver' | 'HostUser'): string {
-  return `EXISTS (SELECT 1 FROM app.UserHosts m JOIN Roles r ON r.Id = m.RoleID WHERE m.UserID = u.Id AND m.Active = 1 AND r.Name = N'${role}')`;
-}
-
 const ORDER: Record<UserSortColumn, Record<'asc' | 'desc', string>> = {
   email: { asc: 'u.Email, u.Id', desc: 'u.Email DESC, u.Id' },
   name: { asc: 'u.LastName, u.FirstName, u.Email, u.Id', desc: 'u.LastName DESC, u.FirstName DESC, u.Email DESC, u.Id' },
@@ -45,20 +38,12 @@ test.describe('Users list (QC-742)', () => {
   test.describe.configure({ mode: 'serial' });
   test.skip(!canUseIdentityDb(), "Needs Identity's local database to seed the e2e.qc742 users and to count users.");
 
-  let rockRidgeIdentityHost = 0;
-
   test.beforeAll(() => {
     runIdentitySeedScript('identity-qc742-users.apply.sql');
   });
 
   test.afterAll(() => {
     runIdentitySeedScript('identity-qc742.remove.sql');
-  });
-
-  test.beforeEach(async ({ targetHost }) => {
-    test.skip(!canUseMasterDb(), 'Needs MASTER_SQL_DATABASE to find the Identity host behind the target host.');
-    rockRidgeIdentityHost = Number(queryMasterDb(`SELECT IdentityHostId FROM app.Hosts WHERE HostUUID = '${targetHost.uuid}'`));
-    test.skip(rockRidgeIdentityHost !== 1, 'The seed maps users to Identity host 1, which must be the Identity host of the target host.');
   });
 
   test('USRLIST-01 the list shows users on arrival, with every Identity account counted and no filters in the URL', { tag: '@smoke' }, async ({ page, shell }) => {
@@ -83,31 +68,22 @@ test.describe('Users list (QC-742)', () => {
     }
   });
 
-  test('USRLIST-03 the host filter alone lists the users mapped to that host', async ({ page, targetHost }) => {
+  test('USRLIST-03 there is no host or role filter any more, and the columns are name, email, platform admin, last sign-in and account (QC-775)', async ({ page }) => {
     const list = new UserListPage(page);
     await list.open();
-    await list.chooseHost(targetHost.name);
-    expect(Object.fromEntries(list.query())).toEqual({ host: targetHost.uuid });
-    expect(await totalOf(list)).toBe(count(onHost(rockRidgeIdentityHost)));
-    for (const row of await list.rows.all()) {
-      await expect(list.cell(row, 'user-hosts').locator(`[data-host-uuid="${targetHost.uuid}" i]`)).toBeVisible();
-    }
+    await expect(page.locator('#user-host')).toHaveCount(0);
+    await expect(page.locator('#user-role')).toHaveCount(0);
+    await expect(list.table.locator('th')).toHaveText([/Name/, /Email/, /Platform admin/, /Last sign-in|Last login/, /Account/]);
   });
 
-  test('USRLIST-04 the role filter alone lists Drivers at any host, and Admin as a platform role', async ({ page }) => {
+  test('USRLIST-04 the platform admin column marks a HOST_MASTER platform admin and nobody else (QC-775)', async ({ page }) => {
     const list = new UserListPage(page);
-    await list.open();
-    await list.chooseRole('Driver');
-    expect(Object.fromEntries(list.query())).toEqual({ role: 'Driver' });
-    expect(await totalOf(list)).toBe(count(withRole('Driver')));
+    await list.open({ search: PLATFORM_ADMIN_EMAIL });
+    await expect(list.cell(list.rowByEmail(PLATFORM_ADMIN_EMAIL), 'user-platform-admin')).toHaveText('Admin');
 
-    await list.chooseRole('Admin');
-    expect(Object.fromEntries(list.query())).toEqual({ role: 'Admin' });
-    const admins = count(`EXISTS (SELECT 1 FROM UserRoles ur JOIN Roles r ON r.Id = ur.RoleId WHERE ur.UserId = u.Id AND r.Name = N'Admin')`);
-    await expect(list.rows).toHaveCount(admins);
-    for (const row of await list.rows.all()) {
-      await expect(list.cell(row, 'user-roles')).toContainText('Admin');
-    }
+    await list.open({ search: SEARCH, pageSize: 50 });
+    await expect(list.rows).toHaveCount(40);
+    await expect(list.table.locator('[data-testid="user-platform-admin"]')).toHaveCount(0);
   });
 
   test('USRLIST-05 the status filter alone lists only deactivated accounts, or only active ones', async ({ page }) => {
@@ -127,26 +103,22 @@ test.describe('Users list (QC-742)', () => {
     expect(list.query().toString()).toBe('');
   });
 
-  test('USRLIST-06 search, host, role and status combine, and the role must be held at the chosen host', async ({ page, targetHost }) => {
+  test('USRLIST-06 search and status combine', async ({ page }) => {
     const list = new UserListPage(page);
     await list.open();
     await list.searchFor(SEARCH);
-    await list.chooseHost(targetHost.name);
-    await list.chooseRole('HostUser');
-    await list.chooseStatus('Active');
-    expect(Object.fromEntries(list.query())).toEqual({ search: SEARCH, host: targetHost.uuid, role: 'HostUser', status: 'active' });
+    await list.chooseStatus('Deactivated');
+    expect(Object.fromEntries(list.query())).toEqual({ search: SEARCH, status: 'deactivated' });
 
-    const expected = emails(`${SEEDED} AND u.IsActive = 1 AND ${onHost(rockRidgeIdentityHost, 'HostUser')}`);
+    const expected = emails(`${SEEDED} AND u.IsActive = 0`);
     expect(await list.emails()).toEqual(expected);
-    expect(expected).toContain(seeded(26));
-    expect(expected).not.toContain(seeded(25));
-    expect(expected).not.toContain(seeded(28));
+    expect(expected).toEqual([7, 14, 21, 28, 35].map(seeded));
   });
 
-  test('USRLIST-07 filters survive paging with 15 users a page, and the pages hold every match exactly once', async ({ page, targetHost }) => {
+  test('USRLIST-07 filters survive paging with 15 users a page, and the pages hold every match exactly once', async ({ page }) => {
     const list = new UserListPage(page);
-    await list.open({ search: SEARCH, host: targetHost.uuid, role: 'Driver' });
-    const expected = emails(`${SEEDED} AND ${onHost(rockRidgeIdentityHost, 'Driver')}`);
+    await list.open({ search: SEARCH, status: 'active' });
+    const expected = emails(`${SEEDED} AND u.IsActive = 1`).slice(0, 30);
     expect(expected.length).toBeGreaterThan(15);
 
     await list.setPageSize(15);
@@ -156,16 +128,16 @@ test.describe('Users list (QC-742)', () => {
 
     await list.nextPage();
     await list.waitForQuery((q) => q.get('page') === '2');
-    expect(Object.fromEntries(list.query())).toEqual({ search: SEARCH, host: targetHost.uuid, role: 'Driver', page: '2', pageSize: '15' });
-    await expect(list.selected(list.role)).toHaveText('Driver');
+    expect(Object.fromEntries(list.query())).toEqual({ search: SEARCH, status: 'active', page: '2', pageSize: '15' });
+    await expect(list.selected(list.status)).toHaveText('Active');
     await expect(list.search).toHaveValue(SEARCH);
     const second = await list.emails();
     for (const row of await list.rows.all()) {
-      await expect(list.cell(row, 'user-hosts').locator(`[data-host-uuid="${targetHost.uuid}" i] .qc-host-role`)).toHaveText(/^Driver/);
+      await expect(list.cell(row, 'user-account')).toHaveText('Active');
     }
 
     expect([...first, ...second]).toEqual(expected);
-    expect(await totalOf(list)).toBe(expected.length);
+    expect(await totalOf(list)).toBe(count(`${SEEDED} AND u.IsActive = 1`));
   });
 
   for (const [id, column] of [['08', 'name'], ['09', 'email'], ['10', 'lastLogin']] as const) {
@@ -184,9 +156,9 @@ test.describe('Users list (QC-742)', () => {
     });
   }
 
-  test('USRLIST-11 the URL and every link carry only UUIDs and GUIDs, never a numeric id', async ({ page, targetHost }) => {
+  test('USRLIST-11 the URL and every link carry only GUIDs, never a numeric id', async ({ page }) => {
     const list = new UserListPage(page);
-    await list.open({ search: SEARCH, host: targetHost.uuid });
+    await list.open({ search: SEARCH });
     for (const [key, value] of list.query()) {
       expect(value, key).not.toMatch(/^\d+$/);
     }
@@ -194,7 +166,7 @@ test.describe('Users list (QC-742)', () => {
       expect(id).toMatch(GUID);
     }
     for (const href of await list.rows.locator('a').evaluateAll((links) => links.map((a) => a.getAttribute('href') ?? ''))) {
-      expect(href).toMatch(/^#\/(users|hosts)\/[0-9a-f-]{36}$/i);
+      expect(href).toMatch(/^#\/users\/[0-9a-f-]{36}$/i);
     }
 
     const row = list.rowByEmail(seeded(1));
@@ -223,27 +195,24 @@ test.describe('Users list (QC-742)', () => {
     await expect(list.cell(active, 'user-email')).not.toHaveCSS('text-decoration-line', 'line-through');
   });
 
-  test('USRLIST-13 Reset filters clears search, host, role, status, sort and paging', async ({ page, targetHost }) => {
+  test('USRLIST-13 Reset filters clears search, status, sort and paging', async ({ page }) => {
     const list = new UserListPage(page);
-    await list.open({ search: SEARCH, host: targetHost.uuid, role: 'Driver', status: 'active', sort: 'name', dir: 'desc', page: 2, pageSize: 15 });
-    await expect(list.selected(list.role)).toHaveText('Driver');
+    await list.open({ search: SEARCH, status: 'active', sort: 'name', dir: 'desc', page: 2, pageSize: 15 });
+    await expect(list.selected(list.status)).toHaveText('Active');
 
     await list.reset.click();
     await list.waitForQuery((q) => q.toString() === '');
     await expect(page).toHaveURL(adminUrl('/users'));
     await expect(list.search).toHaveValue('');
     await expect(list.selected(list.status)).toHaveText('All accounts');
-    await expect(list.selected(list.role)).toHaveText('All roles');
-    await expect(list.selected(list.host)).toHaveText('All hosts');
     expect(await totalOf(list)).toBe(count('1 = 1'));
   });
 
-  test('USRLIST-14 a host UUID that is not registered shows a warning and no users', async ({ page }) => {
+  test('USRLIST-14 a host or role left in an old link is ignored and every account is listed (QC-775)', async ({ page }) => {
     const list = new UserListPage(page);
-    await list.open({ host: '00000000-0000-0000-0000-000000000001' });
-    await expect(list.unknownHost).toContainText('That host is not registered here or is not linked to Identity.');
-    await expect(list.rows).toHaveCount(0);
-    await expect(list.empty).toBeVisible();
+    await list.open({ host: '00000000-0000-0000-0000-000000000001', role: 'Driver' });
+    await expect(page.locator('#users-unknown-host')).toHaveCount(0);
+    expect(await totalOf(list)).toBe(count('1 = 1'));
   });
 
   test('USRLIST-15 a search that matches nobody shows the empty state and no pager', async ({ page }) => {
@@ -253,6 +222,5 @@ test.describe('Users list (QC-742)', () => {
     await expect(list.empty).toHaveText('No users match these filters.');
     await expect(list.rows).toHaveCount(0);
     await expect(list.paginator).toHaveCount(0);
-    await expect(list.unknownHost).toHaveCount(0);
   });
 });

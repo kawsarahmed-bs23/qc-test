@@ -3,6 +3,7 @@ import { canUseIdentityDb, queryIdentityDb, restoreIdentityPassword, snapshotIde
 import { decodeJwt, PasswordGrantApi, type TokenResponse } from '../pages/PasswordGrantApi';
 import { IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage } from '../pages/IdentityLoginPage';
 import { canReadIdentityLog } from '../fixtures/identityLog';
+import { canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '../fixtures/throwawayUsers';
 import { env } from '../config/environment';
 
 const ACCESS_TOKEN_SECONDS = 900;
@@ -44,7 +45,10 @@ test.describe('Mobile password grant (QC-706)', () => {
       expect(header.typ).toBe('at+jwt');
       expect(claims.client_id).toBe(env.mobileClientId);
       expect(claims.aud).toEqual(expect.arrayContaining(['quarryconnect.drivers.api']));
-      expect(claims.role).toBe('Driver');
+      for (const claim of ['role', 'OrganisationId', 'host_uuid', 'hosts']) {
+        expect(claims, `no ${claim} claim since QC-775`).not.toHaveProperty(claim);
+      }
+      expect(issued).not.toHaveProperty('hosts');
       expect(claims.amr).toEqual(['pwd']);
       expect(Number(claims.exp) - Number(claims.iat)).toBe(ACCESS_TOKEN_SECONDS);
     });
@@ -57,7 +61,8 @@ test.describe('Mobile password grant (QC-706)', () => {
       expect(me.status()).toBe(200);
       const claims = decodeJwt(issued.access_token!).claims;
       const data = (await me.json()).data;
-      expect(data).toMatchObject({ userUuid: claims.sub, role: 'Driver' });
+      expect(data).toMatchObject({ userUuid: claims.sub, hostUuid: null });
+      expect(data).not.toHaveProperty('role');
       expect(claims.email).toBeTruthy();
       expect(data).toMatchObject({
         fullName: claims.name ?? null,
@@ -92,11 +97,24 @@ test.describe('Mobile password grant (QC-706)', () => {
     expect(result.body).toMatchObject(INVALID_CREDENTIALS);
   });
 
-  test('PWD-05 a user without the Driver role is refused even with the right password', async ({ request }) => {
-    test.skip(!env.admin, 'Needs the seeded admin test account (ADMIN_EMAIL / ADMIN_PASSWORD).');
-    const result = await new PasswordGrantApi(request).passwordGrant(env.admin!.email, env.admin!.password);
-    expect(result.status).toBe(400);
-    expect(result.body).toMatchObject(INVALID_CREDENTIALS);
+  test('PWD-05 any active account without two-step verification gets a token, since the drivers API decides which hosts it may use (QC-775)', { tag: '@write' }, async ({ request }) => {
+    test.skip(!canSeedThrowawayUsers(), "Needs Identity's local database for a throwaway account that is no driver anywhere.");
+    const user = seedIdentityUser('e2e.qc775.t.pwd05@quarryconnect.test', 'QC-775 Not a driver', false);
+
+    try {
+      const api = new PasswordGrantApi(request);
+      const result = await api.passwordGrant(user.email, user.password);
+      expect(result.status, JSON.stringify(result.body)).toBe(200);
+      expect(decodeJwt(result.body.access_token!).claims).not.toHaveProperty('role');
+
+      if (env.driversApiUrl) {
+        const hosts = await api.driversMeHosts(result.body.access_token!);
+        expect(hosts.status()).toBe(200);
+        expect((await hosts.json()).data.hosts).toEqual([]);
+      }
+    } finally {
+      removeIdentityUsers(user.email);
+    }
   });
 
   test.describe('driver account states', { tag: '@write' }, () => {

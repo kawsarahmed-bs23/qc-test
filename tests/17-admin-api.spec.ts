@@ -3,13 +3,17 @@ import { AdminApi, accessTokenFromPage, adminTokenFromState, canUseAdminApi } fr
 import { adminUrl } from '../pages/AdminShell';
 import { IdentityLoginPage } from '../pages/IdentityLoginPage';
 import { decodeJwt } from '../pages/PasswordGrantApi';
+import { adminAccount, canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '../fixtures/throwawayUsers';
 import { env } from '../config/environment';
 
 const ADMIN_AUDIENCE = 'quarryconnect.admin.api';
 const OTHER_ORIGIN = 'http://localhost:4401';
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const HOST_KEYS = ['hostUuid', 'name', 'hostKey', 'clientId', 'databaseName', 'uiUrl', 'apiBaseUrl', 'hostOrganisationId', 'identityHostId', 'linkedToIdentity', 'hasApiBaseUrl'];
+const HOST_KEYS = ['hostUuid', 'name', 'hostKey', 'clientId', 'databaseName', 'uiUrl', 'apiBaseUrl', 'hostOrganisationId', 'hasApiBaseUrl'];
+const USER_KEYS = ['userId', 'email', 'displayName', 'isActive', 'lastLogin', 'isPlatformAdmin'];
 const READ_PATHS = ['/me', '/dashboard', '/hosts', '/activity', '/users', '/users/filters'];
+const ADMIN_PATHS = READ_PATHS.filter((path) => path !== '/me');
+const NOT_AN_ADMIN = 'e2e.qc775.t.adminapi02@quarryconnect.test';
 
 function keysDeep(value: unknown, found = new Set<string>()): Set<string> {
   if (Array.isArray(value)) {
@@ -39,35 +43,43 @@ test.describe('Admin API (QC-742)', () => {
       }
     });
 
-    test('ADMINAPI-02 a signed-in user without the Admin role lands on Permission denied, and their token gets 403', async ({ page, request }) => {
-      test.skip(!env.driver, 'Needs the seeded test driver (DRIVER_EMAIL / DRIVER_PASSWORD).');
-      await page.goto(adminUrl('/hosts'));
-      await new IdentityLoginPage(page).signIn(env.driver!);
+    test('ADMINAPI-02 a signed-in account that is not a platform admin lands on Permission denied; /me answers and every other path gets 403', { tag: '@write' }, async ({ page, request }) => {
+      test.skip(!canSeedThrowawayUsers(), "Needs Identity's local database for a throwaway account with two-step verification (Admin requires it, QC-775).");
+      const user = seedIdentityUser(NOT_AN_ADMIN, 'QC-775 Admin API', true);
 
-      await expect(page).toHaveURL(adminUrl('/permission-denied'));
-      await expect(page.locator('#permission-denied-page')).toBeVisible();
-      await expect(page.locator('#permission-denied-message')).toContainText('Only Admins can sign in here.');
-      await expect(page.locator('#permission-denied-sign-out')).toBeVisible();
-      await expect(page.locator('#nav-dashboard')).toHaveCount(0);
+      try {
+        await page.goto(adminUrl('/hosts'));
+        await new IdentityLoginPage(page).signInWithTwoStep(user, user.authenticatorKey!);
 
-      await page.goto(adminUrl('/users'));
-      await expect(page).toHaveURL(adminUrl('/permission-denied'));
+        await expect(page).toHaveURL(adminUrl('/permission-denied'));
+        await expect(page.locator('#permission-denied-page')).toBeVisible();
+        await expect(page.locator('#permission-denied-message')).toContainText('Only platform admins can sign in here.');
+        await expect(page.locator('#permission-denied-sign-out')).toBeVisible();
+        await expect(page.locator('#nav-dashboard')).toHaveCount(0);
 
-      const token = await accessTokenFromPage(page);
-      expect(token, 'the driver got an access token').toBeTruthy();
-      expect(decodeJwt(token!).claims.aud).toContain(ADMIN_AUDIENCE);
-      const api = new AdminApi(request, token);
-      for (const path of READ_PATHS) {
-        expect((await api.get(path)).status, path).toBe(403);
+        await page.goto(adminUrl('/users'));
+        await expect(page).toHaveURL(adminUrl('/permission-denied'));
+
+        const token = await accessTokenFromPage(page);
+        expect(token, 'the account got an access token').toBeTruthy();
+        expect(decodeJwt(token!).claims.aud).toContain(ADMIN_AUDIENCE);
+        const api = new AdminApi(request, token);
+        expect((await api.get('/me')).body).toMatchObject({ userId: user.userId, email: user.email, isAdmin: false, needsTwoFactor: false });
+        for (const path of ADMIN_PATHS) {
+          expect((await api.get(path)).status, path).toBe(403);
+        }
+      } finally {
+        removeIdentityUsers(NOT_AN_ADMIN);
       }
     });
   });
 
-  test('ADMINAPI-03 the Admin token carries the Admin API audience and role, and reads every list', async ({ request }) => {
+  test('ADMINAPI-03 the Admin token carries the Admin API audience and mfa but no role, and reads every list', async ({ request }) => {
     const token = adminTokenFromState();
     const claims = decodeJwt(token).claims;
     expect(claims.aud).toContain(ADMIN_AUDIENCE);
-    expect([claims.role].flat()).toContain('Admin');
+    expect([claims.amr].flat()).toContain('mfa');
+    expect(claims).not.toHaveProperty('role');
 
     const api = new AdminApi(request, token);
     for (const path of READ_PATHS) {
@@ -75,7 +87,7 @@ test.describe('Admin API (QC-742)', () => {
       expect(result.status, path).toBe(200);
       expect(result.headers['content-type'], path).toContain('application/json');
     }
-    expect((await api.get('/me')).body).toMatchObject({ email: env.admin!.email, userId: claims.sub });
+    expect((await api.get('/me')).body).toMatchObject({ email: adminAccount()!.email, userId: claims.sub, isAdmin: true, needsTwoFactor: false });
   });
 
   test('ADMINAPI-04 CORS lets the Admin app origin call the API and nobody else', async ({ request }) => {
@@ -107,7 +119,7 @@ test.describe('Admin API (QC-742)', () => {
     const one = await api.get(`/hosts/${targetHost.uuid}`);
     expect(Object.keys(one.body).sort()).toEqual([...HOST_KEYS].sort());
 
-    for (const path of ['/hosts', `/hosts/${targetHost.uuid}`, '/dashboard', '/activity', '/users', '/users/filters', `/hosts/${targetHost.uuid}/users`]) {
+    for (const path of ['/hosts', `/hosts/${targetHost.uuid}`, '/dashboard', '/activity', '/users', '/users/filters', `/hosts/${targetHost.uuid}/branding`, `/hosts/${targetHost.uuid}/urls`]) {
       const keys = keysDeep((await api.get(path)).body);
       for (const key of ['id', 'hostId', 'changeLogId']) {
         expect(keys.has(key), `${path} has no ${key}`).toBe(false);
@@ -117,10 +129,9 @@ test.describe('Admin API (QC-742)', () => {
     const users = await api.get('/users?pageSize=100');
     for (const user of users.body.items) {
       expect(user.userId).toMatch(GUID);
-      for (const link of user.hosts) {
-        expect(Object.keys(link).sort()).toEqual(['hostKey', 'hostName', 'hostUuid', 'isHostAdmin', 'role']);
-      }
+      expect(Object.keys(user).sort()).toEqual([...USER_KEYS].sort());
     }
+    expect((await api.get(`/hosts/${targetHost.uuid}/users`)).status, 'the host users endpoint is gone (QC-775)').toBe(404);
 
   });
 
@@ -136,7 +147,7 @@ test.describe('Admin API (QC-742)', () => {
     }
 
     const unknown = '00000000-0000-0000-0000-000000000000';
-    for (const path of [`/hosts/${unknown}`, `/hosts/${unknown}/features`, `/hosts/${unknown}/environment`, `/hosts/${unknown}/users`, `/activity?host=${unknown}`]) {
+    for (const path of [`/hosts/${unknown}`, `/hosts/${unknown}/features`, `/hosts/${unknown}/environment`, `/hosts/${unknown}/branding`, `/hosts/${unknown}/urls`, `/activity?host=${unknown}`]) {
       expect((await api.get(path)).status, path).toBe(404);
     }
     expect((await api.get('/users/00000000-0000-0000-0000-000000000000')).status).toBe(404);

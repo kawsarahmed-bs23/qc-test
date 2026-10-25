@@ -2,8 +2,8 @@
 -- touches the shared test driver, and its per-address reset-request budget (3 per 15 minutes) is its own.
 -- $(Email) is unique per run (e2e.qc709.<name>.<timestamp>@quarryconnect.test), so back-to-back runs never share a budget.
 -- It signs in with the test driver's password: its PasswordHash is copied from $(SourceEmail), which works because an
--- ASP.NET Identity password hash carries its own salt. It is mapped as Driver to the host of $(MobileClientId), so the
--- password grant and the change-password grant accept it. identity-qc709.remove.sql deletes every e2e.qc709.* user.
+-- ASP.NET Identity password hash carries its own salt. Since QC-775 the password grant and the change-password grant need
+-- no host mapping or role, so the user has none. identity-qc709.remove.sql deletes every e2e.qc709.* user.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
@@ -23,10 +23,6 @@ DECLARE @PasswordHash nvarchar(max) = (SELECT PasswordHash FROM Users WHERE Norm
 IF @PasswordHash IS NULL
     THROW 50001, 'The source test driver does not exist or has no password.', 1;
 
-DECLARE @HostId int = (SELECT HostID FROM app.HostClients WHERE ClientID = N'$(MobileClientId)' AND Active = 1);
-IF @HostId IS NULL
-    THROW 50002, 'The mobile client belongs to no active host.', 1;
-
 DECLARE @UserId nvarchar(450) = LOWER(CONVERT(nvarchar(450), NEWID()));
 
 INSERT Users
@@ -42,8 +38,5 @@ VALUES
     0, 0, 1, 0, N'E2E', N'QC-709 Account',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), 0, 1
 );
-
-INSERT app.UserHosts (UserID, HostID, OrganisationID, RoleID, CreatedBy, UpdatedBy)
-SELECT @UserId, @HostId, 1, Id, N'e2e', N'e2e' FROM Roles WHERE Name = N'Driver';
 
 COMMIT TRANSACTION;

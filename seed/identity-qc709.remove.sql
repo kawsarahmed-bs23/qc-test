@@ -1,6 +1,6 @@
 -- QC-709: removes every throwaway driver added by identity-qc709-driver.apply.sql (e2e.qc709.*@quarryconnect.test),
 -- with its reset codes, grants and sessions. PasswordResetCodes has no foreign key, so its rows are deleted first;
--- the host mapping, roles and claims go with the user (cascade).
+-- roles and claims go with the user (cascade).
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 

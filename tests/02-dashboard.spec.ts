@@ -3,7 +3,7 @@ import { canUseMasterDb, queryMasterDb } from '../fixtures/localDb';
 import { adminUrl, openAdmin } from '../pages/AdminShell';
 import { HostListPage } from '../pages/HostManagementPages';
 import { ActivityPage, DashboardPage, HOST_TABS, HostNav, KPIS } from '../pages/HostPages';
-import { env } from '../config/environment';
+import { adminAccount } from '../fixtures/throwawayUsers';
 
 test.describe('Dashboard and navigation (QC-742)', () => {
   test('DASH-01 dashboard shows the four summary cards with numbers', { tag: '@smoke' }, async ({ page, shell }) => {
@@ -16,14 +16,16 @@ test.describe('Dashboard and navigation (QC-742)', () => {
     expect(Number(await dashboard.kpi('kpi-hosts').innerText())).toBeGreaterThan(0);
   });
 
-  test('DASH-02 the target host has a card with its Identity state and quick links', async ({ page, targetHost }) => {
+  test('DASH-02 the target host has a card with its sign-in state and quick links (QC-775)', async ({ page, targetHost }) => {
     const dashboard = new DashboardPage(page);
     await dashboard.open();
     const card = dashboard.hostCard(targetHost.uuid);
     await expect(card).toBeVisible();
     await expect(card.locator('[data-testid="host-card-link"]')).toHaveText(targetHost.name);
-    await expect(card).toContainText(/Identity linked|Not linked/);
-    for (const [link, path] of [['Features', 'features'], ['Environment', 'environment'], ['Users', 'users']]) {
+    await expect(dashboard.signInState(targetHost.uuid)).toHaveText(/^(Sign-in ready|No return address)$/);
+    await expect(card).not.toContainText('Identity linked');
+    await expect(card.getByRole('link', { name: 'Users', exact: true })).toHaveCount(0);
+    for (const [link, path] of [['Features', 'features'], ['Environment', 'environment'], ['Sign-in', 'sign-in']]) {
       await expect(card.getByRole('link', { name: link, exact: true })).toHaveAttribute('href', `#/hosts/${targetHost.uuid}/${path}`);
     }
   });
@@ -51,7 +53,7 @@ test.describe('Dashboard and navigation (QC-742)', () => {
     await expect(page.locator('#kpis')).toBeVisible();
   });
 
-  test('DASH-04 host list links to the host page with its five tabs', async ({ page, shell, targetHost }) => {
+  test('DASH-04 host list links to the host page with its five tabs: Details, Sign-in, Environment, Features, Activity (QC-775)', async ({ page, shell, targetHost }) => {
     const list = new HostListPage(page);
     await list.open();
     await list.link(targetHost.uuid).click();
@@ -61,6 +63,7 @@ test.describe('Dashboard and navigation (QC-742)', () => {
 
     const nav = new HostNav(page);
     await expect(nav.all()).toHaveCount(HOST_TABS.length);
+    await expect(nav.all()).toHaveText(['Details', 'Sign-in', 'Environment', 'Features', 'Activity'].map((label) => new RegExp(`${label}\\s*$`)));
     for (const tab of HOST_TABS) {
       await expect(nav.tab(tab)).toBeVisible();
     }
@@ -100,11 +103,12 @@ test.describe('Dashboard and navigation (QC-742)', () => {
   });
 
   test('DASH-08 the user menu shows the signed-in admin and a sign-out item', async ({ page, shell }) => {
-    test.skip(!env.admin, 'No admin credentials');
+    const admin = adminAccount();
+    test.skip(!admin, 'No admin credentials');
     await new DashboardPage(page).open();
     await expect(page.locator('#sidebar')).toBeVisible();
     await shell.profileMenuButton.click();
-    await expect(shell.userEmail).toHaveText(env.admin!.email);
+    await expect(shell.userEmail).toHaveText(admin!.email);
     await expect(shell.userName).not.toBeEmpty();
     await expect(page.locator('#sign-out')).toBeVisible();
     await page.keyboard.press('Escape');

@@ -1,5 +1,6 @@
 import { test, expect, signedOut } from '../fixtures/test';
-import { canUseIdentityDb, queryIdentityDb, restoreIdentityPassword, snapshotIdentityPassword } from '../fixtures/localDb';
+import { canUseIdentityDb, queryIdentityDb } from '../fixtures/localDb';
+import { canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '../fixtures/throwawayUsers';
 import { canReadIdentityLog, identityLogSince, markIdentityLog } from '../fixtures/identityLog';
 import { IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage } from '../pages/IdentityLoginPage';
 import { env } from '../config/environment';
@@ -54,8 +55,10 @@ test.describe('Forgot password (QC-709)', () => {
       }
     });
 
-    test('RESET-04 a reset signs the driver out everywhere, and the used or an altered link is refused', async ({ browser, page }) => {
-      const password = snapshotIdentityPassword(driverWhere());
+    test('RESET-04 a reset link carries only ?t=, signs the account out everywhere, and the used or an altered link is refused before any form is shown', async ({ browser, page }) => {
+      test.skip(!canSeedThrowawayUsers(), 'Needs ADMIN_EMAIL / ADMIN_PASSWORD, whose password the throwaway account copies.');
+      const user = seedIdentityUser(`e2e.qc775.t.reset04.${Date.now()}@quarryconnect.test`, 'QC-775 Reset', false);
+      const where = `Email = '${user.email}'`;
       const elsewhere = await browser.newContext({ ...signedOut, ignoreHTTPSErrors: env.ignoreHttpsErrors });
       const reset = new IdentityPasswordResetPage(page);
 
@@ -64,32 +67,34 @@ test.describe('Forgot password (QC-709)', () => {
         await other.goto(`${env.identityUrl}/Account/Login`);
         await Promise.all([
           other.waitForResponse((r) => r.request().method() === 'POST' && r.url().includes('/Account/Login')),
-          new IdentityLoginPage(other).signIn(env.driver!),
+          new IdentityLoginPage(other).signIn(user),
         ]);
         const otherSession = new IdentityLogoutPage(other);
         await otherSession.expectSignedIn();
 
-        const link = await reset.resetVia(env.driver!.email, 'Reset04-Temporary-Pass!');
+        const link = await reset.resetVia(user.email, 'Reset04-Temporary-Pass!');
+        expect([...new URL(link).searchParams.keys()], 'the link names no email, return address or Identity token').toEqual(['t']);
+        expect(link).not.toContain(encodeURIComponent(user.email));
 
         await otherSession.expectSignedOut();
         expect(
-          Number(queryIdentityDb(`SELECT COUNT(*) FROM app.UserSessions s JOIN Users u ON u.Id = s.SubjectId WHERE u.${driverWhere()} AND s.EndReason = 'password-reset' AND s.Ended > DATEADD(minute, -5, SYSUTCDATETIME())`)),
+          Number(queryIdentityDb(`SELECT COUNT(*) FROM app.UserSessions s JOIN Users u ON u.Id = s.SubjectId WHERE u.${where} AND s.EndReason = 'password-reset' AND s.Ended > DATEADD(minute, -5, SYSUTCDATETIME())`)),
         ).toBeGreaterThan(0);
 
-        await reset.resetExpectingInvalidLink(link, 'Reset04-Second-Pass!');
+        await reset.expectInvalidLink(link);
 
         const altered = new URL(link);
-        const code = altered.searchParams.get('code')!;
-        altered.searchParams.set('code', `${code.slice(0, -6)}AAAAAA`);
-        await reset.resetExpectingInvalidLink(altered.toString(), 'Reset04-Third-Pass!');
+        const token = altered.searchParams.get('t')!;
+        altered.searchParams.set('t', `${token.slice(0, -6)}AAAAAA`);
+        await reset.expectInvalidLink(altered.toString());
       } finally {
-        restoreIdentityPassword(driverWhere(), password);
         await elsewhere.close();
+        removeIdentityUsers(user.email);
       }
     });
   });
 
   test('RESET-05 a link older than 2 hours is refused', async () => {
-    test.skip(true, 'The 2-hour token lifespan cannot be waited out in a test run and the token time cannot be set from outside. Checked by the token provider (DataProtectionTokenProviderOptions.TokenLifespan = 2 h).');
+    test.skip(true, 'The 2-hour link lifetime cannot be waited out in a test run. Since QC-775 the link is a row in PasswordResetLinks with its own Expires (PasswordResetDefaults.LinkLifetime), checked by Identity when the link is used.');
   });
 });

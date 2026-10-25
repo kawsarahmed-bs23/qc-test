@@ -1,9 +1,9 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { openAdmin } from './AdminShell';
 
-export type HostTab = 'details' | 'environment' | 'features' | 'users' | 'activity';
+export type HostTab = 'details' | 'sign-in' | 'environment' | 'features' | 'activity';
 
-export const HOST_TABS: HostTab[] = ['details', 'environment', 'features', 'users', 'activity'];
+export const HOST_TABS: HostTab[] = ['details', 'sign-in', 'environment', 'features', 'activity'];
 
 export const KPIS = ['kpi-hosts', 'kpi-features', 'kpi-mfa', 'kpi-sync'] as const;
 
@@ -53,6 +53,10 @@ export class DashboardPage {
 
   hostCard(uuid: string): Locator {
     return this.page.locator(`#host-cards [data-testid="host-card"][data-host-uuid="${uuid}" i]`);
+  }
+
+  signInState(uuid: string): Locator {
+    return this.hostCard(uuid).locator('.qc-badge').filter({ hasText: /^(Sign-in ready|No return address)$/ });
   }
 }
 
