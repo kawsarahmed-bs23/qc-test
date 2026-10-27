@@ -17,7 +17,18 @@ import { AdminApi, accessTokenFromPage, canUseAdminApi } from '../pages/AdminApi
 import { adminUrl } from '../pages/AdminShell';
 import { IdentityBrandingView, IdentityLoginPage } from '../pages/IdentityLoginPage';
 import { decodeJwt } from '../pages/PasswordGrantApi';
-import { PLATFORM_SETTING_GROUPS, PlatformSettingsApi, PlatformSettingsPage, reportScreenshotPath } from '../pages/PlatformPages';
+import { solidPng, type UploadFile } from '../pages/HostBrandingApi';
+import {
+  PLATFORM_BRANDING_IMAGES,
+  PLATFORM_SETTING_GROUPS,
+  PlatformBrandingApi,
+  PlatformSettingsApi,
+  PlatformSettingsPage,
+  canvasJpeg,
+  icoFromPng,
+  reportScreenshotPath,
+  type PlatformImageType,
+} from '../pages/PlatformPages';
 
 const REQUIRE_TWO_FACTOR = 'AdminAuth:RequireTwoFactor';
 const DISPLAY_NAME = 'Branding:DisplayName';
@@ -29,19 +40,23 @@ const SWEEP_SECONDS = 'Session:SweepIntervalSeconds';
 const IDLE_MINUTES = 'Session:IdleTimeoutMinutes';
 const ABSOLUTE_MINUTES = 'Session:AbsoluteTimeoutMinutes';
 const SENDER_EMAIL = 'Email:SenderEmail';
-const LOGO_PATH = 'Branding:LogoPath';
 const PASSWORD_ONLY_EMAIL = 'e2e.qc823.pwonly@quarryconnect.test';
 const PASSWORD_ONLY_NAME = 'E2E QC-823 Password Only';
 const DEFAULT_DISPLAY_NAME = 'QuarryConnect Admin';
 const IDENTITY_CACHE_FAST = '10';
+const IMAGE_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
 function settingValue(key: string): string | null {
   return queryMasterDb(`SELECT Value FROM app.Settings WHERE SettingKey = N'${key}' AND Active = 1`);
 }
 
 function changeLogRows(key: string, since: number): { summary: string; createdBy: string }[] {
+  return settingsActivity(`Changed ${key} %`, since);
+}
+
+function settingsActivity(like: string, since: number): { summary: string; createdBy: string }[] {
   const output = queryMasterDb(
-    `SELECT Summary + N'|' + CreatedBy FROM app.ChangeLogs WHERE ChangeLogID > ${since} AND Area = N'Settings' AND Summary LIKE N'Changed ${key} %' ORDER BY ChangeLogID`,
+    `SELECT Summary + N'|' + CreatedBy FROM app.ChangeLogs WHERE ChangeLogID > ${since} AND Area = N'Settings' AND Summary LIKE N'${like}' ORDER BY ChangeLogID`,
   );
   return (output ?? '')
     .split(/\r?\n/)
@@ -50,6 +65,28 @@ function changeLogRows(key: string, since: number): { summary: string; createdBy
       const [summary, createdBy] = line.trim().split('|');
       return { summary, createdBy };
     });
+}
+
+function storedImageCount(): number {
+  return Number(queryMasterDb('SELECT COUNT(*) FROM app.PlatformBrandingImages'));
+}
+
+function publicRoutePattern(type: PlatformImageType): RegExp {
+  return new RegExp(`^https://[^/]+/api/public/branding/${type}\\?v=\\d{14}$`);
+}
+
+async function adminSignInBranding(browser: Browser) {
+  const login = await adminLoginPage(browser);
+  try {
+    const view = new IdentityBrandingView(login.page);
+    return {
+      logo: (await view.logo.count()) ? await view.logo.getAttribute('src') : null,
+      background: (await view.background.count()) ? await view.backgroundImageUrl() : null,
+      favicon: await view.favicon.getAttribute('href'),
+    };
+  } finally {
+    await login.context.close();
+  }
 }
 
 function lastChangeLogId(): number {
@@ -67,7 +104,7 @@ async function adminLoginPage(browser: Browser) {
 test.describe('Platform settings (QC-823)', () => {
   test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
 
-  test('PSET-01 the Settings page shows all ten groups in order, with the restart badge on Sessions rows and none on Identity cache rows', async ({ page, shell }) => {
+  test('PSET-01 the Settings page shows all ten groups in order, the four Admin branding rows with the three image tiles, the restart badge on Sessions rows and none on Identity cache rows', async ({ page, shell }) => {
     const settings = new PlatformSettingsPage(page);
     await page.goto(adminUrl('/'));
     await shell.nav('settings').click();
@@ -88,6 +125,17 @@ test.describe('Platform settings (QC-823)', () => {
     await expect(sessionRows).toHaveCount(4);
     for (const row of await sessionRows.all()) {
       await expect(row.locator('[data-testid="setting-restart-required"]')).toHaveText('Restart required');
+    }
+    const brandingRows = settings.group('Admin branding').locator('[data-setting-key]');
+    expect(await brandingRows.evaluateAll((rows) => rows.map((row) => row.getAttribute('data-setting-key')))).toEqual([
+      DISPLAY_NAME,
+      LOGIN_SUBTITLE,
+      PRIMARY_COLOR,
+      'Branding:AccentColor',
+    ]);
+    expect(await settings.imageTiles.evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute('data-image')))).toEqual(PLATFORM_BRANDING_IMAGES.map((image) => image.type));
+    for (const image of PLATFORM_BRANDING_IMAGES) {
+      await expect(settings.imageUpload(image.type)).toHaveAttribute('type', 'file');
     }
     const cacheRows = settings.group('Identity cache').locator('[data-setting-key]');
     await expect(cacheRows).toHaveCount(4);
@@ -132,11 +180,11 @@ test.describe('Platform settings (QC-823)', () => {
     await page.evaluate(() => localStorage.removeItem('adminSettings.openGroups'));
   });
 
-  test('PSET-02 GET api/settings returns the 33 catalogue settings in ten groups with their rules and restart flags', async ({ request }) => {
+  test('PSET-02 GET api/settings returns the 32 catalogue settings in ten groups with their rules and restart flags', async ({ request }) => {
     const groups = await new PlatformSettingsApi(AdminApi.asAdmin(request)).groups();
     expect(groups.map((group) => group.name)).toEqual(PLATFORM_SETTING_GROUPS);
     const settings = groups.flatMap((group) => group.settings);
-    expect(settings).toHaveLength(33);
+    expect(settings).toHaveLength(32);
     expect(settings.filter((setting) => setting.isRestartRequired)).toHaveLength(17);
     for (const setting of settings) {
       expect(Object.keys(setting).sort()).toEqual(
@@ -145,6 +193,9 @@ test.describe('Platform settings (QC-823)', () => {
       expect(setting.settingUuid).toMatch(/^[0-9a-f-]{36}$/i);
     }
     const byKey = new Map(settings.map((setting) => [setting.key, setting]));
+    expect(byKey.has('Branding:LogoPath'), 'the logo path setting is gone; images are uploaded instead').toBe(false);
+    expect([...new Set(settings.map((setting) => setting.type))].sort()).toEqual(['bool', 'color', 'email', 'int', 'string'].sort());
+    expect(groups.find((group) => group.name === 'Admin branding')!.settings.map((setting) => setting.key)).toEqual([DISPLAY_NAME, LOGIN_SUBTITLE, PRIMARY_COLOR, 'Branding:AccentColor']);
     expect(byKey.get(REQUIRE_TWO_FACTOR)).toMatchObject({ type: 'bool', isRestartRequired: false });
     expect(byKey.get(PRIMARY_COLOR)).toMatchObject({ type: 'color', required: true });
     expect(byKey.get(CACHE_SECONDS)).toMatchObject({ type: 'int', min: 10, max: 86400, isRestartRequired: false });
@@ -215,7 +266,7 @@ test.describe('Platform settings (QC-823)', () => {
     }
   });
 
-  test('PSET-05 the API refuses bad values keyed by setting id: whole numbers, ranges, colours, emails, paths and an absolute session shorter than the idle one', { tag: '@write' }, async ({ request }) => {
+  test('PSET-05 the API refuses bad values keyed by setting id: whole numbers, ranges, colours, emails and an absolute session shorter than the idle one', { tag: '@write' }, async ({ request }) => {
     const admin = AdminApi.asAdmin(request);
     const api = new PlatformSettingsApi(admin);
     const all = await api.all();
@@ -227,8 +278,6 @@ test.describe('Platform settings (QC-823)', () => {
       [CACHE_SECONDS, '86401', 'Use a number from 10 to 86400.'],
       [PRIMARY_COLOR, '#12345', 'Use a colour like #2c72ee.'],
       [SENDER_EMAIL, 'not-an-email', 'Use an email address like noreply@example.com.'],
-      [LOGO_PATH, 'images/logo.png', 'Use a path starting with / or an https address.'],
-      [LOGO_PATH, 'http://example.com/logo.png', 'Use a path starting with / or an https address.'],
       [REQUIRE_TWO_FACTOR, 'yes', 'Use true or false.'],
       [DISPLAY_NAME, '', 'A value is required.'],
       [ABSOLUTE_MINUTES, String(Number(all.get(IDLE_MINUTES)!.value) - 1 < 15 ? 15 : Number(all.get(IDLE_MINUTES)!.value) - 1), 'Must be at least the idle timeout.'],
@@ -287,13 +336,16 @@ test.describe('Platform settings (QC-823)', () => {
   test.describe('without a token', () => {
     test.use(signedOut);
 
-    test('PSET-07 the settings, admins and Identity feed endpoints refuse anonymous calls, and Identity publishes its password policy', async ({ request }) => {
+    test('PSET-07 the settings, branding image, admins and Identity feed endpoints refuse anonymous calls, and Identity publishes its password policy', async ({ request }) => {
       const anonymous = new AdminApi(request, null);
-      for (const target of ['/settings', '/admins', '/identity/settings']) {
+      for (const target of ['/settings', '/settings/branding/images', '/admins', '/identity/settings']) {
         expect((await anonymous.get(target)).status, target).toBe(401);
       }
       expect((await anonymous.put('/settings', { values: {} })).status).toBe(401);
       expect((await anonymous.post('/admins', { userUuid: '00000000-0000-0000-0000-000000000000' })).status).toBe(401);
+      expect((await anonymous.upload('/settings/branding/images/logo-main', solidPng('e2e-qc823.png'))).status).toBe(401);
+      expect((await anonymous.delete('/settings/branding/images/logo-main')).status).toBe(401);
+      expect((await request.get(`${env.adminApiUrl}/api/public/branding/logo-main`, { ignoreHTTPSErrors: env.ignoreHttpsErrors })).status(), 'the public image route is anonymous: 404 only because nothing is set').toBe(404);
 
       const policy = await request.get(`${env.identityUrl}/api/account/password/policy`, { ignoreHTTPSErrors: env.ignoreHttpsErrors });
       expect(policy.status()).toBe(200);
@@ -411,5 +463,164 @@ test.describe('Platform settings (QC-823)', () => {
         { message: 'Identity drops the test subtitle again within the short cache', timeout: 60_000, intervals: [5_000] },
       )
       .not.toBe(subtitle);
+  });
+
+  test("PSET-12 the main logo, icon and login background upload on the Settings page, show previews, are served anonymously with their type and safety headers, log one row each, and Remove clears them", { tag: '@write' }, async ({ page, shell, request }) => {
+    test.skip(!canUseMasterDb(), 'Needs HOST_MASTER (MASTER_SQL_DATABASE) to read app.PlatformBrandingImages and the activity rows.');
+    const branding = new PlatformBrandingApi(AdminApi.asAdmin(request), request);
+    expect((await branding.images()).map(({ type, label, present }) => ({ type, label, present })), 'the run only uploads to empty slots').toEqual(
+      PLATFORM_BRANDING_IMAGES.map(({ type, label }) => ({ type, label, present: false })),
+    );
+    const actor = adminAccount()!.email;
+    const since = lastChangeLogId();
+    const settings = new PlatformSettingsPage(page);
+    await settings.open();
+    const files: Record<PlatformImageType, UploadFile> = {
+      'logo-main': solidPng('e2e-qc823-logo.png', 96, 32),
+      'logo-icon': icoFromPng('e2e-qc823-icon.ico'),
+      'login-background': await canvasJpeg(page, 'e2e-qc823-background.jpg'),
+    };
+
+    try {
+      for (const image of PLATFORM_BRANDING_IMAGES) {
+        await expect(settings.imageEmpty(image.type)).toHaveText('Not set');
+        await expect(settings.imageRemove(image.type)).toHaveCount(0);
+        await settings.uploadImage(image.type, files[image.type]);
+        await shell.expectStatus(`${image.label} uploaded.`);
+        await expect(settings.imagePreview(image.type)).toBeVisible();
+        await expect(settings.imagePreview(image.type)).toHaveAttribute('src', publicRoutePattern(image.type));
+        await expect.poll(() => settings.previewLoaded(image.type), { message: `the ${image.type} preview loads` }).toBe(true);
+        await expect(settings.imageError(image.type)).toHaveCount(0);
+
+        const served = await branding.publicImage(image.type);
+        expect(served.status, image.type).toBe(200);
+        expect(served.contentType, image.type).toBe(image.contentType);
+        expect(served.headers['x-content-type-options'], image.type).toBe('nosniff');
+        expect(served.headers['content-security-policy'], image.type).toBe(IMAGE_POLICY);
+        expect(served.headers['cache-control'], image.type).toMatch(/max-age=300/);
+        expect(served.bytes.equals(files[image.type].buffer), `${image.type} is served as uploaded`).toBe(true);
+      }
+      expect(storedImageCount()).toBe(3);
+      expect(settingsActivity('Uploaded the Admin sign-in %', since)).toEqual(
+        PLATFORM_BRANDING_IMAGES.map((image) => ({ summary: `Uploaded the Admin sign-in ${image.label.toLowerCase()}`, createdBy: actor })),
+      );
+
+      await settings.open();
+      for (const image of PLATFORM_BRANDING_IMAGES) {
+        await expect(settings.imagePreview(image.type)).toBeVisible();
+        await expect(settings.imageTile(image.type)).toContainText(`Changed by ${actor}`);
+        await expect(settings.imageRemove(image.type)).toBeEnabled();
+      }
+      await expect.poll(async () => (await Promise.all(PLATFORM_BRANDING_IMAGES.map((image) => settings.previewLoaded(image.type)))).every(Boolean)).toBe(true);
+      fs.mkdirSync(path.dirname(reportScreenshotPath('settings-branding-images.png')), { recursive: true });
+      await page.screenshot({ path: reportScreenshotPath('settings-branding-images.png'), fullPage: true });
+
+      const removedSince = lastChangeLogId();
+      for (const image of PLATFORM_BRANDING_IMAGES) {
+        await settings.imageRemove(image.type).click();
+        await expect(settings.confirmDialog.title).toHaveText(`Remove the ${image.label.toLowerCase()}?`);
+        await settings.confirmDialog.accept();
+        await shell.expectStatus(`${image.label} removed.`);
+        await expect(settings.imageEmpty(image.type)).toHaveText('Not set');
+        await expect(settings.imageRemove(image.type)).toHaveCount(0);
+        expect((await branding.publicImage(image.type)).status, image.type).toBe(404);
+      }
+      expect(settingsActivity('Removed the Admin sign-in %', removedSince)).toEqual(
+        PLATFORM_BRANDING_IMAGES.map((image) => ({ summary: `Removed the Admin sign-in ${image.label.toLowerCase()}`, createdBy: actor })),
+      );
+    } finally {
+      await branding.removeAll();
+    }
+    expect(storedImageCount()).toBe(0);
+  });
+
+  test('PSET-13 the image upload refuses a text file, a .png or .jpg whose bytes do not match, an empty file and an unknown image, keyed by image type, and stores nothing', { tag: '@write' }, async ({ request }) => {
+    const branding = new PlatformBrandingApi(AdminApi.asAdmin(request), request);
+    expect((await branding.images()).some((image) => image.present), 'the run only works with empty slots').toBe(false);
+    const since = canUseMasterDb() ? lastChangeLogId() : 0;
+    const cases: [PlatformImageType, UploadFile, string][] = [
+      ['logo-main', { name: 'e2e-qc823.txt', mimeType: 'text/plain', buffer: Buffer.from('not an image') }, 'Use .png, .jpg, .jpeg, .svg, .ico.'],
+      ['logo-main', { name: 'e2e-qc823.png', mimeType: 'image/png', buffer: Buffer.from('GIF89a not a PNG at all') }, 'That file is not a PNG image.'],
+      ['login-background', { ...solidPng('e2e-qc823.jpg'), mimeType: 'image/jpeg' }, 'That file is not a JPG image.'],
+      ['logo-icon', { name: 'e2e-qc823-empty.ico', mimeType: 'image/x-icon', buffer: Buffer.alloc(0) }, 'Choose an image.'],
+    ];
+
+    try {
+      for (const [type, file, message] of cases) {
+        const result = await branding.upload(type, file);
+        expect(result.status, `${type} ${file.name}`).toBe(400);
+        expect(result.body.errors, `${type} ${file.name}`).toEqual({ [type]: [message] });
+      }
+
+      const unknown = await branding.upload('logo-huge', solidPng('e2e-qc823.png'));
+      expect(unknown.status).toBe(400);
+      expect(unknown.body.detail).toBe('Unknown image.');
+      expect((await branding.remove('logo-huge')).status).toBe(400);
+
+      const nothingToRemove = await branding.remove('logo-main');
+      expect(nothingToRemove.status).toBe(200);
+      expect(nothingToRemove.body.message).toBe('There was no main logo to remove.');
+
+      expect((await branding.images()).some((image) => image.present)).toBe(false);
+      for (const type of [...PLATFORM_BRANDING_IMAGES.map((image) => image.type), 'logo-huge']) {
+        expect((await branding.publicImage(type)).status, type).toBe(404);
+      }
+      if (canUseMasterDb()) {
+        expect(storedImageCount()).toBe(0);
+        expect(lastChangeLogId(), 'no activity row').toBe(since);
+      }
+    } finally {
+      await branding.removeAll();
+    }
+  });
+
+  test("PSET-14 Identity's Admin sign-in page shows an uploaded main logo and login background from the public routes and drops them once removed", { tag: '@write' }, async ({ page, browser, request }) => {
+    test.setTimeout((env.identityHostCacheSeconds + 150) * 1000);
+    const api = new PlatformSettingsApi(AdminApi.asAdmin(request));
+    const branding = new PlatformBrandingApi(AdminApi.asAdmin(request), request);
+    expect((await branding.images()).some((image) => image.present), 'the run only uploads to empty slots').toBe(false);
+    const originalCache = (await api.setting(CACHE_SECONDS)).value;
+
+    try {
+      expect((await api.save({ [CACHE_SECONDS]: IDENTITY_CACHE_FAST })).status).toBe(200);
+      expect((await branding.upload('logo-main', solidPng('e2e-qc823-logo.png', 96, 32))).status).toBe(200);
+      expect((await branding.upload('login-background', await canvasJpeg(page, 'e2e-qc823-background.jpg'))).status).toBe(200);
+
+      await expect
+        .poll(() => adminSignInBranding(browser), {
+          message: 'Identity re-reads the platform settings once its cache (HostMaster:CacheDurationSeconds) runs out',
+          timeout: env.identityHostCacheSeconds * 1000,
+          intervals: [10_000],
+        })
+        .toEqual({
+          logo: expect.stringMatching(publicRoutePattern('logo-main')),
+          background: expect.stringMatching(publicRoutePattern('login-background')),
+          favicon: '/favicon.ico',
+        });
+
+      const login = await adminLoginPage(browser);
+      try {
+        const view = new IdentityBrandingView(login.page);
+        await expect.poll(() => view.logoLoaded(), { message: 'the main logo loads through the public route', timeout: 30_000 }).toBe(true);
+        await expect(view.background).toHaveClass(/sign-in-area/);
+        const background = await request.get((await view.backgroundImageUrl())!, { ignoreHTTPSErrors: env.ignoreHttpsErrors });
+        expect(background.status()).toBe(200);
+        expect(background.headers()['content-type']).toBe('image/jpeg');
+      } finally {
+        await login.context.close();
+      }
+    } finally {
+      await branding.removeAll();
+      await api.restore({ [CACHE_SECONDS]: originalCache });
+    }
+
+    expect((await api.setting(CACHE_SECONDS)).value).toBe(originalCache);
+    if (canUseMasterDb()) {
+      expect(settingValue(CACHE_SECONDS)).toBe(originalCache);
+      expect(storedImageCount()).toBe(0);
+    }
+    await expect
+      .poll(() => adminSignInBranding(browser), { message: 'Identity drops the removed images again within the short cache', timeout: 60_000, intervals: [5_000] })
+      .toEqual({ logo: null, background: null, favicon: '/favicon.ico' });
   });
 });

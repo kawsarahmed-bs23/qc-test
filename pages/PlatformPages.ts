@@ -1,8 +1,9 @@
 import * as path from 'path';
-import { expect, type Locator, type Page } from '@playwright/test';
+import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { env } from '../config/environment';
-import { AdminApi } from './AdminApi';
-import { openAdmin, waitForIdle } from './AdminShell';
+import { AdminApi, type AdminApiResult } from './AdminApi';
+import { ConfirmDialog, openAdmin, waitForIdle } from './AdminShell';
+import { solidPng, type UploadFile } from './HostBrandingApi';
 
 export const PLATFORM_SETTING_GROUPS = [
   'Admin sign-in',
@@ -16,6 +17,101 @@ export const PLATFORM_SETTING_GROUPS = [
   'Email sender',
   'Activity log',
 ];
+
+export const PLATFORM_BRANDING_IMAGES = [
+  { type: 'logo-main', label: 'Main logo', contentType: 'image/png' },
+  { type: 'logo-icon', label: 'Icon (favicon)', contentType: 'image/x-icon' },
+  { type: 'login-background', label: 'Login background', contentType: 'image/jpeg' },
+] as const;
+
+export type PlatformImageType = (typeof PLATFORM_BRANDING_IMAGES)[number]['type'];
+
+export interface PlatformBrandingImage {
+  type: string;
+  label: string;
+  present: boolean;
+  path: string | null;
+  updated: string | null;
+  updatedBy: string | null;
+}
+
+export interface PublicBrandingAnswer {
+  status: number;
+  contentType: string | null;
+  headers: Record<string, string>;
+  bytes: Buffer;
+}
+
+export function icoFromPng(name: string, png: UploadFile = solidPng('e2e-qc823-icon.png', 16, 16)): UploadFile {
+  const header = Buffer.from([0, 0, 1, 0, 1, 0]);
+  const entry = Buffer.alloc(16);
+  entry[0] = png.buffer.readUInt32BE(16) & 0xff;
+  entry[1] = png.buffer.readUInt32BE(20) & 0xff;
+  entry.writeUInt16LE(1, 4);
+  entry.writeUInt16LE(32, 6);
+  entry.writeUInt32LE(png.buffer.length, 8);
+  entry.writeUInt32LE(header.length + entry.length, 12);
+  return { name, mimeType: 'image/x-icon', buffer: Buffer.concat([header, entry, png.buffer]) };
+}
+
+export async function canvasJpeg(page: Page, name: string, width = 64, height = 48): Promise<UploadFile> {
+  const dataUrl = await page.evaluate(
+    ([w, h]) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const context = canvas.getContext('2d')!;
+      context.fillStyle = '#2c72ee';
+      context.fillRect(0, 0, w, h);
+      return canvas.toDataURL('image/jpeg', 0.9);
+    },
+    [width, height],
+  );
+  return { name, mimeType: 'image/jpeg', buffer: Buffer.from(dataUrl.split(',')[1], 'base64') };
+}
+
+export class PlatformBrandingApi {
+  constructor(
+    private readonly api: AdminApi,
+    private readonly request: APIRequestContext,
+  ) {}
+
+  async images(): Promise<PlatformBrandingImage[]> {
+    const result = await this.api.get<PlatformBrandingImage[]>('/settings/branding/images');
+    expect(result.status, 'GET api/settings/branding/images').toBe(200);
+    return result.body;
+  }
+
+  upload(type: string, file: UploadFile): Promise<AdminApiResult> {
+    return this.api.upload(`/settings/branding/images/${type}`, file);
+  }
+
+  remove(type: string): Promise<AdminApiResult> {
+    return this.api.delete(`/settings/branding/images/${type}`);
+  }
+
+  async removeAll(): Promise<void> {
+    for (const image of await this.images()) {
+      if (image.present) {
+        const result = await this.remove(image.type);
+        expect(result.status, `removing ${image.type}: ${result.text}`).toBe(200);
+      }
+    }
+  }
+
+  async publicImage(type: string): Promise<PublicBrandingAnswer> {
+    const response = await this.request.get(publicBrandingUrl(type), { maxRedirects: 0, ignoreHTTPSErrors: env.ignoreHttpsErrors });
+    const headers = response.headers();
+    return { status: response.status(), contentType: headers['content-type'] ?? null, headers, bytes: await response.body() };
+  }
+}
+
+export function publicBrandingUrl(type: string): string {
+  if (!env.adminApiUrl) {
+    throw new Error('ADMIN_API_URL is not set.');
+  }
+  return `${env.adminApiUrl}/api/public/branding/${type}`;
+}
 
 export interface PlatformSetting {
   settingUuid: string;
@@ -90,11 +186,17 @@ export class PlatformSettingsPage {
   readonly root: Locator;
   readonly groups: Locator;
   readonly loadError: Locator;
+  readonly images: Locator;
+  readonly imageTiles: Locator;
+  readonly confirmDialog: ConfirmDialog;
 
   constructor(private readonly page: Page) {
     this.root = page.locator('#settings-page');
     this.groups = page.locator('[data-settings-group]');
     this.loadError = page.locator('#settings-load-error');
+    this.images = page.locator('#branding-images');
+    this.imageTiles = this.images.locator('[data-image]');
+    this.confirmDialog = new ConfirmDialog(page);
   }
 
   async open(expandAll = true): Promise<void> {
@@ -171,6 +273,43 @@ export class PlatformSettingsPage {
 
   async save(group: string): Promise<void> {
     await this.saveButton(group).click();
+  }
+
+  imageTile(type: string): Locator {
+    return this.images.locator(`[data-image="${type}"]`);
+  }
+
+  imagePreview(type: string): Locator {
+    return this.imageTile(type).locator(`img[data-image-preview="${type}"]`);
+  }
+
+  imageEmpty(type: string): Locator {
+    return this.imageTile(type).locator(`[data-image-empty="${type}"]`);
+  }
+
+  imageUpload(type: string): Locator {
+    return this.page.locator(`#branding-upload-${type}`);
+  }
+
+  imageRemove(type: string): Locator {
+    return this.page.locator(`#branding-remove-${type}`);
+  }
+
+  imageError(type: string): Locator {
+    return this.imageTile(type).locator(`[data-field-error="${type}"]`);
+  }
+
+  async previewLoaded(type: string): Promise<boolean> {
+    return this.imagePreview(type).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0);
+  }
+
+  async uploadImage(type: string, file: UploadFile): Promise<void> {
+    await this.imageUpload(type).setInputFiles(file);
+  }
+
+  async removeImage(type: string): Promise<void> {
+    await this.imageRemove(type).click();
+    await this.confirmDialog.accept();
   }
 }
 

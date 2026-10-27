@@ -71,6 +71,14 @@ export class AdminApi {
     return this.send<T>('POST', path, body ?? {});
   }
 
+  delete<T = any>(path: string): Promise<AdminApiResult<T>> {
+    return this.send<T>('DELETE', path);
+  }
+
+  upload<T = any>(path: string, file: { name: string; mimeType: string; buffer: Buffer }): Promise<AdminApiResult<T>> {
+    return this.send<T>('POST', path, undefined, {}, { file });
+  }
+
   preflight(path: string, origin: string, method = 'GET'): Promise<AdminApiResult> {
     return this.send('OPTIONS', path, undefined, {
       Origin: origin,
@@ -79,14 +87,20 @@ export class AdminApi {
     });
   }
 
-  private async send<T>(method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<AdminApiResult<T>> {
+  private async send<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+    multipart?: Record<string, { name: string; mimeType: string; buffer: Buffer }>,
+  ): Promise<AdminApiResult<T>> {
     if (!env.adminApiUrl) {
       throw new Error('ADMIN_API_URL is not set.');
     }
     const response = await this.request.fetch(`${env.adminApiUrl}/api${path}`, {
       method,
       headers: { ...(this.accessToken ? { Authorization: `Bearer ${this.accessToken}` } : {}), ...headers },
-      data: body,
+      ...(multipart ? { multipart } : { data: body }),
       ignoreHTTPSErrors: env.ignoreHttpsErrors,
       maxRedirects: 0,
     });
