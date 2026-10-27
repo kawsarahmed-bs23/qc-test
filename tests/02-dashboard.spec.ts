@@ -30,9 +30,9 @@ test.describe('Dashboard and navigation (QC-742)', () => {
     }
   });
 
-  test('DASH-03 sidebar menu is Dashboard, Hosts, Users, Activity and reaches each one', async ({ page, shell }) => {
+  test('DASH-03 sidebar menu is Dashboard, Hosts, Users, Activity, Admins, Settings and reaches each one', async ({ page, shell }) => {
     await new DashboardPage(page).open();
-    await expect(page.locator('#sidebar .sidebar-menu-link .title')).toHaveText(['Dashboard', 'Hosts', 'Users', 'Activity']);
+    await expect(page.locator('#sidebar .sidebar-menu-link .title')).toHaveText(['Dashboard', 'Hosts', 'Users', 'Activity', 'Admins', 'Settings']);
     await expect(shell.nav('dashboard')).toHaveClass(/active/);
 
     await shell.nav('hosts').click();
@@ -48,6 +48,14 @@ test.describe('Dashboard and navigation (QC-742)', () => {
     await shell.nav('activity').click();
     await expect(page).toHaveURL(adminUrl('/activity'));
     await expect(shell.heading).toHaveText('Activity');
+
+    await shell.nav('admins').click();
+    await expect(page).toHaveURL(adminUrl('/admins'));
+    await expect(shell.heading).toHaveText('Admins');
+
+    await shell.nav('settings').click();
+    await expect(page).toHaveURL(adminUrl('/settings'));
+    await expect(shell.heading).toHaveText('Settings');
 
     await shell.nav('dashboard').click();
     await expect(page.locator('#kpis')).toBeVisible();

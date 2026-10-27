@@ -80,3 +80,29 @@ export function adminAccount(): Credentials | null {
 export function adminAuthenticatorKey(): string | null {
   return seededPlatformAdmin()?.authenticatorKey ?? null;
 }
+
+export const QC823_PREFIX = 'e2e.qc823.';
+
+export function seedQc823User(email: string, lastName: string, active = true): ThrowawayUser {
+  if (!env.admin) {
+    throw new Error('ADMIN_EMAIL / ADMIN_PASSWORD are not set; the throwaway users copy that password.');
+  }
+  runIdentitySeedScript('identity-qc823-user.apply.sql', { Email: email, SourceEmail: env.admin.email, LastName: lastName, IsActive: active ? '1' : '0' });
+  const userId = queryIdentityDb(`SELECT Id FROM Users WHERE NormalizedEmail = UPPER(N'${email.replace(/'/g, "''")}')`);
+  if (!userId) {
+    throw new Error(`The throwaway user ${email} was not created.`);
+  }
+  return { email, password: env.admin.password, userId, authenticatorKey: null };
+}
+
+export function removeQc823Users(): void {
+  runIdentitySeedScript('identity-qc823.remove.sql');
+}
+
+export function makeQc823PlatformAdmin(user: ThrowawayUser, displayName: string): void {
+  runMasterSeedScript('master-qc823-platform-admin.apply.sql', { UserUuid: user.userId, DisplayName: displayName });
+}
+
+export function removeQc823PlatformAdmins(): void {
+  runMasterSeedScript('master-qc823-platform-admin.remove.sql');
+}

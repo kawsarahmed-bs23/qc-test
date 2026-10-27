@@ -68,7 +68,7 @@ export class AdminShell {
     this.notFound = page.locator('#not-found-page');
   }
 
-  nav(name: 'dashboard' | 'hosts' | 'activity' | 'users'): Locator {
+  nav(name: 'dashboard' | 'hosts' | 'activity' | 'users' | 'admins' | 'settings'): Locator {
     return this.page.locator(`#nav-${name}`);
   }
 
