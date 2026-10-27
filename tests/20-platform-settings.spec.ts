@@ -34,12 +34,8 @@ const REQUIRE_TWO_FACTOR = 'AdminAuth:RequireTwoFactor';
 const DISPLAY_NAME = 'Branding:DisplayName';
 const LOGIN_SUBTITLE = 'Branding:LoginSubtitle';
 const PRIMARY_COLOR = 'Branding:PrimaryColor';
+const ACCENT_COLOR = 'Branding:AccentColor';
 const CACHE_SECONDS = 'HostMaster:CacheDurationSeconds';
-const RESET_PER_IP = 'PasswordReset:MaxRequestsPerIpPerHour';
-const SWEEP_SECONDS = 'Session:SweepIntervalSeconds';
-const IDLE_MINUTES = 'Session:IdleTimeoutMinutes';
-const ABSOLUTE_MINUTES = 'Session:AbsoluteTimeoutMinutes';
-const SENDER_EMAIL = 'Email:SenderEmail';
 const PASSWORD_ONLY_EMAIL = 'e2e.qc823.pwonly@quarryconnect.test';
 const PASSWORD_ONLY_NAME = 'E2E QC-823 Password Only';
 const DEFAULT_DISPLAY_NAME = 'QuarryConnect Admin';
@@ -48,10 +44,6 @@ const IMAGE_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
 function settingValue(key: string): string | null {
   return queryMasterDb(`SELECT Value FROM app.Settings WHERE SettingKey = N'${key}' AND Active = 1`);
-}
-
-function changeLogRows(key: string, since: number): { summary: string; createdBy: string }[] {
-  return settingsActivity(`Changed ${key} %`, since);
 }
 
 function settingsActivity(like: string, since: number): { summary: string; createdBy: string }[] {
@@ -67,8 +59,12 @@ function settingsActivity(like: string, since: number): { summary: string; creat
     });
 }
 
-function storedImageCount(): number {
-  return Number(queryMasterDb('SELECT COUNT(*) FROM app.PlatformBrandingImages'));
+function storedImageCount(type?: PlatformImageType): number {
+  return Number(queryMasterDb(`SELECT COUNT(*) FROM app.PlatformBrandingImages${type ? ` WHERE ImageType = N'${type}'` : ''}`));
+}
+
+function storedImagesPresent(): boolean {
+  return canUseMasterDb() && storedImageCount() > 0;
 }
 
 function publicRoutePattern(type: PlatformImageType): RegExp {
@@ -104,7 +100,7 @@ async function adminLoginPage(browser: Browser) {
 test.describe('Platform settings (QC-823)', () => {
   test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
 
-  test('PSET-01 the Settings page shows all ten groups in order, the four Admin branding rows with the three image tiles, the restart badge on Sessions rows and none on Identity cache rows', async ({ page, shell }) => {
+  test('PSET-01 the Settings page shows the three groups in order, the four Admin branding rows with the three image tiles, the one Identity cache row and no restart badge anywhere', async ({ page, shell }) => {
     const settings = new PlatformSettingsPage(page);
     await page.goto(adminUrl('/'));
     await shell.nav('settings').click();
@@ -121,31 +117,28 @@ test.describe('Platform settings (QC-823)', () => {
     }
 
     await settings.expandAll();
-    const sessionRows = settings.group('Sessions').locator('[data-setting-key]');
-    await expect(sessionRows).toHaveCount(4);
-    for (const row of await sessionRows.all()) {
-      await expect(row.locator('[data-testid="setting-restart-required"]')).toHaveText('Restart required');
-    }
+    await expect(settings.group('Admin sign-in').locator('[data-setting-key]')).toHaveCount(1);
+    await expect(settings.root.locator('[data-setting-key]')).toHaveCount(6);
+    await expect(settings.root.locator('[data-testid="setting-restart-required"]')).toHaveCount(0);
     const brandingRows = settings.group('Admin branding').locator('[data-setting-key]');
     expect(await brandingRows.evaluateAll((rows) => rows.map((row) => row.getAttribute('data-setting-key')))).toEqual([
       DISPLAY_NAME,
       LOGIN_SUBTITLE,
       PRIMARY_COLOR,
-      'Branding:AccentColor',
+      ACCENT_COLOR,
     ]);
     expect(await settings.imageTiles.evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute('data-image')))).toEqual(PLATFORM_BRANDING_IMAGES.map((image) => image.type));
     for (const image of PLATFORM_BRANDING_IMAGES) {
       await expect(settings.imageUpload(image.type)).toHaveAttribute('type', 'file');
     }
     const cacheRows = settings.group('Identity cache').locator('[data-setting-key]');
-    await expect(cacheRows).toHaveCount(4);
-    await expect(settings.group('Identity cache').locator('[data-testid="setting-restart-required"]')).toHaveCount(0);
+    expect(await cacheRows.evaluateAll((rows) => rows.map((row) => row.getAttribute('data-setting-key')))).toEqual([CACHE_SECONDS]);
 
     await expect(settings.toggle(REQUIRE_TWO_FACTOR)).toHaveAttribute('aria-checked', 'true');
     await expect(settings.input(DISPLAY_NAME)).toHaveValue(settingValue(DISPLAY_NAME) ?? '');
-    await expect(settings.input(IDLE_MINUTES)).toHaveAttribute('type', 'number');
-    await expect(settings.input(IDLE_MINUTES)).toHaveAttribute('min', '5');
-    await expect(settings.input(IDLE_MINUTES)).toHaveAttribute('max', '1440');
+    await expect(settings.input(CACHE_SECONDS)).toHaveAttribute('type', 'number');
+    await expect(settings.input(CACHE_SECONDS)).toHaveAttribute('min', '10');
+    await expect(settings.input(CACHE_SECONDS)).toHaveAttribute('max', '86400');
 
     fs.mkdirSync(path.dirname(reportScreenshotPath('settings.png')), { recursive: true });
     await page.screenshot({ path: reportScreenshotPath('settings.png'), fullPage: true });
@@ -162,30 +155,34 @@ test.describe('Platform settings (QC-823)', () => {
     for (const group of PLATFORM_SETTING_GROUPS.slice(1)) {
       await expect(settings.header(group)).toHaveAttribute('aria-expanded', 'false');
     }
-    await expect(settings.header('Sessions')).toContainText('4 settings');
-    await expect(settings.header('Sessions')).toContainText('4 need a restart');
-    await expect(settings.input(IDLE_MINUTES)).toBeHidden();
+    await expect(settings.header('Admin branding')).toContainText('4 settings');
+    await expect(settings.header('Identity cache')).toContainText('1 setting');
+    await expect(settings.header('Identity cache')).not.toContainText('1 settings');
+    for (const group of PLATFORM_SETTING_GROUPS) {
+      await expect(settings.header(group)).not.toContainText('need a restart');
+    }
+    await expect(settings.input(CACHE_SECONDS)).toBeHidden();
 
-    await settings.expand('Sessions');
-    await expect(settings.input(IDLE_MINUTES)).toBeVisible();
+    await settings.expand('Identity cache');
+    await expect(settings.input(CACHE_SECONDS)).toBeVisible();
     await settings.collapse(PLATFORM_SETTING_GROUPS[0]);
     await expect(settings.toggle(REQUIRE_TWO_FACTOR)).toBeHidden();
 
     await page.reload();
     await expect(settings.groups.first()).toBeVisible();
-    await expect(settings.header('Sessions')).toHaveAttribute('aria-expanded', 'true');
+    await expect(settings.header('Identity cache')).toHaveAttribute('aria-expanded', 'true');
     await expect(settings.header(PLATFORM_SETTING_GROUPS[0])).toHaveAttribute('aria-expanded', 'false');
-    await expect(settings.input(IDLE_MINUTES)).toBeVisible();
+    await expect(settings.input(CACHE_SECONDS)).toBeVisible();
 
     await page.evaluate(() => localStorage.removeItem('adminSettings.openGroups'));
   });
 
-  test('PSET-02 GET api/settings returns the 32 catalogue settings in ten groups with their rules and restart flags', async ({ request }) => {
+  test('PSET-02 GET api/settings returns the six catalogue settings in three groups with their rules and none needs a restart', async ({ request }) => {
     const groups = await new PlatformSettingsApi(AdminApi.asAdmin(request)).groups();
     expect(groups.map((group) => group.name)).toEqual(PLATFORM_SETTING_GROUPS);
     const settings = groups.flatMap((group) => group.settings);
-    expect(settings).toHaveLength(32);
-    expect(settings.filter((setting) => setting.isRestartRequired)).toHaveLength(17);
+    expect(settings).toHaveLength(6);
+    expect(settings.filter((setting) => setting.isRestartRequired)).toHaveLength(0);
     for (const setting of settings) {
       expect(Object.keys(setting).sort()).toEqual(
         ['settingUuid', 'key', 'value', 'type', 'description', 'isRestartRequired', 'min', 'max', 'maxLength', 'required', 'updatedBy', 'updated'].sort(),
@@ -194,41 +191,44 @@ test.describe('Platform settings (QC-823)', () => {
     }
     const byKey = new Map(settings.map((setting) => [setting.key, setting]));
     expect(byKey.has('Branding:LogoPath'), 'the logo path setting is gone; images are uploaded instead').toBe(false);
-    expect([...new Set(settings.map((setting) => setting.type))].sort()).toEqual(['bool', 'color', 'email', 'int', 'string'].sort());
-    expect(groups.find((group) => group.name === 'Admin branding')!.settings.map((setting) => setting.key)).toEqual([DISPLAY_NAME, LOGIN_SUBTITLE, PRIMARY_COLOR, 'Branding:AccentColor']);
+    expect([...new Set(settings.map((setting) => setting.type))].sort()).toEqual(['bool', 'color', 'int', 'string'].sort());
+    expect(settings.map((setting) => setting.key).sort()).toEqual([REQUIRE_TWO_FACTOR, DISPLAY_NAME, LOGIN_SUBTITLE, PRIMARY_COLOR, ACCENT_COLOR, CACHE_SECONDS].sort());
+    expect(groups.find((group) => group.name === 'Admin branding')!.settings.map((setting) => setting.key)).toEqual([DISPLAY_NAME, LOGIN_SUBTITLE, PRIMARY_COLOR, ACCENT_COLOR]);
     expect(byKey.get(REQUIRE_TWO_FACTOR)).toMatchObject({ type: 'bool', isRestartRequired: false });
     expect(byKey.get(PRIMARY_COLOR)).toMatchObject({ type: 'color', required: true });
     expect(byKey.get(CACHE_SECONDS)).toMatchObject({ type: 'int', min: 10, max: 86400, isRestartRequired: false });
-    expect(byKey.get(IDLE_MINUTES)).toMatchObject({ type: 'int', min: 5, max: 1440, isRestartRequired: true });
+    expect(byKey.get(DISPLAY_NAME)).toMatchObject({ type: 'string', maxLength: 200, required: true });
+    expect(byKey.get(ACCENT_COLOR)).toMatchObject({ type: 'color' });
     expect(byKey.get(LOGIN_SUBTITLE)).toMatchObject({ type: 'string', maxLength: 100, required: false });
   });
 
   test('PSET-03 a live setting saved on the page keeps its value after a reload and writes one activity row with the admin as actor', { tag: '@write' }, async ({ page, shell, request }) => {
     test.skip(!canUseMasterDb(), 'Needs HOST_MASTER (MASTER_SQL_DATABASE) to read the activity rows.');
     const api = new PlatformSettingsApi(AdminApi.asAdmin(request));
-    const original = (await api.setting(RESET_PER_IP)).value;
-    const probe = original === '21' ? '22' : '21';
+    const original = (await api.setting(CACHE_SECONDS)).value;
+    const probe = original === '301' ? '302' : '301';
     const since = lastChangeLogId();
     const settings = new PlatformSettingsPage(page);
 
     try {
       await settings.open();
-      await expect(settings.input(RESET_PER_IP)).toHaveValue(original ?? '');
-      await settings.input(RESET_PER_IP).fill(probe);
-      await settings.save('Throttles');
+      await expect(settings.input(CACHE_SECONDS)).toHaveValue(original ?? '');
+      await settings.input(CACHE_SECONDS).fill(probe);
+      await settings.save('Identity cache');
       await shell.expectStatus('Settings saved.');
 
       await settings.open();
-      await expect(settings.input(RESET_PER_IP)).toHaveValue(probe);
-      await expect(settings.updatedHint(RESET_PER_IP)).toContainText(`Changed by ${adminAccount()!.email}`);
-      expect(settingValue(RESET_PER_IP)).toBe(probe);
+      await expect(settings.input(CACHE_SECONDS)).toHaveValue(probe);
+      await expect(settings.updatedHint(CACHE_SECONDS)).toContainText(`Changed by ${adminAccount()!.email}`);
+      expect(settingValue(CACHE_SECONDS)).toBe(probe);
 
-      expect(changeLogRows(RESET_PER_IP, since)).toEqual([{ summary: `Changed ${RESET_PER_IP} from ${original} to ${probe}`, createdBy: adminAccount()!.email }]);
-      expect(changeLogRows('PasswordGrant:', since), 'unchanged settings in the group are skipped').toEqual([]);
+      expect(settingsActivity('Changed %', since), 'only the changed setting is logged').toEqual([
+        { summary: `Changed ${CACHE_SECONDS} from ${original} to ${probe}`, createdBy: adminAccount()!.email },
+      ]);
     } finally {
-      await api.restore({ [RESET_PER_IP]: original });
-      expect(settingValue(RESET_PER_IP)).toBe(original);
+      if ((await api.setting(CACHE_SECONDS)).value !== original) await api.restore({ [CACHE_SECONDS]: original });
     }
+    expect(settingValue(CACHE_SECONDS)).toBe(original);
   });
 
   test('PSET-04 an out-of-range number and a bad colour show errors under their fields and nothing is saved', { tag: '@write' }, async ({ page, request }) => {
@@ -266,7 +266,7 @@ test.describe('Platform settings (QC-823)', () => {
     }
   });
 
-  test('PSET-05 the API refuses bad values keyed by setting id: whole numbers, ranges, colours, emails and an absolute session shorter than the idle one', { tag: '@write' }, async ({ request }) => {
+  test('PSET-05 the API refuses bad values keyed by setting id: whole numbers, ranges, colours, booleans and empty required values', { tag: '@write' }, async ({ request }) => {
     const admin = AdminApi.asAdmin(request);
     const api = new PlatformSettingsApi(admin);
     const all = await api.all();
@@ -276,11 +276,11 @@ test.describe('Platform settings (QC-823)', () => {
     const cases: [string, string, string][] = [
       [CACHE_SECONDS, 'ten', 'Use a whole number.'],
       [CACHE_SECONDS, '86401', 'Use a number from 10 to 86400.'],
+      [CACHE_SECONDS, '9', 'Use a number from 10 to 86400.'],
       [PRIMARY_COLOR, '#12345', 'Use a colour like #2c72ee.'],
-      [SENDER_EMAIL, 'not-an-email', 'Use an email address like noreply@example.com.'],
+      [ACCENT_COLOR, 'grey', 'Use a colour like #2c72ee.'],
       [REQUIRE_TWO_FACTOR, 'yes', 'Use true or false.'],
       [DISPLAY_NAME, '', 'A value is required.'],
-      [ABSOLUTE_MINUTES, String(Number(all.get(IDLE_MINUTES)!.value) - 1 < 15 ? 15 : Number(all.get(IDLE_MINUTES)!.value) - 1), 'Must be at least the idle timeout.'],
     ];
 
     try {
@@ -310,27 +310,29 @@ test.describe('Platform settings (QC-823)', () => {
     }
   });
 
-  test('PSET-06 saving a restart-required setting warns that it applies only after Identity restarts', { tag: '@write' }, async ({ page, shell, request }) => {
+  test('PSET-06 saving a setting shows the plain success message with no restart warning, and the API lists no restart-required keys', { tag: '@write' }, async ({ page, shell, request }) => {
     const api = new PlatformSettingsApi(AdminApi.asAdmin(request));
-    const original = (await api.setting(SWEEP_SECONDS)).value;
-    const probe = original === '61' ? '62' : '61';
+    const original = (await api.setting(CACHE_SECONDS)).value;
+    const probe = original === '301' ? '302' : '301';
     const settings = new PlatformSettingsPage(page);
 
     try {
       await settings.open();
-      await expect(settings.restartBadge(SWEEP_SECONDS)).toBeVisible();
-      await settings.input(SWEEP_SECONDS).fill(probe);
-      await settings.save('Sessions');
-      await shell.expectStatus('Settings saved. 1 of them take effect only after Identity restarts.', 'warning');
-      await expect(settings.input(SWEEP_SECONDS)).toHaveValue(probe);
+      await expect(settings.restartBadge(CACHE_SECONDS)).toHaveCount(0);
+      await settings.input(CACHE_SECONDS).fill(probe);
+      await settings.save('Identity cache');
+      await shell.expectStatus('Settings saved.');
+      await expect(page.locator('.warning-snackbar')).toHaveCount(0);
+      await expect(page.locator('.success-snackbar')).not.toContainText('restart');
+      await expect(settings.input(CACHE_SECONDS)).toHaveValue(probe);
 
-      const response = await api.save({ [SWEEP_SECONDS]: original });
+      const response = await api.save({ [CACHE_SECONDS]: original });
       expect(response.status).toBe(200);
-      expect(response.body).toMatchObject({ updatedCount: 1, restartRequiredKeys: [SWEEP_SECONDS] });
+      expect(response.body).toMatchObject({ updatedCount: 1, restartRequiredKeys: [], message: 'Settings saved.' });
     } finally {
-      if ((await api.setting(SWEEP_SECONDS)).value !== original) await api.restore({ [SWEEP_SECONDS]: original });
+      if ((await api.setting(CACHE_SECONDS)).value !== original) await api.restore({ [CACHE_SECONDS]: original });
     }
-    expect((await api.setting(SWEEP_SECONDS)).value).toBe(original);
+    expect((await api.setting(CACHE_SECONDS)).value).toBe(original);
   });
 
   test.describe('without a token', () => {
@@ -345,7 +347,8 @@ test.describe('Platform settings (QC-823)', () => {
       expect((await anonymous.post('/admins', { userUuid: '00000000-0000-0000-0000-000000000000' })).status).toBe(401);
       expect((await anonymous.upload('/settings/branding/images/logo-main', solidPng('e2e-qc823.png'))).status).toBe(401);
       expect((await anonymous.delete('/settings/branding/images/logo-main')).status).toBe(401);
-      expect((await request.get(`${env.adminApiUrl}/api/public/branding/logo-main`, { ignoreHTTPSErrors: env.ignoreHttpsErrors })).status(), 'the public image route is anonymous: 404 only because nothing is set').toBe(404);
+      const logoStored = canUseMasterDb() && storedImageCount('logo-main') > 0;
+      expect((await request.get(`${env.adminApiUrl}/api/public/branding/logo-main`, { ignoreHTTPSErrors: env.ignoreHttpsErrors })).status(), 'the public image route is anonymous: 404 only while nothing is set').toBe(logoStored ? 200 : 404);
 
       const policy = await request.get(`${env.identityUrl}/api/account/password/policy`, { ignoreHTTPSErrors: env.ignoreHttpsErrors });
       expect(policy.status()).toBe(200);
@@ -467,6 +470,7 @@ test.describe('Platform settings (QC-823)', () => {
 
   test("PSET-12 the main logo, icon and login background upload on the Settings page, show previews, are served anonymously with their type and safety headers, log one row each, and Remove clears them", { tag: '@write' }, async ({ page, shell, request }) => {
     test.skip(!canUseMasterDb(), 'Needs HOST_MASTER (MASTER_SQL_DATABASE) to read app.PlatformBrandingImages and the activity rows.');
+    test.skip(storedImagesPresent(), 'app.PlatformBrandingImages already holds images; the run only works with empty slots and never removes images it did not upload.');
     const branding = new PlatformBrandingApi(AdminApi.asAdmin(request), request);
     expect((await branding.images()).map(({ type, label, present }) => ({ type, label, present })), 'the run only uploads to empty slots').toEqual(
       PLATFORM_BRANDING_IMAGES.map(({ type, label }) => ({ type, label, present: false })),
@@ -535,6 +539,7 @@ test.describe('Platform settings (QC-823)', () => {
   });
 
   test('PSET-13 the image upload refuses a text file, a .png or .jpg whose bytes do not match, an empty file and an unknown image, keyed by image type, and stores nothing', { tag: '@write' }, async ({ request }) => {
+    test.skip(storedImagesPresent(), 'app.PlatformBrandingImages already holds images; the run only works with empty slots and never removes images it did not upload.');
     const branding = new PlatformBrandingApi(AdminApi.asAdmin(request), request);
     expect((await branding.images()).some((image) => image.present), 'the run only works with empty slots').toBe(false);
     const since = canUseMasterDb() ? lastChangeLogId() : 0;
@@ -576,6 +581,7 @@ test.describe('Platform settings (QC-823)', () => {
 
   test("PSET-14 Identity's Admin sign-in page shows an uploaded main logo and login background from the public routes and drops them once removed", { tag: '@write' }, async ({ page, browser, request }) => {
     test.setTimeout((env.identityHostCacheSeconds + 150) * 1000);
+    test.skip(storedImagesPresent(), 'app.PlatformBrandingImages already holds images; the run only works with empty slots and never removes images it did not upload.');
     const api = new PlatformSettingsApi(AdminApi.asAdmin(request));
     const branding = new PlatformBrandingApi(AdminApi.asAdmin(request), request);
     expect((await branding.images()).some((image) => image.present), 'the run only uploads to empty slots').toBe(false);

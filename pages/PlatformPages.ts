@@ -5,18 +5,7 @@ import { AdminApi, type AdminApiResult } from './AdminApi';
 import { ConfirmDialog, openAdmin, waitForIdle } from './AdminShell';
 import { solidPng, type UploadFile } from './HostBrandingApi';
 
-export const PLATFORM_SETTING_GROUPS = [
-  'Admin sign-in',
-  'Admin branding',
-  'Identity cache',
-  'Sessions',
-  'Token lifetimes',
-  'Password policy',
-  'Lockout',
-  'Throttles',
-  'Email sender',
-  'Activity log',
-];
+export const PLATFORM_SETTING_GROUPS = ['Admin sign-in', 'Admin branding', 'Identity cache'];
 
 export const PLATFORM_BRANDING_IMAGES = [
   { type: 'logo-main', label: 'Main logo', contentType: 'image/png' },
