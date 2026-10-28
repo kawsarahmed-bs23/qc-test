@@ -111,8 +111,35 @@ export class DriversMirrorApi {
     return this.send(hostUuid, { method: 'PUT', path: `/driver/trips/${tripUuid}/end-haul`, data: { isOfflineSync: false } });
   }
 
-  myTickets(hostUuid: string): Promise<APIResponse> {
-    return this.send(hostUuid, { method: 'POST', path: '/driver-trip-ticket/my-tickets', data: {} });
+  myTickets(hostUuid: string, range: { from?: string; to?: string } = {}): Promise<APIResponse> {
+    const data: Record<string, string> = {};
+    if (range.from) data.searchFromTicketDate = range.from;
+    if (range.to) data.searchToTicketDate = range.to;
+    return this.send(hostUuid, { method: 'POST', path: '/driver-trip-ticket/my-tickets', data });
+  }
+
+  reject(hostUuid: string, orderAssignmentUuid: string, note: string): Promise<APIResponse> {
+    return this.send(hostUuid, { method: 'POST', path: `/driver-assignment/reject-assignment/${orderAssignmentUuid}`, data: { note } });
+  }
+
+  reopenHaul(hostUuid: string, tripUuid: string): Promise<APIResponse> {
+    return this.send(hostUuid, { method: 'PUT', path: `/driver/trips/${tripUuid}/reopen-haul` });
+  }
+
+  reportProblem(hostUuid: string, tripUuid: string, notes: string): Promise<APIResponse> {
+    return this.send(hostUuid, { method: 'POST', path: `/driver/trips/${tripUuid}/report-problem`, data: { notes } });
+  }
+
+  finishDay(hostUuid: string, orderAssignmentUuid: string, notes?: string): Promise<APIResponse> {
+    return this.send(hostUuid, { method: 'POST', path: `/driver/assignments/${orderAssignmentUuid}/finish-day`, data: { notes, isOfflineSync: false } });
+  }
+
+  reprocessTicket(hostUuid: string, tripUuid: string): Promise<APIResponse> {
+    return this.send(hostUuid, { method: 'POST', path: `/driver-trip-ticket/reprocess/${tripUuid}` });
+  }
+
+  reviewTicket(hostUuid: string, tripUuid: string, review: { ticketNumber?: string; ticketDate?: string | null; ticketQuantity?: number }): Promise<APIResponse> {
+    return this.send(hostUuid, { method: 'POST', path: `/driver-trip-ticket/review/${tripUuid}`, data: review });
   }
 
   uploadTicket(hostUuid: string, tripUuid: string, file: { name: string; mimeType: string; buffer: Buffer }): Promise<APIResponse> {
@@ -215,6 +242,17 @@ export class HostApi {
     if (range.from) data.searchFromAssignmentDate = range.from;
     if (range.to) data.searchToAssignmentDate = range.to;
     return this.request.post(`${hostApiUrl()}/api/driver-assignment/my-assignments`, { headers: this.headers(), data });
+  }
+
+  driverTickets(range: { from?: string; to?: string } = {}): Promise<APIResponse> {
+    const data: Record<string, string> = {};
+    if (range.from) data.searchFromTicketDate = range.from;
+    if (range.to) data.searchToTicketDate = range.to;
+    return this.request.post(`${hostApiUrl()}/api/driver-trip-ticket/my-tickets`, { headers: this.headers(), data });
+  }
+
+  quickReplies(): Promise<APIResponse> {
+    return this.request.get(`${hostApiUrl()}/api/driver-message/quick-replies`, { headers: this.headers() });
   }
 
   sendDispatchMessage(driverUserId: string, orderAssignmentId: number, messageBody: string): Promise<APIResponse> {

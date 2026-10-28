@@ -13,7 +13,8 @@ import {
   runIdentitySeedScript,
   runSeedScript,
 } from '../fixtures/localDb';
-import { driverWorkRoutes, DriversMirrorApi, HostApi, type MirrorAssignment } from '../pages/DriversMirrorApi';
+import type { APIRequestContext } from '@playwright/test';
+import { driverWorkRoutes, DriversMirrorApi, HostApi, type MirrorAssignment, type MirrorTrip } from '../pages/DriversMirrorApi';
 import { isDriversApiReachable, PasswordGrantApi } from '../pages/PasswordGrantApi';
 import { env } from '../config/environment';
 
@@ -27,7 +28,7 @@ const POLL = { intervals: [500, 1_000, 2_000] };
 const TICKET_JPEG = path.resolve(__dirname, '..', 'fixtures', 'qc803', 'logo-solid.jpg');
 const DRIVERS_API_SETTINGS = path.resolve(__dirname, '..', '..', 'quarryconnect-drivers-api', 'QuarryConnect.Drivers.WebApi');
 
-type Role = 'work' | 'tomorrow' | 'cancel' | 'refuse' | 'move';
+type Role = 'work' | 'tomorrow' | 'cancel' | 'refuse' | 'move' | 'reject' | 'haul';
 
 interface Seeded {
   userId: string;
@@ -73,6 +74,14 @@ function statusName(value: unknown): string {
   return typeof value === 'number' ? ASSIGNMENT_STATUSES[value] : String(value).toLowerCase().replace(/[-_\s]/g, '');
 }
 
+function hostDate(id: number, addDays = 0): string {
+  return querySingleValue(`SELECT CONVERT(nvarchar(10), DATEADD(DAY, ${addDays}, AssignmentDate), 23) FROM app.OrderAssignments WHERE OrderAssignmentID = ${id}`)!;
+}
+
+function errorText(body: unknown): string {
+  return JSON.stringify(body);
+}
+
 function hostStatus(id: number): number {
   return hostNumber(`SELECT OrderAssignmentStatusID_FK FROM app.OrderAssignments WHERE OrderAssignmentID = ${id}`);
 }
@@ -94,6 +103,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
   let secondApi: DriversMirrorApi;
   let hostUuid = '';
   let tripUuid = '';
+  let haulTripUuid = '';
   let originalDispatchEnabled: string | null = null;
   let runStartedAt = '';
 
@@ -110,7 +120,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
     runSeedScript('host-qc825-driver.apply.sql', { UserId: userId!, Email: DRIVER_EMAIL, IdentityDb: env.identitySql!.database });
     const ids = {} as Record<Role, number>;
     const uuids = {} as Record<Role, string>;
-    for (const role of ['work', 'tomorrow', 'cancel', 'refuse', 'move'] as Role[]) {
+    for (const role of ['work', 'tomorrow', 'cancel', 'refuse', 'move', 'reject', 'haul'] as Role[]) {
       const where = `DriverUserID_FK = ${sqlText(userId!)} AND Notes = N'${MARKER} ${role}'`;
       ids[role] = hostNumber(`SELECT OrderAssignmentID FROM app.OrderAssignments WHERE ${where}`);
       uuids[role] = hostValue(`SELECT LOWER(CONVERT(nvarchar(36), OrderAssignmentUUID)) FROM app.OrderAssignments WHERE ${where}`)!;
@@ -163,7 +173,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
         timeout: RESYNC_WINDOW,
         intervals: [2_000, 5_000],
       })
-      .toEqual([seeded.uuids.work, seeded.uuids.cancel, seeded.uuids.refuse, seeded.uuids.move].sort());
+      .toEqual([seeded.uuids.work, seeded.uuids.cancel, seeded.uuids.refuse, seeded.uuids.move, seeded.uuids.reject, seeded.uuids.haul].sort());
     expect(driversValue(`SELECT CASE WHEN SyncedAt IS NULL THEN 0 ELSE 1 END FROM app.DriverHostLinks l JOIN app.Hosts h ON h.HostID = l.HostID_FK WHERE l.UserID_FK = ${sqlText(seeded.userId)} AND h.HostUUID = '${hostUuid}'`)).toBe('1');
     expect(hostNumber(`SELECT COUNT(*) FROM app.DriverMirrorSubscriptions WHERE UserID_FK = ${sqlText(seeded.userId)} AND Active = 1`), 'the host subscribed the driver').toBe(1);
 
@@ -569,6 +579,301 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
     expect((await api.details(hostUuid, seeded.uuids.move)).status(), 'the first driver can no longer open the job').toBe(404);
     expect(driversValue(`SELECT STRING_AGG(UserID_FK, ',') FROM app.MirrorAssignments WHERE OrderAssignmentUUID = '${seeded.uuids.move}'`), 'one mirror row, owned by the second driver').toBe(seeded.secondDriverId);
     expect(driversValue(`SELECT STRING_AGG(m.UserID_FK, ',') FROM app.MirrorMessages m WHERE m.OrderAssignmentUUID = '${seeded.uuids.move}'`), 'the thread belongs to the second driver only').toBe(seeded.secondDriverId);
+  });
+
+  const commandCount = () => driversNumber(`SELECT COUNT(*) FROM app.DriverCommands WHERE UserID_FK = ${sqlText(seeded.userId)}`);
+  const mirrorState = async (orderAssignmentUuid: string) => {
+    const row = await api.assignment(hostUuid, orderAssignmentUuid);
+    return row && { status: row.status, pending: row.pending, lastCommandError: row.lastCommandError };
+  };
+  const mirrorTrip = async (orderAssignmentUuid: string, trip: string) =>
+    (await api.assignment(hostUuid, orderAssignmentUuid))?.trips?.find((t) => t.tripUuid === trip) as
+      | (MirrorTrip & { reopenUntil?: string | null })
+      | undefined;
+  const hostTripStatus = (trip: string) => hostNumber(`SELECT Status FROM app.Trips WHERE TripUUID = '${trip}'`);
+  const signedInHostDriver = async (request: APIRequestContext) => {
+    const host = new HostApi(request);
+    expect(await host.signIn(DRIVER_EMAIL, env.admin!.password), 'the driver signs in to the host API').toBe(200);
+    return host;
+  };
+  const ticketedTrip = () => driversValue(`SELECT LOWER(CONVERT(nvarchar(36), TicketUUID)) FROM app.MirrorTrips WHERE TripUUID = '${tripUuid}'`);
+
+  test('DMIR-16 reject-assignment checks the note, then the host records the decline with the note and the job can no longer be answered', async () => {
+    const before = commandCount();
+    expect((await api.reject(hostUuid, seeded.uuids.reject, '   ')).status(), 'a blank note').toBe(400);
+    expect((await api.reject(hostUuid, seeded.uuids.reject, 'x'.repeat(501))).status(), 'a 501-character note').toBe(400);
+    expect(commandCount(), 'nothing was sent to the host').toBe(before);
+
+    const note = `e2e-qc825 truck in the shop ${Date.now()}`;
+    const response = await api.reject(hostUuid, seeded.uuids.reject, note);
+    expect(response.status()).toBe(202);
+    expect((await response.json()).data).toMatchObject({ orderAssignmentUuid: seeded.uuids.reject, status: 'rejected', pending: true });
+
+    await expect.poll(() => hostStatus(seeded.ids.reject), { message: 'the host OrderAssignment becomes Rejected', timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(3);
+    expect(
+      hostNumber(`SELECT COUNT(*) FROM app.OrderAssignmentHistory WHERE OrderAssignmentID_FK = ${seeded.ids.reject} AND OrderAssignmentHistoryData LIKE ${sqlText(`%${note}`)}`),
+      'the host keeps the note in the assignment history',
+    ).toBe(1);
+    await expect
+      .poll(() => mirrorState(seeded.uuids.reject), { message: 'the mirror confirms the decline', timeout: SNAPSHOT_WINDOW, ...POLL })
+      .toEqual({ status: 'rejected', pending: false, lastCommandError: null });
+
+    const afterReject = commandCount();
+    const accept = await api.accept(hostUuid, seeded.uuids.reject);
+    expect(accept.status(), 'accepting a declined job').toBe(400);
+    expect(errorText(await accept.json())).toContain('no longer waiting');
+    const again = await api.reject(hostUuid, seeded.uuids.reject, 'e2e-qc825 again');
+    expect(again.status(), 'declining it twice').toBe(400);
+    expect(errorText(await again.json())).toContain('no longer waiting');
+    expect(commandCount(), 'nothing more was sent to the host').toBe(afterReject);
+  });
+
+  test('DMIR-17 a load ended within the reopen window is reopened on the host', async () => {
+    expect((await api.accept(hostUuid, seeded.uuids.haul)).status()).toBe(202);
+    await expect.poll(() => hostStatus(seeded.ids.haul), { message: 'the host accepts the haul job', timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(2);
+
+    const begin = await api.beginHaul(hostUuid, seeded.uuids.haul);
+    expect(begin.status()).toBe(202);
+    haulTripUuid = String((await begin.json()).data.tripUuid).toLowerCase();
+    await expect.poll(() => hostTripStatus(haulTripUuid), { message: 'the host trip is Active', timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(20);
+
+    expect((await api.endHaul(hostUuid, haulTripUuid)).status()).toBe(202);
+    await expect.poll(() => hostTripStatus(haulTripUuid), { message: 'the host trip is Complete', timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(30);
+    await expect
+      .poll(async () => {
+        const trip = await mirrorTrip(seeded.uuids.haul, haulTripUuid);
+        return trip && { status: trip.status, pending: trip.pending, hasReopenUntil: !!trip.reopenUntil };
+      }, { message: 'the mirror shows the finished load with its reopen deadline', timeout: SNAPSHOT_WINDOW, ...POLL })
+      .toEqual({ status: 'complete', pending: false, hasReopenUntil: true });
+
+    const reopen = await api.reopenHaul(hostUuid, haulTripUuid);
+    expect(reopen.status()).toBe(202);
+    expect((await reopen.json()).data).toMatchObject({ tripUuid: haulTripUuid, status: 'active', pending: true });
+    await expect.poll(() => hostTripStatus(haulTripUuid), { message: 'the host trip is Active again', timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(20);
+    await expect
+      .poll(async () => {
+        const trip = await mirrorTrip(seeded.uuids.haul, haulTripUuid);
+        return trip && { status: trip.status, pending: trip.pending, lastCommandError: trip.lastCommandError };
+      }, { timeout: SNAPSHOT_WINDOW, ...POLL })
+      .toEqual({ status: 'active', pending: false, lastCommandError: null });
+  });
+
+  test('DMIR-18 report-problem marks the host trip Problem with a trip note, and is refused on a finished load', async () => {
+    expect(haulTripUuid, 'DMIR-17 reopened a load').not.toBe('');
+    const notes = `e2e-qc825 flat tyre ${Date.now()}`;
+    const response = await api.reportProblem(hostUuid, haulTripUuid, notes);
+    expect(response.status()).toBe(202);
+    expect((await response.json()).data).toMatchObject({ tripUuid: haulTripUuid, status: 'problem', pending: true });
+
+    await expect.poll(() => hostTripStatus(haulTripUuid), { message: 'the host trip is Problem', timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(40);
+    await expect
+      .poll(() => hostNumber(`SELECT COUNT(*) FROM app.TripNotes WHERE OrderAssignmentID_FK = ${seeded.ids.haul} AND NoteText LIKE ${sqlText(`%${notes}%`)}`), {
+        message: 'the host keeps the problem as a trip note',
+        timeout: SNAPSHOT_WINDOW,
+        ...POLL,
+      })
+      .toBe(1);
+    await expect.poll(async () => (await mirrorTrip(seeded.uuids.haul, haulTripUuid))?.pending, { timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(false);
+
+    expect(tripUuid, 'DMIR-06 finished a load').not.toBe('');
+    const before = commandCount();
+    expect((await api.reportProblem(hostUuid, tripUuid, 'e2e-qc825 too late')).status(), 'a problem on a finished load').toBe(400);
+    expect(commandCount(), 'nothing was sent to the host').toBe(before);
+  });
+
+  test('DMIR-19 a load whose reopen window has passed on the host cannot be reopened', async () => {
+    expect((await api.endHaul(hostUuid, haulTripUuid)).status()).toBe(202);
+    await expect.poll(() => hostTripStatus(haulTripUuid), { message: 'the host trip is Complete', timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(30);
+    await expect.poll(async () => (await mirrorTrip(seeded.uuids.haul, haulTripUuid))?.pending, { timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(false);
+
+    hostValue(`UPDATE app.Trips SET TripStartedAt = DATEADD(MINUTE, -40, GETUTCDATE()), TripCompletedAt = DATEADD(MINUTE, -20, GETUTCDATE()), Updated = GETUTCDATE() WHERE TripUUID = '${haulTripUuid}'`);
+    await expect
+      .poll(() => driversValue(`SELECT CASE WHEN ReopenUntil < GETUTCDATE() THEN 1 ELSE 0 END FROM app.MirrorTrips WHERE TripUUID = '${haulTripUuid}'`), {
+        message: 'the host snapshot moves the reopen deadline into the past (DriverTrip:ReopenWindowMinutes, 15 by default)',
+        timeout: SNAPSHOT_WINDOW,
+        ...POLL,
+      })
+      .toBe('1');
+
+    const before = commandCount();
+    const reopen = await api.reopenHaul(hostUuid, haulTripUuid);
+    expect(reopen.status()).toBe(400);
+    expect(errorText(await reopen.json())).toContain('can no longer be reopened');
+    expect(commandCount(), 'nothing was sent to the host').toBe(before);
+    expect(hostTripStatus(haulTripUuid), 'the host trip stays Complete').toBe(30);
+  });
+
+  test('DMIR-20 finish-day closes a running job on the host with a history note, and is refused on a job that is not running', async () => {
+    const before = commandCount();
+    expect((await api.finishDay(hostUuid, seeded.uuids.tomorrow)).status(), 'finishing a pending job').toBe(400);
+    expect(commandCount(), 'nothing was sent to the host').toBe(before);
+
+    expect(hostStatus(seeded.ids.haul), 'the haul job is Running on the host').toBe(4);
+    const response = await api.finishDay(hostUuid, seeded.uuids.haul, 'e2e-qc825 going home');
+    expect(response.status()).toBe(202);
+    expect((await response.json()).message, 'finish-day answers with a message only').toBeTruthy();
+
+    await expect.poll(() => hostStatus(seeded.ids.haul), { message: 'the host job is Complete', timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(5);
+    expect(
+      hostNumber(`SELECT COUNT(*) FROM app.OrderAssignmentHistory WHERE OrderAssignmentID_FK = ${seeded.ids.haul} AND OrderAssignmentHistoryData LIKE N'%day closed%'`),
+      'the host records the day close in the history',
+    ).toBe(1);
+    await expect.poll(() => mirrorState(seeded.uuids.haul), { timeout: SNAPSHOT_WINDOW, ...POLL }).toEqual({ status: 'complete', pending: false, lastCommandError: null });
+  });
+
+  test('DMIR-21 reprocess on a ticketed load answers 202 and the host resolves the command once', async () => {
+    test.setTimeout(180_000);
+    test.skip(!ticketedTrip(), 'DMIR-09 left no ticket on the load (the upload was skipped or not processed).');
+    const response = await api.reprocessTicket(hostUuid, tripUuid);
+    expect(response.status()).toBe(202);
+    expect((await response.json()).data).toMatchObject({ tripUuid, pending: true });
+
+    const command = latestCommand(seeded.userId, ticketedTrip()!, 'reprocess-ticket');
+    expect(command, 'DRIVERS recorded the reprocess').not.toBeNull();
+    await expect
+      .poll(() => driversValue(`SELECT Status FROM app.DriverCommands WHERE CommandUUID = '${command}'`), {
+        message: 'the host answers the reprocess (OCR may fail locally; only the outcome is checked)',
+        timeout: 150_000,
+        intervals: [2_000, 5_000],
+      })
+      .not.toBe('10');
+    expect(hostNumber(`SELECT COUNT(*) FROM app.DriverCommandReceipts WHERE CommandUUID = '${command}'`), 'one host receipt').toBe(1);
+    test.info().annotations.push({ type: 'reprocess-outcome', description: driversValue(`SELECT CONCAT(Status, ' ', ISNULL(Error, '')) FROM app.DriverCommands WHERE CommandUUID = '${command}'`) ?? '' });
+    await expect.poll(async () => (await mirrorTrip(seeded.uuids.work, tripUuid))?.pending, { timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(false);
+  });
+
+  test('DMIR-22 review checks number, date and quantity, saves the vendor fields on the host, and a locked invoice is refused', async () => {
+    test.skip(!ticketedTrip(), 'DMIR-09 left no ticket on the load (the upload was skipped or not processed).');
+    const today = hostDate(seeded.ids.work);
+    const before = commandCount();
+    const invalid: [string, Record<string, unknown>][] = [
+      ['no ticket number', { ticketNumber: '', ticketDate: today, ticketQuantity: 10 }],
+      ['a 51-character ticket number', { ticketNumber: '9'.repeat(51), ticketDate: today, ticketQuantity: 10 }],
+      ['no ticket date', { ticketNumber: 'E2E825', ticketDate: null, ticketQuantity: 10 }],
+      ['a ticket date two days ahead', { ticketNumber: 'E2E825', ticketDate: hostDate(seeded.ids.work, 2), ticketQuantity: 10 }],
+      ['a zero quantity', { ticketNumber: 'E2E825', ticketDate: today, ticketQuantity: 0 }],
+    ];
+    for (const [label, review] of invalid) {
+      expect((await api.reviewTicket(hostUuid, tripUuid, review)).status(), label).toBe(400);
+    }
+    expect(commandCount(), 'nothing was sent to the host').toBe(before);
+
+    const ticketId = hostNumber(`SELECT TicketID_FK FROM app.Trips WHERE TripUUID = '${tripUuid}'`);
+    expect(ticketId, 'the host ticket of the load').toBeGreaterThan(0);
+    const historyBefore = hostNumber(`SELECT COUNT(*) FROM app.TicketHistory WHERE TicketID_FK = ${ticketId}`);
+    const number = `E2E825-${Date.now() % 100000}`;
+    const valid = await api.reviewTicket(hostUuid, tripUuid, { ticketNumber: number, ticketDate: today, ticketQuantity: 12.5 });
+    expect(valid.status()).toBe(202);
+    expect((await valid.json()).data).toMatchObject({ tripUuid, pending: true });
+    await expect
+      .poll(() => hostValue(`SELECT CONCAT(vendorTicketNumber, '|', CONVERT(nvarchar(10), vendorTicketDate, 23), '|', CAST(vendorTicketQuantity AS decimal(18, 2)), '|', Status) FROM app.Tickets WHERE TicketID = ${ticketId}`), {
+        message: 'the host ticket carries the reviewed vendor fields and is Reviewed',
+        timeout: SNAPSHOT_WINDOW,
+        ...POLL,
+      })
+      .toBe(`${number}|${today}|12.50|40`);
+    expect(hostNumber(`SELECT COUNT(*) FROM app.TicketHistory WHERE TicketID_FK = ${ticketId}`), 'the host adds a ticket history row').toBeGreaterThan(historyBefore);
+    await expect
+      .poll(async () => {
+        const trip = await mirrorTrip(seeded.uuids.work, tripUuid);
+        return trip && { pending: trip.pending, lastCommandError: trip.lastCommandError };
+      }, { timeout: SNAPSHOT_WINDOW, ...POLL })
+      .toEqual({ pending: false, lastCommandError: null });
+
+    const originalInvoice = hostNumber(`SELECT InvoiceID_FK FROM app.Tickets WHERE TicketID = ${ticketId}`);
+    try {
+      hostValue(
+        `INSERT app.Invoices (Created, Updated, Active, JobID_FK, CustomerID_FK, ShipToAddressID_FK, BillToAddressID_FK, EnteredByUserID_FK, InvoiceDate, InvoiceDueDate, InvoiceTotal, InvoiceTax, PaymentsApplied, InvoiceBalance, InvoiceDocName, IsLocked, NeedsSync, TaxRate, InvoiceTermsID_FK) ` +
+          `SELECT GETUTCDATE(), GETUTCDATE(), 1, o.JobID_FK, 0, 0, 0, N'', '${today}', '${today}', 0, 0, 0, 0, '${MARKER}', 1, 0, 0, (SELECT MIN(InvoiceTermsID_FK) FROM app.Invoices WHERE InvoiceTermsID_FK IS NOT NULL) FROM app.Orders o JOIN app.OrderAssignments oa ON oa.OrderID_FK = o.OrderID WHERE oa.OrderAssignmentID = ${seeded.ids.work}; ` +
+          `UPDATE app.Tickets SET InvoiceID_FK = SCOPE_IDENTITY() WHERE TicketID = ${ticketId};`,
+      );
+      expect(hostNumber(`SELECT COUNT(*) FROM app.Tickets t JOIN app.Invoices i ON i.InvoiceID = t.InvoiceID_FK WHERE t.TicketID = ${ticketId} AND i.IsLocked = 1`), 'the ticket is on a locked invoice').toBe(1);
+      await expect.poll(async () => (await mirrorTrip(seeded.uuids.work, tripUuid))?.pending, { timeout: SNAPSHOT_WINDOW, ...POLL }).toBe(false);
+
+      const locked = await api.reviewTicket(hostUuid, tripUuid, { ticketNumber: `${number}-X`, ticketDate: today, ticketQuantity: 99 });
+      expect(locked.status(), 'the mirror cannot know about the invoice, so it accepts the change').toBe(202);
+      await expect
+        .poll(async () => {
+          const trip = await mirrorTrip(seeded.uuids.work, tripUuid);
+          return trip && { pending: trip.pending, refused: String(trip.lastCommandError ?? '') };
+        }, { message: 'the host refuses the review of a ticket on a locked invoice', timeout: SNAPSHOT_WINDOW, ...POLL })
+        .toEqual({ pending: false, refused: expect.stringContaining('locked invoice') });
+      expect(hostValue(`SELECT vendorTicketNumber FROM app.Tickets WHERE TicketID = ${ticketId}`), 'the host ticket is unchanged').toBe(number);
+    } finally {
+      hostValue(`UPDATE app.Tickets SET InvoiceID_FK = ${originalInvoice} WHERE TicketID = ${ticketId}; DELETE app.Invoices WHERE InvoiceDocName = '${MARKER}' AND IsLocked = 1 AND InvoiceID <> ${originalInvoice};`);
+    }
+    expect(hostNumber(`SELECT COUNT(*) FROM app.Invoices WHERE InvoiceDocName = '${MARKER}'`), 'the throwaway invoice is gone').toBe(0);
+    expect(hostNumber(`SELECT InvoiceID_FK FROM app.Tickets WHERE TicketID = ${ticketId}`)).toBe(originalInvoice);
+  });
+
+  test("DMIR-23 quick-replies are the host's own quick replies", async ({ request }) => {
+    const host = await signedInHostDriver(request);
+    const hostResponse = await host.quickReplies();
+    expect(hostResponse.status()).toBe(200);
+    const hostReplies = ((await hostResponse.json()).data as { label: string; keyword: string }[]).map(({ label, keyword }) => ({ label, keyword }));
+    const mirrored = await api.quickReplies(hostUuid);
+    expect(mirrored.status()).toBe(200);
+    const mirroredReplies = ((await mirrored.json()).data.data as { label: string; keyword: string }[]).map(({ label, keyword }) => ({ label, keyword }));
+    expect(hostReplies.length).toBeGreaterThan(0);
+    expect(mirroredReplies).toEqual(hostReplies);
+  });
+
+  test('DMIR-24 my-assignments and my-tickets date ranges return the same work as the host endpoints for the same range', async ({ request }) => {
+    const host = await signedInHostDriver(request);
+    const ranges = {
+      'yesterday to tomorrow': { from: hostDate(seeded.ids.work, -1), to: hostDate(seeded.ids.work, 1) },
+      'a range without the seeded days': { from: hostDate(seeded.ids.work, 5), to: hostDate(seeded.ids.work, 6) },
+    };
+    const uuidsOf = (table: 'OrderAssignments' | 'Trips', ids: number[]) => {
+      if (ids.length === 0) return [];
+      const [uuid, key] = table === 'Trips' ? ['TripUUID', 'TripID'] : ['OrderAssignmentUUID', 'OrderAssignmentID'];
+      return (hostValue(`SELECT STRING_AGG(LOWER(CONVERT(nvarchar(36), ${uuid})), ',') FROM app.${table} WHERE ${key} IN (${ids.join(',')})`) ?? '').split(',').sort();
+    };
+
+    for (const [label, range] of Object.entries(ranges)) {
+      const mirrorAssignments = await api.myAssignments(hostUuid, range);
+      const hostAssignments = await host.driverAssignments(range);
+      expect([mirrorAssignments.status(), hostAssignments.status()], `${label}: my-assignments`).toEqual([200, 200]);
+      const mirrored = ((await mirrorAssignments.json()).data.data as { orderAssignmentUuid: string }[]).map((a) => a.orderAssignmentUuid).sort();
+      const hosted = uuidsOf('OrderAssignments', ((await hostAssignments.json()).data.data as { orderAssignmentId: number }[]).map((a) => a.orderAssignmentId));
+      expect(mirrored, `${label}: the same assignments as the host`).toEqual(hosted);
+
+      const mirrorTickets = await api.myTickets(hostUuid, range);
+      const hostTickets = await host.driverTickets(range);
+      expect([mirrorTickets.status(), hostTickets.status()], `${label}: my-tickets`).toEqual([200, 200]);
+      const mirrorBody = (await mirrorTickets.json()).data;
+      const hostBody = (await hostTickets.json()).data;
+      expect((mirrorBody.data as { tripUuid: string }[]).map((t) => t.tripUuid).sort(), `${label}: the same finished loads as the host`)
+        .toEqual(uuidsOf('Trips', (hostBody.data as { tripId: number }[]).map((t) => t.tripId)));
+      expect({ loads: mirrorBody.totalLoads, tickets: mirrorBody.totalTickets, missing: mirrorBody.totalMissing }, `${label}: the same totals`)
+        .toEqual({ loads: hostBody.totalLoads, tickets: hostBody.totalTickets, missing: hostBody.totalMissing });
+    }
+
+    const backwards = { from: hostDate(seeded.ids.work, 1), to: hostDate(seeded.ids.work, -1) };
+    expect((await api.myAssignments(hostUuid, backwards)).status(), 'my-assignments with to before from').toBe(400);
+    expect((await host.driverAssignments(backwards)).status(), 'the host agrees').toBe(400);
+    expect((await api.myTickets(hostUuid, backwards)).status(), 'my-tickets with to before from').toBe(400);
+    expect((await host.driverTickets(backwards)).status(), 'the host agrees').toBe(400);
+  });
+
+  test('DMIR-25 a ticket upload with the wrong type, over 10 MB or on a load that already has a ticket is refused and sends nothing', async () => {
+    expect(tripUuid, 'DMIR-06 finished a load').not.toBe('');
+    const before = commandCount();
+    const jpegHeader = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+
+    const png = await api.uploadTicket(hostUuid, tripUuid, { name: 'e2e-qc825.png', mimeType: 'image/png', buffer: fs.readFileSync(TICKET_JPEG) });
+    expect(png.status(), 'a .png file').toBe(400);
+    const big = await api.uploadTicket(hostUuid, tripUuid, { name: 'e2e-qc825-big.jpg', mimeType: 'image/jpeg', buffer: Buffer.concat([jpegHeader, Buffer.alloc(11 * 1024 * 1024)]) });
+    expect(big.status(), 'an 11 MB photo').toBe(400);
+
+    if (ticketedTrip()) {
+      const again = await api.uploadTicket(hostUuid, tripUuid, { name: 'e2e-qc825-again.jpg', mimeType: 'image/jpeg', buffer: fs.readFileSync(TICKET_JPEG) });
+      expect(again.status(), 'a second photo for a ticketed load').toBe(400);
+      expect(errorText(await again.json())).toContain('already has a ticket');
+    } else {
+      test.info().annotations.push({ type: 'skip-part', description: 'No ticket on the load (DMIR-09 skipped), so the already-ticketed upload was not checked.' });
+    }
+    expect(commandCount(), 'nothing was sent to the host').toBe(before);
   });
 
   test('DMIR-15 nothing this run sent to the host ended in its dead letters, including a ping batch the phone sent twice', async () => {

@@ -1,6 +1,7 @@
 -- QC-825: removes everything host-qc825-driver.apply.sql added to the host database for e2e.qc825.*@quarryconnect.test
 -- drivers, and everything the mirror cases made from it: the mirror subscription, change rows and command receipts,
 -- the order and its assignments, trips, GPS points, tickets (with their history), messages, notes and history rows,
+-- the locked invoice DMIR-22 adds (InvoiceDocName 'e2e-qc825'),
 -- then the auth.Users row with its role, sign-in history, refresh tokens and sessions.
 -- The subscription goes first, so the QC-825 triggers write no change rows while the rest is deleted.
 SET NOCOUNT ON;
@@ -41,6 +42,8 @@ DELETE app.TripGps WHERE TripID_FK IN (SELECT Id FROM @Trips) OR OrderAssignment
 UPDATE app.Trips SET TicketID_FK = NULL WHERE TripID IN (SELECT Id FROM @Trips) AND TicketID_FK IS NOT NULL;
 DELETE app.TicketHistory WHERE TicketID_FK IN (SELECT Id FROM @Tickets);
 DELETE app.Tickets WHERE TicketID IN (SELECT Id FROM @Tickets);
+UPDATE app.Tickets SET InvoiceID_FK = 0 WHERE InvoiceID_FK IN (SELECT InvoiceID FROM app.Invoices WHERE InvoiceDocName = @Marker);
+DELETE app.Invoices WHERE InvoiceDocName = @Marker AND NOT EXISTS (SELECT 1 FROM app.InvoiceRows r WHERE r.InvoiceID_FK = app.Invoices.InvoiceID);
 DELETE app.TicketBatches WHERE UserID_FK IN (SELECT Id FROM @Users);
 
 UPDATE app.Messages SET ReplyToMessageID_FK = NULL WHERE ReplyToMessageID_FK IN (SELECT Id FROM @Messages);

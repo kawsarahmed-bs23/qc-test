@@ -3,7 +3,7 @@
 --   * auth.Users row with the same Id as the Identity sub, the Driver role and the Identity user's password hash, read from
 --     [$(IdentityDb)] (same server), so the host's own api/account/login works for AC9.
 --   * one order and four driver assignments, all Pending, every one marked in Notes ('e2e-qc825 <role>'):
---       work (today), tomorrow (today + 1), cancel (today), refuse (today), move (today, reassigned by DMIR-14). "Today" is the host's day in
+--       work (today), tomorrow (today + 1), cancel (today), refuse (today), move (today, reassigned by DMIR-14), reject (today, DMIR-16), haul (today, DMIR-17…20). "Today" is the host's day in
 --       TimeZoneSettings:TimeZoneId. Job, truck type, vendor and truck are copied from the newest driver assignment
 --       (read only); nothing else is changed.
 --   * one unread in-app dispatch message on the work assignment, and one on the move assignment that names no driver
@@ -123,7 +123,7 @@ INSERT app.OrderAssignments
 )
 SELECT GETUTCDATE(), GETUTCDATE(), 1, @OrderId, @VendorId, @UserId, @TruckId, v.AssignmentDate, '00:00', '23:59',
        4, 0, @Marker + N' ' + v.Role, 10, 10, 1, NEWID()
-FROM (VALUES (N'work', @Today), (N'tomorrow', DATEADD(DAY, 1, @Today)), (N'cancel', @Today), (N'refuse', @Today), (N'move', @Today)) AS v (Role, AssignmentDate);
+FROM (VALUES (N'work', @Today), (N'tomorrow', DATEADD(DAY, 1, @Today)), (N'cancel', @Today), (N'refuse', @Today), (N'move', @Today), (N'reject', @Today), (N'haul', @Today)) AS v (Role, AssignmentDate);
 
 INSERT app.Messages
 (
