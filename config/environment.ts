@@ -17,6 +17,7 @@ export interface TestEnvironment {
   appApiUrl: string | null;
   appTimeZone: string | null;
   appAdmin: Credentials | null;
+  appAdminAuthenticatorKey: string | null;
   localSql: LocalSql | null;
   driversApiUrl: string | null;
   mobileClientId: string | null;
@@ -130,6 +131,7 @@ export function loadEnvironment(): TestEnvironment {
     appApiUrl: optional('APP_API_URL'),
     appTimeZone: process.env.APP_TIME_ZONE?.trim() || null,
     appAdmin: credentials('APP_ADMIN_EMAIL', 'APP_ADMIN_PASSWORD'),
+    appAdminAuthenticatorKey: process.env.APP_ADMIN_AUTHENTICATOR_KEY?.trim() || null,
     localSql: name === 'local' && sqlServer && sqlDatabase ? { server: sqlServer, database: sqlDatabase } : null,
     driversApiUrl: optional('DRIVERS_API_URL'),
     mobileClientId: process.env.MOBILE_CLIENT_ID?.trim() || null,

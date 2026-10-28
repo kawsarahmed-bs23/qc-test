@@ -8,7 +8,7 @@ setup('sign in to the host app as the test admin and keep the session', async ({
 
   const signIn = new AppSignInPage(page);
   await signIn.open();
-  await signIn.signIn(env.appAdmin!);
+  await signIn.signIn(env.appAdmin!, env.appAdminAuthenticatorKey);
 
   await expect(page).not.toHaveURL(/#\/authentication/);
 

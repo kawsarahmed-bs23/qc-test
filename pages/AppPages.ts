@@ -1,6 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import type { Credentials } from '../config/environment';
-import { IdentityLoginPage } from './IdentityLoginPage';
+import { IdentityLoginPage, IdentityTwoStepPage } from './IdentityLoginPage';
 
 export class AppSignInPage {
   private readonly localEmail: Locator;
@@ -11,13 +11,13 @@ export class AppSignInPage {
     this.identityEmail = page.locator('input[type="email"]');
   }
 
-  // Since QC-614 the host app sends sign-in to Identity; older builds still show their own form at #/authentication.
+  // Since QC-826 a signed-out visit goes straight to Identity before the app renders; older builds still show their own form at #/authentication.
   async open(): Promise<void> {
-    await this.page.goto('/#/authentication');
+    await this.page.goto('/');
     await expect(this.localEmail.or(this.identityEmail).first()).toBeVisible({ timeout: 30_000 });
   }
 
-  async signIn(credentials: Credentials): Promise<void> {
+  async signIn(credentials: Credentials, authenticatorKey: string | null = null): Promise<void> {
     if (await this.localEmail.isVisible()) {
       await this.localEmail.fill(credentials.email);
       await this.page.locator('#password').fill(credentials.password);
@@ -27,7 +27,14 @@ export class AppSignInPage {
 
     const identityOrigin = new URL(this.page.url()).origin;
     await new IdentityLoginPage(this.page).signIn(credentials);
-    await this.page.waitForURL(url => url.origin !== identityOrigin, { timeout: 30_000 });
+    await this.page.waitForURL((url) => url.origin !== identityOrigin || /\/Account\/LoginWith2fa/i.test(url.pathname), { timeout: 30_000 });
+    if (/\/Account\/LoginWith2fa/i.test(new URL(this.page.url()).pathname)) {
+      if (!authenticatorKey) {
+        throw new Error(`Identity asks ${credentials.email} for two-step verification; set APP_ADMIN_AUTHENTICATOR_KEY in env/<env>.app.secrets.env.`);
+      }
+      await new IdentityTwoStepPage(this.page).verify(authenticatorKey);
+    }
+    await this.page.waitForURL((url) => url.origin !== identityOrigin, { timeout: 30_000 });
     await this.page.waitForLoadState('networkidle');
   }
 }
