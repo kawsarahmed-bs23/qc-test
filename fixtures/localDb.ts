@@ -112,6 +112,25 @@ export function queryMasterDb(query: string): string | null {
   return runQuery(env.masterSql, query);
 }
 
+export function queryBinaryValues(database: 'host' | 'drivers', column: string, fromWhere: string): Buffer[] {
+  const sql = database === 'host' ? env.localSql : env.driversSql;
+  if (!sql) {
+    throw new Error(`The ${database} local database is not set, or TEST_ENV is not local.`);
+  }
+
+  const output = execFileSync(
+    'sqlcmd',
+    ['-S', sql.server, '-d', sql.database, '-E', '-C', '-I', '-b', '-y', '0', '-Q', `SET NOCOUNT ON; SELECT CONVERT(varchar(max), ${column}, 2) FROM ${fromWhere}`],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+  );
+
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^([0-9A-F]{2})+$/.test(line) && line.length >= 16)
+    .map((line) => Buffer.from(line, 'hex'));
+}
+
 function runQuery(sql: LocalSql, query: string): string | null {
   const output = execFileSync(
     'sqlcmd',

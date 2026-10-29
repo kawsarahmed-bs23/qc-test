@@ -20,6 +20,7 @@ export interface TestEnvironment {
   appAdminAuthenticatorKey: string | null;
   localSql: LocalSql | null;
   driversApiUrl: string | null;
+  localStackUrl: string | null;
   mobileClientId: string | null;
   hostClient: OidcClient | null;
   driverUiClient: OidcClient | null;
@@ -134,6 +135,7 @@ export function loadEnvironment(): TestEnvironment {
     appAdminAuthenticatorKey: process.env.APP_ADMIN_AUTHENTICATOR_KEY?.trim() || null,
     localSql: name === 'local' && sqlServer && sqlDatabase ? { server: sqlServer, database: sqlDatabase } : null,
     driversApiUrl: optional('DRIVERS_API_URL'),
+    localStackUrl: name === 'local' ? optional('LOCALSTACK_URL') : null,
     mobileClientId: process.env.MOBILE_CLIENT_ID?.trim() || null,
     hostClient: oidcClient('HOST_CLIENT_ID', 'HOST_REDIRECT_URI'),
     driverUiClient: oidcClient('DRIVER_UI_CLIENT_ID', 'DRIVER_UI_REDIRECT_URI'),

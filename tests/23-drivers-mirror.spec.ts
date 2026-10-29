@@ -174,7 +174,13 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
         intervals: [2_000, 5_000],
       })
       .toEqual([seeded.uuids.work, seeded.uuids.cancel, seeded.uuids.refuse, seeded.uuids.move, seeded.uuids.reject, seeded.uuids.haul].sort());
-    expect(driversValue(`SELECT CASE WHEN SyncedAt IS NULL THEN 0 ELSE 1 END FROM app.DriverHostLinks l JOIN app.Hosts h ON h.HostID = l.HostID_FK WHERE l.UserID_FK = ${sqlText(seeded.userId)} AND h.HostUUID = '${hostUuid}'`)).toBe('1');
+    await expect
+      .poll(() => driversValue(`SELECT CASE WHEN SyncedAt IS NULL THEN 0 ELSE 1 END FROM app.DriverHostLinks l JOIN app.Hosts h ON h.HostID = l.HostID_FK WHERE l.UserID_FK = ${sqlText(seeded.userId)} AND h.HostUUID = '${hostUuid}'`), {
+        message: 'DriverResyncCompleted, which follows the snapshots, marks the link synced',
+        timeout: SNAPSHOT_WINDOW,
+        ...POLL,
+      })
+      .toBe('1');
     expect(hostNumber(`SELECT COUNT(*) FROM app.DriverMirrorSubscriptions WHERE UserID_FK = ${sqlText(seeded.userId)} AND Active = 1`), 'the host subscribed the driver').toBe(1);
 
     const tomorrow = hostValue(`SELECT CONVERT(nvarchar(10), AssignmentDate, 23) FROM app.OrderAssignments WHERE OrderAssignmentID = ${seeded.ids.tomorrow}`)!;
