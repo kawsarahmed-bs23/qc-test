@@ -210,7 +210,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
 
     const first = await api.assignments(hostUuid);
     expect(first.every((a) => Object.values(seeded.uuids).includes(a.orderAssignmentUuid)), 'the first host lists only its own work').toBe(true);
-    expect(driversNumber(`SELECT COUNT(*) FROM app.MirrorAssignments WHERE UserID_FK = ${sqlText(seeded.userId)} AND HostID_FK = (SELECT HostID FROM app.Hosts WHERE HostUUID = '${seeded.secondHostUuid}')`)).toBe(0);
+    expect(driversNumber(`SELECT COUNT(*) FROM app.OrderAssignments WHERE UserID_FK = ${sqlText(seeded.userId)} AND HostID_FK = (SELECT HostID FROM app.Hosts WHERE HostUUID = '${seeded.secondHostUuid}')`)).toBe(0);
   });
 
   test('DMIR-03 every driver-work route is a bare 404 while the host\'s dispatch is off, and 403 without a linked host', async () => {
@@ -408,7 +408,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
     expect(tripUuid, 'DMIR-06 finished a load').not.toBe('');
 
     await expect
-      .poll(() => driversValue(`SELECT CASE WHEN UploadUrl IS NULL THEN 0 ELSE 1 END FROM app.MirrorTrips WHERE TripUUID = '${tripUuid}'`), {
+      .poll(() => driversValue(`SELECT CASE WHEN UploadUrl IS NULL THEN 0 ELSE 1 END FROM app.Trips WHERE TripUUID = '${tripUuid}'`), {
         message: 'the host snapshot carries an upload link for the finished load',
         timeout: SNAPSHOT_WINDOW,
         ...POLL,
@@ -428,8 +428,14 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
     expect(upload.status()).toBe(202);
     expect((await upload.json()).data).toMatchObject({ tripUuid, pending: true });
 
-    const key = driversValue(`SELECT ImageKey FROM app.MirrorTrips WHERE TripUUID = '${tripUuid}'`);
-    expect(key, 'DRIVERS keeps the S3 key of the photo').toBeTruthy();
+    await expect
+      .poll(() => driversValue(`SELECT ImageKey FROM app.Tickets WHERE TripUUID = '${tripUuid}'`), {
+        message: 'the host snapshot brings the ticket and its S3 key into DRIVERS app.Tickets',
+        timeout: 120_000,
+        intervals: [2_000, 5_000],
+      })
+      .toBeTruthy();
+    const key = driversValue(`SELECT ImageKey FROM app.Tickets WHERE TripUUID = '${tripUuid}'`);
     test.info().annotations.push({ type: 's3-object', description: `Uploaded to the host bucket under ${key}` });
     expect(
       driversNumber(
@@ -468,10 +474,11 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
   test('DMIR-11 DRIVERS holds no host primary keys and no connection to a host database (AC10)', async () => {
     const hostKeyColumns = driversValue(
       `SELECT STRING_AGG(t.name + '.' + c.name, ', ') FROM sys.columns c JOIN sys.tables t ON t.object_id = c.object_id ` +
-        `WHERE SCHEMA_NAME(t.schema_id) = 'app' AND (t.name LIKE 'Mirror%' OR t.name = 'DriverCommands') AND c.is_identity = 0 ` +
+        `WHERE SCHEMA_NAME(t.schema_id) = 'app' AND t.name IN ('OrderAssignments', 'Trips', 'Tickets', 'Messages', 'DriverCommands') AND c.is_identity = 0 ` +
         `AND (c.name LIKE '%OrderAssignmentID%' OR c.name LIKE '%OrderID%' OR c.name LIKE '%TripID%' OR c.name LIKE '%TicketID%' OR c.name LIKE '%MessageID%' OR c.name LIKE '%JobID%' OR c.name LIKE '%VendorID%' OR c.name LIKE '%TruckID%')`,
     );
-    expect(hostKeyColumns, 'mirror tables key host rows by UUID only').toBeNull();
+    expect(driversNumber(`SELECT COUNT(*) FROM sys.tables WHERE SCHEMA_NAME(schema_id) = 'app' AND name IN ('OrderAssignments', 'Trips', 'Tickets', 'Messages', 'DriverCommands')`), 'the mirror tables exist').toBe(5);
+    expect(hostKeyColumns, 'mirror tables key host rows by UUID only (their own identity keys are DRIVERS-local)').toBeNull();
     expect(driversNumber(`SELECT COUNT(*) FROM sys.synonyms`), 'no synonyms to another database').toBe(0);
     expect(driversNumber(`SELECT COUNT(*) FROM sys.sql_expression_dependencies WHERE referenced_database_name IS NOT NULL OR referenced_server_name IS NOT NULL`), 'no cross-database references').toBe(0);
     expect(driversNumber(`SELECT COUNT(*) FROM sys.columns c JOIN sys.tables t ON t.object_id = c.object_id WHERE SCHEMA_NAME(t.schema_id) = 'app' AND c.name LIKE '%Connection%'`)).toBe(0);
@@ -544,7 +551,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
     expect(await threadBodies(api), "the first driver has the job's thread").toContain(moveBody);
 
     const mirrorRow = () =>
-      (driversValue(`SELECT STRING_AGG(CONCAT(UserID_FK, ' v', Version, ' s', Status), '; ') FROM app.MirrorAssignments WHERE OrderAssignmentUUID = '${seeded.uuids.move}'`) ?? 'none')
+      (driversValue(`SELECT STRING_AGG(CONCAT(UserID_FK, ' v', Version, ' s', Status), '; ') FROM app.OrderAssignments WHERE OrderAssignmentUUID = '${seeded.uuids.move}'`) ?? 'none')
         .replace(seeded.userId, 'first')
         .replace(seeded.secondDriverId, 'second');
     const started = Date.now();
@@ -572,13 +579,13 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
         { type: 'mirror-timeline', description: timeline.join(' -> ') },
         { type: 'host-changes', description: changes.join(' ') || 'none' },
         { type: 'host-subscribed-second', description: hostValue(`SELECT COUNT(*) FROM app.DriverMirrorSubscriptions WHERE UserID_FK = ${sqlText(seeded.secondDriverId)} AND Active = 1`) ?? '0' },
-        { type: 'mirror-rows', description: driversValue(`SELECT STRING_AGG(CONCAT(UserID_FK, ' v', Version, ' ', Status), '; ') FROM app.MirrorAssignments WHERE OrderAssignmentUUID = '${seeded.uuids.move}'`)?.replace(seeded.userId, 'first').replace(seeded.secondDriverId, 'second') ?? 'none' },
+        { type: 'mirror-rows', description: driversValue(`SELECT STRING_AGG(CONCAT(UserID_FK, ' v', Version, ' ', Status), '; ') FROM app.OrderAssignments WHERE OrderAssignmentUUID = '${seeded.uuids.move}'`)?.replace(seeded.userId, 'first').replace(seeded.secondDriverId, 'second') ?? 'none' },
       );
     }
 
     expect((await api.details(hostUuid, seeded.uuids.move)).status(), 'the first driver can no longer open the job').toBe(404);
-    expect(driversValue(`SELECT STRING_AGG(UserID_FK, ',') FROM app.MirrorAssignments WHERE OrderAssignmentUUID = '${seeded.uuids.move}'`), 'one mirror row, owned by the second driver').toBe(seeded.secondDriverId);
-    expect(driversValue(`SELECT STRING_AGG(m.UserID_FK, ',') FROM app.MirrorMessages m WHERE m.OrderAssignmentUUID = '${seeded.uuids.move}'`), 'the thread belongs to the second driver only').toBe(seeded.secondDriverId);
+    expect(driversValue(`SELECT STRING_AGG(UserID_FK, ',') FROM app.OrderAssignments WHERE OrderAssignmentUUID = '${seeded.uuids.move}'`), 'one mirror row, owned by the second driver').toBe(seeded.secondDriverId);
+    expect(driversValue(`SELECT STRING_AGG(m.UserID_FK, ',') FROM app.Messages m WHERE m.OrderAssignmentUUID = '${seeded.uuids.move}'`), 'the thread belongs to the second driver only').toBe(seeded.secondDriverId);
   });
 
   const commandCount = () => driversNumber(`SELECT COUNT(*) FROM app.DriverCommands WHERE UserID_FK = ${sqlText(seeded.userId)}`);
@@ -596,7 +603,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
     expect(await host.signIn(DRIVER_EMAIL, env.admin!.password), 'the driver signs in to the host API').toBe(200);
     return host;
   };
-  const ticketedTrip = () => driversValue(`SELECT LOWER(CONVERT(nvarchar(36), TicketUUID)) FROM app.MirrorTrips WHERE TripUUID = '${tripUuid}'`);
+  const ticketedTrip = () => driversValue(`SELECT LOWER(CONVERT(nvarchar(36), TicketUUID)) FROM app.Tickets WHERE TripUUID = '${tripUuid}'`);
 
   test('DMIR-16 reject-assignment checks the note, then the host records the decline with the note and the job can no longer be answered', async () => {
     const before = commandCount();
@@ -688,7 +695,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
 
     hostValue(`UPDATE app.Trips SET TripStartedAt = DATEADD(MINUTE, -40, GETUTCDATE()), TripCompletedAt = DATEADD(MINUTE, -20, GETUTCDATE()), Updated = GETUTCDATE() WHERE TripUUID = '${haulTripUuid}'`);
     await expect
-      .poll(() => driversValue(`SELECT CASE WHEN ReopenUntil < GETUTCDATE() THEN 1 ELSE 0 END FROM app.MirrorTrips WHERE TripUUID = '${haulTripUuid}'`), {
+      .poll(() => driversValue(`SELECT CASE WHEN ReopenUntil < GETUTCDATE() THEN 1 ELSE 0 END FROM app.Trips WHERE TripUUID = '${haulTripUuid}'`), {
         message: 'the host snapshot moves the reopen deadline into the past (DriverTrip:ReopenWindowMinutes, 15 by default)',
         timeout: SNAPSHOT_WINDOW,
         ...POLL,
