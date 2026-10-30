@@ -880,8 +880,9 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
     expect(big.status(), 'an 11 MB photo').toBe(400);
 
     if (ticketedTrip()) {
-      const again = await api.uploadTicket(hostUuid, tripUuid, { name: 'e2e-qc825-again.jpg', mimeType: 'image/jpeg', buffer: fs.readFileSync(TICKET_JPEG) });
-      expect(again.status(), 'a second photo for a ticketed load').toBe(400);
+      const otherPhoto = Buffer.concat([fs.readFileSync(TICKET_JPEG), Buffer.from(MARKER)]);
+      const again = await api.uploadTicket(hostUuid, tripUuid, { name: 'e2e-qc825-again.jpg', mimeType: 'image/jpeg', buffer: otherPhoto });
+      expect(again.status(), 'a different second photo for a ticketed load (the same photo again is a QC-829 replay, SYNC-12)').toBe(400);
       expect(errorText(await again.json())).toContain('already has a ticket');
     } else {
       test.info().annotations.push({ type: 'skip-part', description: 'No ticket on the load (DMIR-09 skipped), so the already-ticketed upload was not checked.' });

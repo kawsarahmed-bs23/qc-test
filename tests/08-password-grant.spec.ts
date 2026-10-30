@@ -6,7 +6,7 @@ import { canReadIdentityLog } from '../fixtures/identityLog';
 import { canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '../fixtures/throwawayUsers';
 import { env } from '../config/environment';
 
-const ACCESS_TOKEN_SECONDS = 900;
+const ACCESS_TOKEN_SECONDS = 1800;
 const INVALID_CREDENTIALS = { error: 'invalid_grant', error_description: 'invalid_username_or_password' };
 const MFA_REQUIRED = { error: 'invalid_grant', error_description: 'mfa_required' };
 
@@ -36,7 +36,7 @@ test.describe('Mobile password grant (QC-706)', () => {
       }
     });
 
-    test('PWD-01 a driver gets a 15-minute drivers API access token and a refresh token', async () => {
+    test('PWD-01 a driver gets a 30-minute drivers API access token and a refresh token', async () => {
       expect(issued.expires_in).toBe(ACCESS_TOKEN_SECONDS);
       expect(issued.refresh_token).toBeTruthy();
       expect(issued.scope?.split(' ')).toEqual(expect.arrayContaining(['quarryconnect.drivers.api', 'offline_access']));

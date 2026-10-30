@@ -31,6 +31,7 @@ export interface TestEnvironment {
   driversSql: LocalSql | null;
   identityLogDir: string | null;
   landingUrl: string | null;
+  expoStubLog: string | null;
   identityHostCacheSeconds: number;
   allowWrites: boolean;
   allowCreateHosts: boolean;
@@ -146,6 +147,7 @@ export function loadEnvironment(): TestEnvironment {
     masterSql: name === 'local' && sqlServer && masterSqlDatabase ? { server: sqlServer, database: masterSqlDatabase } : null,
     driversSql: name === 'local' && sqlServer && driversSqlDatabase ? { server: sqlServer, database: driversSqlDatabase } : null,
     landingUrl: process.env.LANDING_URL?.trim() || null,
+    expoStubLog: name === 'local' ? process.env.EXPO_STUB_LOG?.trim() || null : null,
     identityHostCacheSeconds: Number(process.env.IDENTITY_HOST_CACHE_SECONDS?.trim() || '330'),
     allowWrites: !isProd && flag('ALLOW_WRITES'),
     allowCreateHosts: !isProd && flag('ALLOW_CREATE_HOSTS'),
