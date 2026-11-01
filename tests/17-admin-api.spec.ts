@@ -107,7 +107,7 @@ test.describe('Admin API (QC-742)', () => {
     expect((await admin.get('/hosts', { Origin: OTHER_ORIGIN })).headers['access-control-allow-origin']).toBeUndefined();
   });
 
-  test('ADMINAPI-05 hosts and users are identified by UUIDs and GUIDs; no HOST_MASTER key is ever sent', async ({ request, targetHost }) => {
+  test('ADMINAPI-05 hosts, users and environment settings are identified by UUIDs and GUIDs; no HOST_MASTER key is ever sent (QC-744)', async ({ request, targetHost }) => {
     const api = AdminApi.asAdmin(request);
 
     const hosts = await api.get('/hosts');
@@ -119,12 +119,20 @@ test.describe('Admin API (QC-742)', () => {
     const one = await api.get(`/hosts/${targetHost.uuid}`);
     expect(Object.keys(one.body).sort()).toEqual([...HOST_KEYS].sort());
 
-    for (const path of ['/hosts', `/hosts/${targetHost.uuid}`, '/dashboard', '/activity', '/users', '/users/filters', `/hosts/${targetHost.uuid}/branding`, `/hosts/${targetHost.uuid}/urls`]) {
+    for (const path of ['/hosts', `/hosts/${targetHost.uuid}`, '/dashboard', '/activity', '/users', '/users/filters', `/hosts/${targetHost.uuid}/branding`, `/hosts/${targetHost.uuid}/urls`, `/hosts/${targetHost.uuid}/features`, `/hosts/${targetHost.uuid}/environment`]) {
       const keys = keysDeep((await api.get(path)).body);
-      for (const key of ['id', 'hostId', 'changeLogId']) {
+      for (const key of ['id', 'hostId', 'changeLogId', 'environmentSettingId', 'hostEnvironmentSettingId']) {
         expect(keys.has(key), `${path} has no ${key}`).toBe(false);
       }
     }
+
+    const environment = await api.get(`/hosts/${targetHost.uuid}/environment`);
+    expect(environment.status).toBe(200);
+    for (const setting of environment.body.groups.flatMap((group: { settings: { settingUuid: string }[] }) => group.settings)) {
+      expect(setting.settingUuid).toMatch(GUID);
+    }
+    expect(environment.body).not.toHaveProperty('savedGroups');
+    expect(environment.body).not.toHaveProperty('savedSyncedAt');
 
     const users = await api.get('/users?pageSize=100');
     for (const user of users.body.items) {

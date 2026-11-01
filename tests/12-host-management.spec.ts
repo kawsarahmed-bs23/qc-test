@@ -21,8 +21,9 @@ import { env } from '../config/environment';
 
 const MEMBER = 'e2e.qc739.member@quarryconnect.test';
 const SAFE_SETTING = 'DispatchSnapshot:RateLimitPermitsPerHour';
-const UNREACHABLE_API = 'https://localhost:9';
 const PROBE = { key: 'e2e_qc775_probe', label: 'E2E QC-775 probe' };
+const NO_API_SAVED = (saving: string) => `${saving} This host has no API address, so its features are kept in HOST_MASTER until one is added on the host's details page.`;
+const PENDING_TEXT = "The host holds a different value for some features. Save to send HOST_MASTER's values.";
 
 function sqlText(value: string): string {
   return `N'${value.replace(/'/g, "''")}'`;
@@ -245,7 +246,7 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
     await expect(features.empty).toHaveCount(0);
   });
 
-  test('HF-07 a host with no API address lists the whole catalog for editing, warns, and a save is kept in HOST_MASTER', async ({ page, request, shell }) => {
+  test('HF-07 a host with no API address lists the whole catalog for editing, warns, and a save is kept in HOST_MASTER (QC-744 wording)', async ({ page, request, shell }) => {
     const uuid = throwawayUuid('e2e-qc775-features');
     const id = masterHostId(uuid);
     const catalog = featureCatalog();
@@ -264,8 +265,7 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
     await features.setOn('maps', true);
     await features.setOn('reports', true);
     await features.save.click();
-    await shell.expectStatus('Saved 2 feature changes.');
-    await shell.expectStatus('kept in HOST_MASTER');
+    await shell.expectStatus(NO_API_SAVED('Saved 2 feature changes.'));
 
     const stored = masterFeatureFlags(id);
     expect(Object.keys(stored).sort()).toEqual(catalog.map((f) => f.key).sort());
@@ -285,7 +285,7 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
     expect(view.body.productFeatures.map((f: { key: string }) => f.key)).toEqual(catalog.map((f) => f.key));
     const saved = await api.put(`/hosts/${uuid}/features/product`, { enabled: ['maps'] });
     expect(saved.status).toBe(200);
-    expect(saved.body.message).toContain('kept in HOST_MASTER');
+    expect(saved.body.message).toBe(NO_API_SAVED('Saved 1 feature change.'));
     expect(masterFeatureFlags(id).reports).toBe(false);
   });
 
@@ -382,7 +382,7 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
       querySingleValue(`UPDATE app.HostFeatures SET Enabled = ${master ? 0 : 1} WHERE OrganisationID_FK = ${rockRidge.organisationId} AND FeatureKey = 'maps'`);
 
       await features.open(targetHost.uuid);
-      await expect(features.pending).toBeVisible();
+      await expect(features.pending).toContainText(PENDING_TEXT);
       await expect(features.pendingBadge('maps')).toHaveText('Not on the host yet');
       await expect(features.pendingBadges).toHaveCount(1);
       await expect(features.checkbox('maps')).toBeChecked({ checked: master });
@@ -399,39 +399,28 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
     }
   });
 
-  test('HF-11 when the host API cannot be reached, a save is kept in HOST_MASTER, marked failed, and goes through on the next save', async ({ page, targetHost, shell }) => {
-    const features = new HostFeaturesPage(page);
-    await features.open(targetHost.uuid);
-    const original = await features.isOn('ai_ocr');
-    const hostBefore = hostDbFeatureFlags(rockRidge.organisationId).ai_ocr ?? false;
-    const originalUrl = queryMasterDb(`SELECT ApiBaseUrl FROM app.Hosts WHERE HostID = ${rockRidge.hostId}`);
-
+  test('HF-11 when the host API cannot be reached, a save is refused with an error, HOST_MASTER keeps its values and the sync is marked failed (QC-744)', async ({ page }) => {
+    runMasterSeedScript('master-qc744-host.apply.sql');
     try {
-      queryMasterDb(`UPDATE app.Hosts SET ApiBaseUrl = N'${UNREACHABLE_API}' WHERE HostID = ${rockRidge.hostId}`);
-      await features.open(targetHost.uuid);
+      const uuid = throwawayUuid('e2e-qc744-unreachable');
+      const id = masterHostId(uuid);
+      const before = masterFeatureFlags(id);
+      const features = new HostFeaturesPage(page);
+      await features.open(uuid);
       await expect(features.hostError).toContainText('could not be reached');
 
-      await features.setOn('ai_ocr', !original);
+      await features.setOn('ai_ocr', true);
       await features.save.click();
-      await shell.expectStatus('Saved 1 feature change. They are kept in HOST_MASTER');
-      await shell.expectStatus('Save again to send them.');
-      expect(masterFeatureFlags(rockRidge.hostId).ai_ocr).toBe(!original);
-      expect(hostDbFeatureFlags(rockRidge.organisationId).ai_ocr ?? false).toBe(hostBefore);
-      expect(featuresSync(rockRidge.hostId)?.status).toBe('Failed');
-    } finally {
-      queryMasterDb(`UPDATE app.Hosts SET ApiBaseUrl = ${originalUrl === null ? 'NULL' : sqlText(originalUrl)} WHERE HostID = ${rockRidge.hostId}`);
-    }
+      await expect(features.errors).toContainText('The host API did not take the features, so nothing was saved');
+      await expect(page.locator('.success-snackbar').filter({ hasText: 'kept in HOST_MASTER' })).toHaveCount(0);
+      expect(masterFeatureFlags(id)).toEqual(before);
+      expect(featuresSync(id)?.status).toBe('Failed');
 
-    await features.open(targetHost.uuid);
-    await expect(features.hostError).toHaveCount(0);
-    await expect(features.pendingBadge('ai_ocr')).toBeVisible();
-    await features.setOn('ai_ocr', original);
-    await features.save.click();
-    await shell.expectStatus('Saved 1 feature change. The host has them now.');
-    expect(featuresSync(rockRidge.hostId)?.status).toBe('Succeeded');
-    await features.open(targetHost.uuid);
-    await expect(features.pendingBadges).toHaveCount(0);
-    expect(masterFeatureFlags(rockRidge.hostId).ai_ocr ?? false).toBe(original);
+      await features.open(uuid);
+      await expect(features.checkbox('ai_ocr')).toBeChecked({ checked: before.ai_ocr ?? false });
+    } finally {
+      runMasterSeedScript('master-qc744-host.remove.sql');
+    }
   });
 
   test("HF-12 the first open of a host with no HOST_MASTER feature rows takes the host API's current values into HOST_MASTER", async ({ page }) => {
@@ -458,9 +447,16 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
 });
 
 test.describe('Host environment (QC-739, Angular since QC-742)', () => {
-  test('HE-01 secrets are never filled in: each shows only whether it is set', { tag: '@smoke' }, async ({ page, targetHost }) => {
+  test('HE-01 secrets are never filled in: each shows only whether it is set, and every setting is keyed by its HOST_MASTER uuid (QC-744)', { tag: '@smoke' }, async ({ page, targetHost }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
+    await expect(page.locator('#environment-saved-copy')).toHaveCount(0);
+    const ids = await environment.rows().evaluateAll((rows) => rows.map((row) => row.getAttribute('data-setting-id')!));
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    }
+    expect(new Set(ids).size).toBe(ids.length);
     const secrets = environment.secretInputs();
     expect(await secrets.count()).toBeGreaterThan(0);
     for (const secret of await secrets.all()) {

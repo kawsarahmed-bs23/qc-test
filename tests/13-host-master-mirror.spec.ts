@@ -1,14 +1,10 @@
 import { test, expect } from '../fixtures/test';
-import { canUseMasterDb, queryMasterDb } from '../fixtures/localDb';
+import { canSeedLocalDb, canUseMasterDb, queryMasterDb, runMasterSeedScript } from '../fixtures/localDb';
+import { UNREACHABLE_HOST_KEY, hostIdByKey, hostUuidByKey, recordCounts, secretsDifferingFromHost } from '../fixtures/environmentRecord';
 import { HostEnvironmentPage, HostFeaturesPage } from '../pages/HostManagementPages';
 import { adminAccount } from '../fixtures/throwawayUsers';
 
-const UNREACHABLE_API = 'https://localhost:9';
 const SAFE_SETTING = { group: 'DispatchSnapshot', property: 'RateLimitPermitsPerHour', key: 'DispatchSnapshot:RateLimitPermitsPerHour' };
-
-function sqlText(value: string | null): string {
-  return value === null ? 'NULL' : `N'${value.replace(/'/g, "''")}'`;
-}
 
 function hostId(uuid: string): number {
   const id = queryMasterDb(`SELECT HostID FROM app.Hosts WHERE HostUUID = '${uuid}'`);
@@ -60,7 +56,8 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     expect(lastSync(id, 'Features').syncedAt, 'opening the page sends nothing').toBe(syncedBefore);
   });
 
-  test('MIR-02 opening Environment copies every setting into HOST_MASTER, with no secret values', async ({ page, targetHost }) => {
+  test('MIR-02 opening Environment reconciles HOST_MASTER with the host: every host row is recorded, secrets included, and the page shows the HOST_MASTER values (QC-744)', async ({ page, targetHost }) => {
+    test.skip(!canSeedLocalDb(), 'Needs the host database to compare with (local only).');
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
 
@@ -68,19 +65,24 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     const secretInputs = await environment.secretInputs().count();
     const shownValue = await environment.input(SAFE_SETTING.key).inputValue();
     const id = hostId(targetHost.uuid);
+    const counts = recordCounts(id);
 
-    expect(Number(queryMasterDb(`SELECT COUNT(*) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1`))).toBe(pageRows);
-    expect(Number(queryMasterDb(`SELECT COUNT(*) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND IsSensitive = 1`))).toBe(secretInputs);
-    expect(Number(queryMasterDb(`SELECT COUNT(*) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND IsSensitive = 1 AND PropertyValue IS NOT NULL`)), 'no secret value is stored').toBe(0);
+    expect(counts.masterActive, 'every host row is in HOST_MASTER').toBe(counts.hostRows);
+    expect(pageRows).toBe(counts.masterActive);
+    expect(secretInputs).toBe(counts.masterSecrets);
+    expect(counts.masterSecretsNull === 0, 'every secret is stored in HOST_MASTER').toBe(true);
+    expect(secretsDifferingFromHost(id) === 0, 'each stored secret equals the host value').toBe(true);
+    for (const secret of await environment.secretInputs().all()) {
+      await expect(secret).toHaveValue('');
+    }
 
     const stored = queryMasterDb(
       `SELECT PropertyValue FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND GroupName = N'${SAFE_SETTING.group}' AND SubGroupName IS NULL AND PropertyName = N'${SAFE_SETTING.property}'`,
     );
     expect(stored ?? '').toBe(shownValue);
-
-    const sync = lastSync(id, 'Environment');
-    expect(sync.status).toBe('Succeeded');
-    expect(sync.ageSeconds).toBeLessThan(120);
+    expect(await environment.field(SAFE_SETTING.key).getAttribute('data-setting-id')).toBe(
+      queryMasterDb(`SELECT LOWER(CAST(HostEnvironmentSettingUUID AS varchar(36))) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND GroupName = N'${SAFE_SETTING.group}' AND SubGroupName IS NULL AND PropertyName = N'${SAFE_SETTING.property}'`),
+    );
   });
 
   test('MIR-03 saving a feature updates HOST_MASTER with the Admin user as the changer', { tag: '@write' }, async ({ page, targetHost, shell }) => {
@@ -108,26 +110,16 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     expect(masterFeatures(id).maps).toBe(original);
   });
 
-  test('MIR-04 when the host API is unreachable, Features still lists the HOST_MASTER values for editing with a warning, and Environment shows the saved copy read-only', { tag: '@write' }, async ({ page, targetHost }) => {
-    test.setTimeout(120_000);
-    const id = hostId(targetHost.uuid);
-    const features = new HostFeaturesPage(page);
-    const environment = new HostEnvironmentPage(page);
-
-    await features.open(targetHost.uuid);
-    await environment.open(targetHost.uuid);
-    const saved = masterFeatures(id);
-    const syncBefore = lastSync(id, 'Features');
-    const secretRows = Number(queryMasterDb(`SELECT COUNT(*) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND IsSensitive = 1`));
-    const originalUrl = queryMasterDb(`SELECT ApiBaseUrl FROM app.Hosts WHERE HostID = ${id}`);
-    const savedValue = queryMasterDb(
-      `SELECT PropertyValue FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND GroupName = N'${SAFE_SETTING.group}' AND SubGroupName IS NULL AND PropertyName = N'${SAFE_SETTING.property}'`,
-    );
-
+  test('MIR-04 when the host API is unreachable, Features still lists the HOST_MASTER values for editing with a warning, and Environment shows the HOST_MASTER values with Save off (QC-744)', { tag: '@write' }, async ({ page }) => {
+    runMasterSeedScript('master-qc744-host.apply.sql');
     try {
-      queryMasterDb(`UPDATE app.Hosts SET ApiBaseUrl = ${sqlText(UNREACHABLE_API)} WHERE HostID = ${id}`);
+      const uuid = hostUuidByKey(UNREACHABLE_HOST_KEY);
+      const id = hostIdByKey(UNREACHABLE_HOST_KEY);
+      const features = new HostFeaturesPage(page);
+      const environment = new HostEnvironmentPage(page);
+      const saved = masterFeatures(id);
 
-      await features.open(targetHost.uuid);
+      await features.open(uuid);
       await expect(features.hostError).toContainText('could not be reached');
       await expect(features.pending).toHaveCount(0);
       await expect(features.pendingBadges).toHaveCount(0);
@@ -135,25 +127,24 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
       await expect(features.checkbox('maps')).toBeEnabled();
       await expect(features.checkbox('maps')).toBeChecked({ checked: saved.maps ?? false });
       await expect(features.feature('mfa')).toHaveCount(0);
-
-      const syncAfter = lastSync(id, 'Features');
-      expect({ status: syncAfter.status, syncedAt: syncAfter.syncedAt }, 'reading an unreachable host records nothing').toEqual({ status: syncBefore.status, syncedAt: syncBefore.syncedAt });
+      expect(queryMasterDb(`SELECT COUNT(*) FROM app.HostSyncs WHERE HostID_FK = ${id}`), 'reading an unreachable host records nothing').toBe('0');
       expect(masterFeatures(id), 'a failed read changes no feature row').toEqual(saved);
 
-      await environment.openUnreachable(targetHost.uuid);
+      await environment.openUnreachable(uuid);
       await expect(environment.loadWarning).toContainText('The host API could not be reached');
-      await expect(environment.save).toHaveCount(0);
-      await expect(environment.form).toHaveCount(0);
-      await expect(page.locator('#environment-saved-copy input')).toHaveCount(0);
-      await expect(environment.savedSetting(SAFE_SETTING.group, `:${SAFE_SETTING.property}`).locator('code')).toHaveText(savedValue ?? '');
-      await expect(environment.savedCopy.getByText('Secret, not stored')).toHaveCount(secretRows);
+      await expect(environment.form).toBeVisible();
+      await expect(environment.save).toBeDisabled();
+      await expect(page.locator('#environment-saved-copy')).toHaveCount(0);
+      await expect(environment.driftCard).toHaveCount(0);
+      await environment.reveal(SAFE_SETTING.key);
+      await expect(environment.input(SAFE_SETTING.key)).toHaveValue('60');
+      await environment.reveal('E2E:ProbeSecret');
+      await expect(environment.secretInputs()).toHaveCount(1);
+      await expect(environment.secretInputs()).toHaveValue('');
+      await expect(environment.hint('E2E:ProbeSecret')).toHaveText(/^\s*Set\s*$/);
+      expect(await page.content()).not.toContain('e2e-qc744-made-up-secret');
     } finally {
-      queryMasterDb(`UPDATE app.Hosts SET ApiBaseUrl = ${sqlText(originalUrl)} WHERE HostID = ${id}`);
+      runMasterSeedScript('master-qc744-host.remove.sql');
     }
-
-    await features.open(targetHost.uuid);
-    await expect(features.hostError).toHaveCount(0);
-    await environment.open(targetHost.uuid);
-    expect(lastSync(id, 'Environment').status).toBe('Succeeded');
   });
 });

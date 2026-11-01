@@ -291,11 +291,45 @@ export class HostEnvironmentPage {
 
   async openUnreachable(uuid: string): Promise<void> {
     await openAdmin(this.page, `/hosts/${uuid}/environment`);
-    await expect(this.savedCopy).toBeVisible();
+    await expect(this.loadWarning).toBeVisible();
+    await expect(this.save).toBeVisible();
+    await waitForIdle(this.page);
   }
 
-  get savedCopy(): Locator {
-    return this.page.locator('#environment-saved-copy');
+  get notice(): Locator {
+    return this.page.locator('#environment-notice');
+  }
+
+  get lastPushed(): Locator {
+    return this.page.locator('#environment-last-pushed');
+  }
+
+  get driftCard(): Locator {
+    return this.page.locator('#environment-drift');
+  }
+
+  get driftItems(): Locator {
+    return this.page.locator('#environment-drift [data-testid="drift-item"]');
+  }
+
+  driftItem(key: string): Locator {
+    return this.page.locator(`#environment-drift [data-testid="drift-item"][data-key="${key}"]`);
+  }
+
+  get takeHostValues(): Locator {
+    return this.page.locator('#environment-take-host-values');
+  }
+
+  get confirmDialog(): ConfirmDialog {
+    return new ConfirmDialog(this.page);
+  }
+
+  differsBadge(key: string): Locator {
+    return this.field(key).locator('[data-testid="setting-differs"]');
+  }
+
+  differsBadges(): Locator {
+    return this.page.locator('[data-setting-id][data-key] [data-testid="setting-differs"]');
   }
 
   groups(): Locator {
@@ -379,13 +413,6 @@ export class HostEnvironmentPage {
 
   async forgetOpenGroups(): Promise<void> {
     await this.page.evaluate((key) => localStorage.removeItem(key), OPEN_GROUPS_KEY);
-  }
-
-  savedSetting(group: string, subGroupAndProperty: string): Locator {
-    return this.page
-      .locator('#environment-saved-copy [data-testid="saved-group"]')
-      .filter({ has: this.page.locator('h5', { hasText: new RegExp(`^\\s*${group}\\s*$`) }) })
-      .locator(`tr[data-saved-setting="${subGroupAndProperty}"]`);
   }
 }
 
