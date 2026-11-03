@@ -4,6 +4,7 @@ import { env } from '../../config/environment';
 import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '../../fixtures/localDb';
 import { CommsPage } from '../../pages/AppPages';
 import { API_CHANNEL, CommsApi, CommsComposer, CommsHostAdmin, MESSAGE_CHANNEL, QC804_ADMIN_STATE } from '../../pages/CommsSendGate';
+import { expectedSmsBody, storedMessageContaining } from '../../pages/SmsFraming';
 
 const MARKER = 'E2E-QC804';
 const NO_ASSIGNMENT_IN_APP = "That driver has no assignments, so an in-app message can't reach the app. Send it by SMS instead.";
@@ -161,11 +162,13 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
     test.skip(!smsGoesToLogOnly(), 'Twilio FromPhoneNumber is set in app.EnvironmentSetting, so an SMS would really go out.');
     const { composer } = await openThread(page, drivers.planned);
     const body = `${MARKER}-SMS-${Date.now()}`;
+    const expected = expectedSmsBody(querySingleValue(`SELECT PhoneNumber FROM auth.Users WHERE Id = '${drivers.planned}'`) ?? '', body);
 
     await composer.send(body, 'SMS');
     await expect(composer.sentText(body)).toBeVisible({ timeout: 15_000 });
 
-    const row = storedMessage(body);
+    const row = storedMessageContaining(body);
+    expect(row.body, 'framed with the host name and opt-out line when nothing was texted to that phone lately (QC-780)').toBe(expected);
     expect(row.channel).toBe(MESSAGE_CHANNEL.Sms);
     expect(row.assignment).toBe(assignmentId);
     expect(row.sid, 'the logging SMS sender stamps a STUB id; a real Twilio id starts SM').toMatch(/^STUB/);
@@ -205,9 +208,11 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
     await snapshot(page, 'no-assignment-composer');
 
     const body = `${MARKER}-NOASSIGN-SMS-${Date.now()}`;
+    const expected = expectedSmsBody(drivers.noAssignmentPhone, body);
     await composer.send(body, 'SMS');
     await expect(composer.sentText(body)).toBeVisible({ timeout: 15_000 });
-    const row = storedMessage(body);
+    const row = storedMessageContaining(body);
+    expect(row.body, 'framed with the host name and opt-out line when nothing was texted to that phone lately (QC-780)').toBe(expected);
     expect(row.channel).toBe(MESSAGE_CHANNEL.Sms);
     expect(row.assignment).toBeNull();
     expect(row.sid).toMatch(/^STUB/);

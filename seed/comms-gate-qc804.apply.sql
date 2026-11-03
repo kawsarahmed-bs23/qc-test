@@ -15,7 +15,7 @@ DECLARE @Tomorrow date = DATEADD(DAY, 1, CAST(SYSDATETIMEOFFSET() AT TIME ZONE '
 BEGIN TRANSACTION;
 
 DELETE app.Messages
-WHERE MessageBody LIKE @Marker + N'%'
+WHERE MessageBody LIKE N'%' + @Marker + N'%'
    OR OrderAssignmentID_FK IN (SELECT OrderAssignmentID FROM app.OrderAssignments WHERE Notes = @Marker);
 
 DELETE app.OrderAssignments WHERE Notes = @Marker;

@@ -131,6 +131,24 @@ export function queryBinaryValues(database: 'host' | 'drivers', column: string, 
     .map((line) => Buffer.from(line, 'hex'));
 }
 
+export function queryUnicodeText(column: string, fromWhere: string): string | null {
+  if (!env.localSql) {
+    throw new Error('LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE are not set, or TEST_ENV is not local.');
+  }
+
+  const output = execFileSync(
+    'sqlcmd',
+    ['-S', env.localSql.server, '-d', env.localSql.database, '-E', '-C', '-I', '-b', '-y', '0', '-Q',
+      `SET NOCOUNT ON; SELECT CONCAT('HEX:', ISNULL(CONVERT(varchar(max), CAST(${column} AS varbinary(max)), 2), 'NULL'))`
+        + ` FROM ${fromWhere}`],
+    { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 },
+  );
+
+  const value = output.split(/\r?\n/).map((line) => line.trim()).find((line) => line.startsWith('HEX:'))?.slice(4);
+  if (value === undefined || value === 'NULL') return null;
+  return Buffer.from(value, 'hex').toString('utf16le');
+}
+
 function runQuery(sql: LocalSql, query: string): string | null {
   const output = execFileSync(
     'sqlcmd',
