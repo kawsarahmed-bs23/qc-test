@@ -1,5 +1,7 @@
 import type { APIRequestContext } from '@playwright/test';
 import { env } from '../config/environment';
+import { serviceToken } from './IdentityAdminApi';
+import { HOST_API_SCOPE } from './HostRootRemoved';
 
 export const SQS_PROTOCOL_ATTRIBUTE = 'wolverine-protocol-version';
 
@@ -30,12 +32,12 @@ export class MessagingProbeApi {
 
   constructor(private readonly request: APIRequestContext) {}
 
-  async signIn(email: string, password: string): Promise<number> {
-    const response = await this.request.post(`${hostApiUrl()}/api/account/login`, { data: { email, password } });
-    if (response.status() === 200) {
-      this.accessToken = (await response.json()).data.accessToken as string;
+  async signInAsAdminService(): Promise<number> {
+    const result = await serviceToken(this.request, HOST_API_SCOPE);
+    if (result.status === 200 && result.body.access_token) {
+      this.accessToken = result.body.access_token as string;
     }
-    return response.status();
+    return result.status;
   }
 
   async send(failTimes: number, rollback = false): Promise<ProbeAnswer> {

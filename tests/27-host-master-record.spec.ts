@@ -28,6 +28,7 @@ import { adminAccount } from '../fixtures/throwawayUsers';
 import { AdminApi, canUseAdminApi } from '../pages/AdminApi';
 import { hostAppAccessToken, hostEnvironmentSettings, removeHostSuperAdmins, seedHostSuperAdmin } from '../pages/HostEnvironmentApi';
 import { HostEnvironmentPage, HostFeaturesPage } from '../pages/HostManagementPages';
+import { removeSuperAdminRole, seedSuperAdminRole } from '../pages/HostRootRemoved';
 import { env } from '../config/environment';
 
 const SAFE_SETTING = 'DispatchSnapshot:RateLimitPermitsPerHour';
@@ -337,29 +338,27 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     await expect(environment.field(SAFE_SETTING)).toHaveAttribute('data-setting-id', settingUuid);
   });
 
-  test("REC-08 the host app's own root super admin still gets no value for a sensitive setting from the host API", async ({ browser, request }) => {
+  test("REC-08 the host app's former root super admin (a user still holding a SuperAdmin row) is refused by the host API's environment settings (QC-801)", async ({ browser, request }) => {
     test.skip(!env.appUrl || !env.appApiUrl || !canUseIdentityDb() || !env.admin, "Needs APP_URL, APP_API_URL, Identity's local database and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway super admin.");
     const appUp = await request.get(env.appUrl!).then((response) => response.ok()).catch(() => false);
     test.skip(!appUp, `The host app is not running on ${env.appUrl}.`);
 
     removeHostSuperAdmins();
+    seedSuperAdminRole();
     try {
       const user = seedHostSuperAdmin();
       const token = await hostAppAccessToken(browser, user);
       expect(token, 'the host app keeps an access token after sign-in').toBeTruthy();
 
-      const { status, body, settings } = await hostEnvironmentSettings(request, token!);
-      expect(status).toBe(200);
-      const secrets = settings.filter((setting) => setting.isSensitive);
-      expect(secrets.length).toBe(recordCounts(targetId).hostSecrets);
-      for (const secret of secrets) {
-        expect(secret.value, `${secret.groupName}:${secret.propertyName} value`).toBeNull();
-        expect(typeof secret.hasValue, `${secret.groupName}:${secret.propertyName} hasValue`).toBe('boolean');
-      }
-      expect(secrets.some((secret) => secret.hasValue)).toBe(true);
+      const { status, body } = await hostEnvironmentSettings(request, token!);
+      expect([401, 403], `GET api/environment-setting as a SuperAdmin row holder: ${status}`).toContain(status);
       expect(secretsFoundIn(body, hostSecretHashes()), 'no secret value is in the host API response').toEqual([]);
     } finally {
-      removeHostSuperAdmins();
+      try {
+        removeHostSuperAdmins();
+      } finally {
+        removeSuperAdminRole();
+      }
     }
   });
 

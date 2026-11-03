@@ -63,7 +63,7 @@ function deadLetterQueueFor(queue: string): string {
 test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)', { tag: '@write' }, () => {
   test.skip(!canSeedLocalDb() || !canUseDriversDb(), 'Needs the host and DRIVERS local databases (local only).');
   test.skip(!env.localStackUrl, 'Needs LOCALSTACK_URL (local only); SQS messaging runs against LocalStack.');
-  test.skip(!env.appAdmin, 'Needs APP_ADMIN_EMAIL / APP_ADMIN_PASSWORD (a root SuperAdmin on the host API).');
+  test.skip(!env.adminApiClient, "Needs ADMIN_API_CLIENT_ID / ADMIN_API_CLIENT_SECRET: since QC-801 only Admin's service token may send a probe.");
   test.skip(!env.appApiUrl, 'Needs APP_API_URL (the host API).');
 
   let request: APIRequestContext;
@@ -102,7 +102,7 @@ test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)
     expect(driversQueue, 'Messaging:DriversEndpoint is an sqs:// queue').toMatch(/\.fifo$/);
 
     api = new MessagingProbeApi(request);
-    expect(await api.signIn(env.appAdmin!.email, env.appAdmin!.password), 'the app admin signs in to the host API').toBe(200);
+    expect(await api.signInAsAdminService(), "Admin's service client gets a host API token").toBe(200);
   });
 
   test.afterAll(async () => {

@@ -1,8 +1,11 @@
--- QC-744: a host-database user with the host role SuperAdmin in the root organisation 1 for the throwaway Identity user
--- $(UserId) ($(Email)), so the host API's identity exchange treats them as the host app's root super admin, the only
--- host-app user that may read api/environment-setting (Identity sub = host auth.Users.Id). The user has signed the live
--- EULA (auth.UserSignedEULAs), so sign-in returns to the app instead of the EULA page. Run against the host database (LOCAL_SQL_DATABASE). host-qc744.remove.sql deletes it with
--- the EULA signature, sessions, refresh tokens and login history a sign-in leaves.
+-- QC-744, changed by QC-801: a host-database user with the host role SuperAdmin in the root organisation 1 for the
+-- throwaway Identity user $(UserId) ($(Email)), the host app's former root super admin. Since QC-801 the host API refuses
+-- every user token on api/environment-setting whatever its roles (only Admin's service token passes), and REC-08 checks
+-- that this user is refused. The SuperAdmin role rows are gone after QC-801, so run superadmin-role-qc801.apply.sql first
+-- (auth.UserToRoles has a foreign key to auth.RolesToPermissions) and superadmin-role-qc801.remove.sql after
+-- host-qc744.remove.sql. The user has signed the live EULA (auth.UserSignedEULAs), so sign-in returns to the app instead
+-- of the EULA page. Run against the host database (LOCAL_SQL_DATABASE). host-qc744.remove.sql deletes it with the EULA
+-- signature, sessions, refresh tokens and login history a sign-in leaves.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
