@@ -106,3 +106,53 @@ export function makeQc823PlatformAdmin(user: ThrowawayUser, displayName: string)
 export function removeQc823PlatformAdmins(): void {
   runMasterSeedScript('master-qc823-platform-admin.remove.sql');
 }
+
+export const QC876_PREFIX = 'e2e.qc876.';
+
+export interface LockoutState {
+  accessFailedCount: number;
+  lockedOut: boolean;
+}
+
+export function seedQc876User(email: string, lastName: string, options: { active?: boolean; twoFactor?: boolean } = {}): ThrowawayUser {
+  if (!env.admin) {
+    throw new Error('ADMIN_EMAIL / ADMIN_PASSWORD are not set; the throwaway users copy that password.');
+  }
+  const authenticatorKey = options.twoFactor ? newAuthenticatorKey() : null;
+  runIdentitySeedScript('identity-qc876-user.apply.sql', {
+    Email: email,
+    SourceEmail: env.admin.email,
+    LastName: lastName,
+    IsActive: options.active === false ? '0' : '1',
+    TwoFactor: options.twoFactor ? '1' : '0',
+    AuthenticatorKey: authenticatorKey ?? 'none',
+  });
+  const userId = queryIdentityDb(`SELECT Id FROM Users WHERE NormalizedEmail = UPPER(N'${email.replace(/'/g, "''")}')`);
+  if (!userId) {
+    throw new Error(`The throwaway user ${email} was not created.`);
+  }
+  return { email, password: env.admin.password, userId, authenticatorKey };
+}
+
+export function qc876LockoutState(user: ThrowawayUser): LockoutState {
+  const row = queryIdentityDb(
+    `SELECT CONCAT(AccessFailedCount, '|', CASE WHEN LockoutEnd > SYSDATETIMEOFFSET() THEN 1 ELSE 0 END) FROM Users WHERE Id = N'${user.userId}' AND NormalizedEmail LIKE N'E2E.QC876.%'`,
+  );
+  if (!row) {
+    throw new Error(`The throwaway user ${user.email} is missing.`);
+  }
+  const [count, locked] = row.split('|');
+  return { accessFailedCount: Number(count), lockedOut: locked === '1' };
+}
+
+export function clearQc876Lockout(user: ThrowawayUser): void {
+  queryIdentityDb(`UPDATE Users SET LockoutEnd = NULL, AccessFailedCount = 0 WHERE Id = N'${user.userId}' AND NormalizedEmail LIKE N'E2E.QC876.%'`);
+}
+
+export function removeQc876Users(): void {
+  runIdentitySeedScript('identity-qc876.remove.sql');
+}
+
+export function countQc876Users(): number {
+  return Number(queryIdentityDb(`SELECT COUNT(*) FROM Users WHERE NormalizedEmail LIKE N'E2E.QC876.%'`));
+}

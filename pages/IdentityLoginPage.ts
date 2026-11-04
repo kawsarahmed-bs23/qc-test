@@ -9,11 +9,32 @@ export class IdentityLoginPage {
   readonly email: Locator;
   readonly password: Locator;
   readonly submit: Locator;
+  readonly submitAnyLanguage: Locator;
+  readonly error: Locator;
 
   constructor(private readonly page: Page) {
     this.email = page.locator('input[type="email"]');
     this.password = page.locator('input[type="password"]');
     this.submit = page.locator('form').filter({ has: this.password }).getByRole('button', { name: /^sign in$/i });
+    this.submitAnyLanguage = page.locator('form').filter({ has: this.password }).locator('button[type="submit"]');
+    this.error = page.locator('.custom-error-message[role="alert"]:not([hidden])');
+  }
+
+  async open(returnUrl?: string): Promise<void> {
+    const query = returnUrl ? `?ReturnUrl=${encodeURIComponent(returnUrl)}` : '';
+    await this.page.goto(`${env.identityUrl}/Account/Login${query}`);
+    await this.expectVisible();
+  }
+
+  async submitOnce(credentials: Credentials): Promise<void> {
+    await this.expectVisible();
+    await this.email.fill(credentials.email);
+    await this.password.fill(credentials.password);
+    await Promise.all([
+      this.page.waitForResponse((r) => r.request().method() === 'POST' && /\/Account\/Login/i.test(new URL(r.url()).pathname)),
+      this.submitAnyLanguage.click(),
+    ]);
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async expectVisible(): Promise<void> {
@@ -62,9 +83,11 @@ export class IdentityTwoStepPage {
   readonly code: Locator;
   readonly digits: Locator;
   readonly submit: Locator;
+  readonly error: Locator;
 
   constructor(private readonly page: Page) {
     this.code = page.locator('#Input_Code');
+    this.error = page.locator('.custom-error-message[role="alert"]:not([hidden])');
     this.digits = page.getByRole('textbox', { name: /^Digit \d of 6$/ });
     this.submit = page.locator('form[method="post"] button[type="submit"]');
   }
@@ -72,6 +95,19 @@ export class IdentityTwoStepPage {
   async expectVisible(): Promise<void> {
     await expect(this.page).toHaveURL(new RegExp(`^${escape(env.identityUrl)}/Account/LoginWith2fa`, 'i'));
     await expect(this.digits).toHaveCount(6);
+  }
+
+  async submitCode(code: string): Promise<void> {
+    await this.expectVisible();
+    const posted = this.page.waitForResponse((r) => r.request().method() === 'POST' && /\/Account\/LoginWith2fa/i.test(new URL(r.url()).pathname));
+    for (let i = 0; i < code.length; i++) {
+      await this.digits.nth(i).fill(code[i]);
+    }
+    const autoSubmitted = await Promise.race([posted.then(() => true), this.page.waitForTimeout(3_000).then(() => false)]);
+    if (!autoSubmitted) {
+      await Promise.all([posted, this.submit.click()]);
+    }
+    await this.page.waitForLoadState('domcontentloaded');
   }
 
   async expectEnrolment(): Promise<void> {
