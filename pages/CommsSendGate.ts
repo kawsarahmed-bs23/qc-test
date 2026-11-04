@@ -6,9 +6,9 @@ import { queryIdentityDb, runIdentitySeedScript, runSeedScript } from '../fixtur
 import { newAuthenticatorKey } from '../fixtures/totp';
 import { IdentityLoginPage } from './IdentityLoginPage';
 
-export const MESSAGE_CHANNEL = { Sms: 10, InApp: 20 } as const;
+export const MESSAGE_CHANNEL = { Sms: 10, InApp: 20, Link: 30 } as const;
 
-export const API_CHANNEL = { Sms: 'sms', InApp: 'in-app' } as const;
+export const API_CHANNEL = { Sms: 'sms', InApp: 'in-app', Link: 'link' } as const;
 
 export type ApiChannel = (typeof API_CHANNEL)[keyof typeof API_CHANNEL];
 

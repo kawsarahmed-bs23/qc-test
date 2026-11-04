@@ -20,6 +20,7 @@ import {
   storedMessageContaining,
   toE164,
 } from '../../pages/SmsFraming';
+import { REPLY_LINK_CODE_LENGTH, REPLY_LINK_TOKEN, codeIn, replyLinkOf, replyLinkUrl, replyLinksOf, sha256Hex } from '../../pages/ReplyLinks';
 import * as path from 'path';
 
 const MARKER = 'E2E-QC780';
@@ -187,7 +188,7 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     }
   });
 
-  test('SMSFMT-06 a Status Ping reads "Status check <order>. How many loads done?" with no Reply line, and an SMS ping after a recent text has no framing', async ({ page }) => {
+  test('SMSFMT-06 an in-app Status Ping reads "Status check <order>. How many loads done?" with no Reply line; an SMS ping after a recent text is unframed and ends with its reply link (QC-777)', async ({ page }) => {
     const { api } = await openThread(page, drivers.inApp);
 
     const inApp = await api.ping(drivers.inApp, API_CHANNEL.InApp);
@@ -197,6 +198,7 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     expect(inAppRow.channel).toBe(MESSAGE_CHANNEL.InApp);
     expect(inAppRow.assignment).not.toBeNull();
     expect(inAppRow.body).toBe(`Status check ${jobDocName(inAppRow.assignment!)}. How many loads done?`);
+    expect(inAppRow.body).not.toContain(REPLY_LINK_TOKEN);
 
     expect(isFirstTextTo(drivers.smsPhone), 'the SMS driver was texted in SMSFMT-05').toBe(false);
     const sms = await api.ping(drivers.sms, API_CHANNEL.Sms);
@@ -204,11 +206,14 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     const smsRow = storedMessageById(latestOutboundId(drivers.sms, afterMessageId)!);
     expect(smsRow.messageType).toBe(STATUS_CHECK);
     expect(smsRow.channel).toBe(MESSAGE_CHANNEL.Sms);
-    expect(smsRow.body).toBe(`Status check ${jobDocName(smsRow.assignment!)}. How many loads done?`);
+    const code = codeIn(smsRow.body);
+    expect(smsRow.body).toBe(`Status check ${jobDocName(smsRow.assignment!)}. How many loads done?\nReply: ${replyLinkUrl(code)}`);
+    expect(replyLinkOf(smsRow.id).codeHash).toBe(sha256Hex(code));
+    expect(replyLinksOf(inAppRow.id), 'an in-app ping gets no reply link').toBe(0);
     expectStub(smsRow.sid);
   });
 
-  test('SMSFMT-07 the order-notify SMS preview joins origin and destination with " > " and fits a framed first text', async ({ page }) => {
+  test('SMSFMT-07 the order-notify SMS preview joins origin and destination with " > ", shows the literal {ReplyLink} line and, with the real link in, fits a framed first text', async ({ page }) => {
     const orderId = Number(querySingleValue(`SELECT TOP 1 o.OrderID FROM app.Orders o WHERE o.Active = 1
       AND EXISTS (SELECT 1 FROM app.JobAddresses ja WHERE ja.JobID_FK = o.JobID_FK AND ja.Active = 1 AND ja.IsFrom = 1)
       AND EXISTS (SELECT 1 FROM app.JobAddresses ja WHERE ja.JobID_FK = o.JobID_FK AND ja.Active = 1 AND ja.IsTo = 1)
@@ -231,10 +236,12 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     expect(body).toContain(' > ');
     expect(body).not.toContain('→');
     expect(body).toContain('Start: 6:00am | 3 loads');
-    expect(body).not.toContain('Reply:');
+    expect(body.endsWith(`\nReply: ${REPLY_LINK_TOKEN}`), body).toBe(true);
+    expect(body.split(REPLY_LINK_TOKEN)).toHaveLength(2);
     expect(body.startsWith(`${host}:`)).toBe(false);
     expect(body).not.toContain(SMS_OPT_OUT_LINE);
-    expect(body.length, `the preview plus "${host}: " and the opt-out line fits in ${SMS_SINGLE_SEGMENT}`).toBeLessThanOrEqual(framingBudget(host));
+    const withLink = body.replace(REPLY_LINK_TOKEN, replyLinkUrl('X'.repeat(REPLY_LINK_CODE_LENGTH)));
+    expect(withLink.length, `the preview with the real link, plus "${host}: " and the opt-out line, fits in ${SMS_SINGLE_SEGMENT}`).toBeLessThanOrEqual(framingBudget(host));
   });
 
   test('SMSFMT-08 a typed SMS longer than one segment is still sent and stored in full', async ({ page }) => {
