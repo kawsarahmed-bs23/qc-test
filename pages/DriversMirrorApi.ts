@@ -262,6 +262,10 @@ export class HostApi {
     });
   }
 
+  voidOrder(orderId: number): Promise<APIResponse> {
+    return this.request.delete(`${hostApiUrl()}/api/order/${orderId}`, { headers: this.headers() });
+  }
+
   private headers(): Record<string, string> {
     return { Authorization: `Bearer ${this.accessToken}` };
   }

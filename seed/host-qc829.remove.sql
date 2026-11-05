@@ -57,6 +57,8 @@ UPDATE app.OrderAssignments SET OriginalAssignmentID_FK = NULL, ReassignedToAssi
 DELETE app.OrderAssignments WHERE OrderAssignmentID IN (SELECT Id FROM @Assignments);
 DELETE app.OrderHistory WHERE OrderID_FK IN (SELECT Id FROM @Orders);
 DELETE app.Orders WHERE OrderID IN (SELECT Id FROM @Orders);
+IF OBJECT_ID(N'app.DriverSyncTombstones') IS NOT NULL
+    EXEC (N'DELETE t FROM app.DriverSyncTombstones t JOIN auth.Users u ON u.Id = t.DriverUserID_FK WHERE u.NormalizedEmail LIKE N''E2E.QC829.%@QUARRYCONNECT.TEST''');
 
 DELETE app.IdentitySessions WHERE UserID_FK IN (SELECT Id FROM @Users);
 DELETE app.ThemeSettings WHERE UserID_FK IN (SELECT Id FROM @Users);
