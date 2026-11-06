@@ -5,7 +5,7 @@ import { HostFeaturesPage, HostFormPage, HostListPage, HostSignInSettingsPage } 
 import { HostNav } from '../pages/HostPages';
 
 test.describe('Hosts: list, add, details (QC-742)', () => {
-  test('HOST-01 the hosts list shows the target host with its key, client, database and host API, and no Identity column (QC-775)', { tag: '@smoke' }, async ({ page, targetHost }) => {
+  test('HOST-01 the hosts list shows the target host with its key, client, database, host API and readiness, and no Identity column (QC-775, QC-745)', { tag: '@smoke' }, async ({ page, targetHost }) => {
     const list = new HostListPage(page);
     await list.open();
     const row = list.row(targetHost.uuid);
@@ -13,7 +13,8 @@ test.describe('Hosts: list, add, details (QC-742)', () => {
     await expect(list.link(targetHost.uuid)).toHaveAttribute('href', `#/hosts/${targetHost.uuid}`);
     await expect(row.locator('[data-testid="host-api"]')).toHaveText(/^(Set|Not set)$/);
     await expect(row.locator('[data-testid="host-identity"]')).toHaveCount(0);
-    await expect(row.locator('td')).toHaveCount(5);
+    await expect(row.locator('[data-testid="host-ready"]')).toHaveText(/^(Ready|Setting up)$/);
+    await expect(row.locator('td')).toHaveCount(6);
     await expect(list.table.locator('th', { hasText: 'Identity' })).toHaveCount(0);
   });
 

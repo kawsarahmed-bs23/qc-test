@@ -209,3 +209,78 @@ export interface EnvironmentSettingJson {
 export function settingsOf(view: { groups: { settings: EnvironmentSettingJson[] }[] }): EnvironmentSettingJson[] {
   return view.groups.flatMap((group) => group.settings);
 }
+
+export function templateUuid(key: string): string {
+  const { group, property } = settingKey(key);
+  const uuid = queryMasterDb(
+    `SELECT LOWER(CAST(SettingTemplateUUID AS varchar(36))) FROM app.SettingTemplates WHERE Active = 1 AND GroupName = ${sqlText(group)} AND SubGroupName IS NULL AND PropertyName = ${sqlText(property)}`,
+  );
+  if (uuid === null) throw new Error(`${key} is not in the settings template.`);
+  return uuid;
+}
+
+export function templateDefault(key: string): string | null {
+  const { group, property } = settingKey(key);
+  return queryMasterDb(
+    `SELECT PropertyValue FROM app.SettingTemplates WHERE Active = 1 AND IsHostSpecific = 0 AND GroupName = ${sqlText(group)} AND SubGroupName IS NULL AND PropertyName = ${sqlText(property)}`,
+  );
+}
+
+export function effectiveValue(hostId: number, key: string): string | null {
+  return masterValue(hostId, key) ?? templateDefault(key);
+}
+
+export function sensitiveTemplateCount(): number {
+  return Number(queryMasterDb('SELECT COUNT(*) FROM app.SettingTemplates WHERE Active = 1 AND IsSensitive = 1'));
+}
+
+export interface TemplateRecordCounts {
+  templateKeys: number;
+  notInTemplate: number;
+  hostRowsUncovered: number;
+  hostSecretsUncovered: number;
+  hostSecretsNotInTemplate: number;
+}
+
+const TEMPLATE_MATCH = `t.Active = 1 AND t.GroupName = h.GroupName AND ISNULL(t.SubGroupName, '') = ISNULL(h.SubGroupName, '') AND t.PropertyName = h.PropertyName`;
+
+export function templateRecordCounts(hostId: number): TemplateRecordCounts {
+  if (!env.localSql) throw new Error('LOCAL_SQL_DATABASE is not set.');
+  const hostDb = `[${env.localSql.database}].app.EnvironmentSetting`;
+  const masterMatch = `m.HostID_FK = ${hostId} AND m.Active = 1 AND m.GroupName = h.GroupName AND ISNULL(m.SubGroupName, '') = ISNULL(h.SubGroupName, '') AND m.PropertyName = h.PropertyName`;
+  const [templateKeys, notInTemplate, hostRowsUncovered, hostSecretsUncovered, hostSecretsNotInTemplate] = queryMasterDb(
+    `SELECT CONCAT(
+       (SELECT COUNT(*) FROM app.SettingTemplates WHERE Active = 1), '|',
+       (SELECT COUNT(*) FROM app.HostEnvironmentSettings h WHERE h.HostID_FK = ${hostId} AND h.Active = 1 AND NOT EXISTS (SELECT 1 FROM app.SettingTemplates t WHERE ${TEMPLATE_MATCH})), '|',
+       (SELECT COUNT(*) FROM ${hostDb} h WHERE NOT EXISTS (SELECT 1 FROM app.SettingTemplates t WHERE ${TEMPLATE_MATCH}) AND NOT EXISTS (SELECT 1 FROM app.HostEnvironmentSettings m WHERE ${masterMatch})), '|',
+       (SELECT COUNT(*) FROM ${hostDb} h WHERE h.IsSensitive = 1 AND NOT EXISTS (SELECT 1 FROM app.HostEnvironmentSettings m WHERE ${masterMatch} AND m.PropertyValue IS NOT NULL)), '|',
+       (SELECT COUNT(*) FROM ${hostDb} h WHERE h.IsSensitive = 1 AND NOT EXISTS (SELECT 1 FROM app.SettingTemplates t WHERE ${TEMPLATE_MATCH})))`,
+  )!.split('|').map(Number);
+  return { templateKeys, notInTemplate, hostRowsUncovered, hostSecretsUncovered, hostSecretsNotInTemplate };
+}
+
+export function masterNow(): string {
+  return queryMasterDb("SELECT CONVERT(varchar(23), CAST(SYSUTCDATETIME() AS datetime), 126)")!;
+}
+
+export function removeRowsCreatedSince(hostId: number, keys: string[], since: string): void {
+  for (const key of keys) {
+    const { group, property } = settingKey(key);
+    queryMasterDb(
+      `DELETE app.HostEnvironmentSettings WHERE HostID_FK = ${hostId} AND GroupName = ${sqlText(group)} AND SubGroupName IS NULL AND PropertyName = ${sqlText(property)} AND Created >= '${since}'`,
+    );
+  }
+}
+
+export interface ResendCheckSetting {
+  configurationKey: string;
+  hasValue: boolean;
+  differsOnHost: boolean;
+  missingOnHost?: boolean;
+}
+
+export function settingsResentBySave(settings: ResendCheckSetting[], except: string[] = []): string[] {
+  return settings
+    .filter((s) => !except.includes(s.configurationKey) && (s.differsOnHost || (s.missingOnHost && s.hasValue)))
+    .map((s) => s.configurationKey);
+}

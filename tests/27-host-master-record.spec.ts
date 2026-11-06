@@ -4,27 +4,33 @@ import { featuresSync, masterFeatureFlags, masterHostId } from '../fixtures/feat
 import {
   NO_API_HOST_KEY,
   UNREACHABLE_HOST_KEY,
+  effectiveValue,
   hostIdByKey,
   hostSecretHashes,
   hostStamp,
   hostUuidByKey,
   hostValue,
+  masterNow,
   masterStamp,
-  masterUuid,
   masterValue,
-  recordCounts,
+  removeRowsCreatedSince,
   restoreEnvironmentSync,
   restoreSettingRows,
   secretsDifferingFromHost,
+  sensitiveTemplateCount,
   setHostValue,
   settingsOf,
+  settingsResentBySave,
   snapshotEnvironmentSync,
   snapshotSettingRows,
   secretsFoundIn,
+  templateRecordCounts,
+  templateUuid,
   type EnvironmentSyncSnapshot,
   type SettingRowSnapshot,
 } from '../fixtures/environmentRecord';
 import { adminAccount } from '../fixtures/throwawayUsers';
+import type { APIRequestContext } from '@playwright/test';
 import { AdminApi, canUseAdminApi } from '../pages/AdminApi';
 import { hostAppAccessToken, hostEnvironmentSettings, removeHostSuperAdmins, seedHostSuperAdmin } from '../pages/HostEnvironmentApi';
 import { HostEnvironmentPage, HostFeaturesPage } from '../pages/HostManagementPages';
@@ -53,9 +59,17 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
   let rows: SettingRowSnapshot[];
   let sync: EnvironmentSyncSnapshot;
   let mark: ChangeLogMark;
+  let started: string;
+
+  async function resentBySave(request: APIRequestContext, uuid: string, except: string): Promise<string[]> {
+    const view = await AdminApi.asAdmin(request).get(`/hosts/${uuid}/environment`);
+    expect(view.status).toBe(200);
+    return settingsResentBySave(settingsOf(view.body), [except]);
+  }
 
   test.beforeAll(({ targetHost }) => {
     targetId = masterHostId(targetHost.uuid);
+    started = masterNow();
     rows = snapshotSettingRows(targetId, [SAFE_SETTING, PUSH_SETTING, TAKE_SETTING]);
     sync = snapshotEnvironmentSync(targetId);
     mark = markChangeLogs();
@@ -64,16 +78,17 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
 
   test.afterAll(() => {
     runMasterSeedScript('master-qc744-host.remove.sql');
+    if (started) removeRowsCreatedSince(targetId, [SAFE_SETTING, PUSH_SETTING, TAKE_SETTING], started);
     if (rows) restoreSettingRows(targetId, rows.filter((row) => row.master !== null));
     if (sync) restoreEnvironmentSync(sync);
     if (mark) removeChangeLogsSince(mark, adminAccount()!.email);
   });
 
-  test('REC-01 opening Environment takes host-only rows and missing secrets into HOST_MASTER, and neither the page nor the Admin API shows a secret', async ({ page, request, targetHost }) => {
-    const before = recordCounts(targetId);
+  test('REC-01 opening Environment takes host-only rows and missing secrets into HOST_MASTER, and neither the page nor the Admin API shows a secret (QC-745: template keys need no host row)', async ({ page, request, targetHost }) => {
+    const before = templateRecordCounts(targetId);
     test.info().annotations.push({
       type: 'before-open',
-      description: `HOST_MASTER active=${before.masterActive} secretsNull=${before.masterSecretsNull} messaging=${before.masterMessaging}; host rows=${before.hostRows} secrets=${before.hostSecrets} messaging=${before.hostMessaging}`,
+      description: `template keys=${before.templateKeys} not-in-template rows=${before.notInTemplate}; host rows uncovered=${before.hostRowsUncovered} host secrets not in HOST_MASTER=${before.hostSecretsUncovered}`,
     });
 
     const environment = new HostEnvironmentPage(page);
@@ -81,23 +96,21 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     await environment.open(targetHost.uuid);
     const pageView = await (await loaded).json();
 
-    const after = recordCounts(targetId);
+    const after = templateRecordCounts(targetId);
     test.info().annotations.push({
       type: 'after-open',
-      description: `HOST_MASTER active=${after.masterActive} secretsNull=${after.masterSecretsNull} messaging=${after.masterMessaging}; secrets matching host=${secretsDifferingFromHost(targetId) === 0}`,
+      description: `template keys=${after.templateKeys} not-in-template rows=${after.notInTemplate}; host rows uncovered=${after.hostRowsUncovered}; secrets matching host=${secretsDifferingFromHost(targetId) === 0}`,
     });
-    expect(after.masterActive, 'every host row is in HOST_MASTER').toBe(after.hostRows);
-    expect(after.masterMessaging, 'the host-only Messaging rows were taken').toBe(after.hostMessaging);
-    expect(after.masterSecrets).toBe(after.hostSecrets);
-    expect(after.masterSecretsNull === 0, 'every secret is stored in HOST_MASTER').toBe(true);
+    expect(after.hostRowsUncovered, 'every host row is a template key or a HOST_MASTER row').toBe(0);
+    expect(after.hostSecretsUncovered, 'every host secret with a value is stored in HOST_MASTER').toBe(0);
     expect(secretsDifferingFromHost(targetId) === 0, 'each stored secret equals the host value').toBe(true);
-    if (before.masterActive < before.hostRows) {
-      expect(after.masterActive - before.masterActive, 'rows imported by this open').toBe(before.hostRows - before.masterActive);
-    }
+    expect(after.notInTemplate - before.notInTemplate, 'the host-only rows the template lacks were taken by this open').toBe(before.hostRowsUncovered);
     expect(Number(queryMasterDb(`SELECT COUNT(*) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${targetId} AND Active = 1 AND GroupName = N'Messaging' AND CreatedBy <> N'admin.sync'`))).toBe(0);
 
-    expect(await environment.rows().count()).toBe(after.masterActive);
-    expect(await environment.secretInputs().count()).toBe(after.masterSecrets);
+    const expectedRows = after.templateKeys + after.notInTemplate;
+    const sensitive = settingsOf(pageView).filter((s) => s.isSensitive).length;
+    expect(await environment.rows().count(), 'one row per template key plus each host row the template lacks').toBe(expectedRows);
+    expect(await environment.secretInputs().count()).toBe(sensitive);
     for (const secret of await environment.secretInputs().all()) {
       await expect(secret).toHaveValue('');
     }
@@ -123,7 +136,7 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
       expect(body.canSave).toBe(true);
       expect(body.error).toBeNull();
       const settings = settingsOf(body);
-      expect(settings.length).toBe(after.masterActive);
+      expect(settings.length).toBe(expectedRows);
       for (const setting of settings) {
         expect(setting.settingUuid, setting.configurationKey).toMatch(GUID);
         expect(Object.keys(setting), setting.configurationKey).not.toContain('environmentSettingId');
@@ -136,12 +149,16 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     }
   });
 
-  test('REC-02 a changed value is saved to HOST_MASTER and the host database, the same value in both', async ({ page, targetHost, shell }) => {
+  test('REC-02 a changed value is saved to HOST_MASTER and the host database, the same value in both; saving the template default again drops the override (QC-745)', async ({ page, request, targetHost, shell }) => {
+    test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
+    const resent = await resentBySave(request, targetHost.uuid, SAFE_SETTING);
+    test.skip(resent.length > 0, `A save also sends HOST_MASTER's value for every setting that differs on the host (${resent.join(', ')}); not run so those settings stay as they are.`);
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
     const original = await environment.input(SAFE_SETTING).inputValue();
-    expect(masterValue(targetId, SAFE_SETTING)).toBe(original);
+    expect(effectiveValue(targetId, SAFE_SETTING), 'the page shows the override or the template default').toBe(original);
     expect(hostValue(SAFE_SETTING)).toBe(original);
+    const inherited = masterValue(targetId, SAFE_SETTING) === null;
     const probe = probeFor(original, '23', '24');
 
     try {
@@ -167,8 +184,11 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
         await environment.countdown.decline();
       }
     }
-    expect(masterValue(targetId, SAFE_SETTING)).toBe(original);
+    expect(effectiveValue(targetId, SAFE_SETTING)).toBe(original);
     expect(hostValue(SAFE_SETTING)).toBe(original);
+    if (inherited) {
+      expect(masterValue(targetId, SAFE_SETTING), 'saving the template default again removes the override row').toBeNull();
+    }
   });
 
   test('REC-03 a value the host refuses is shown on its field, and neither HOST_MASTER nor the host changes', async ({ page, targetHost, shell }) => {
@@ -186,8 +206,8 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     await expect(environment.error(SAFE_SETTING)).toContainText('whole number');
     await expect(environment.countdown.root).toHaveCount(0);
 
-    expect(masterValue(targetId, SAFE_SETTING)).toBe(original);
-    expect(masterStamp(targetId, SAFE_SETTING)).toBe(masterBefore);
+    expect(effectiveValue(targetId, SAFE_SETTING), 'HOST_MASTER still resolves to the original value').toBe(original);
+    expect(masterStamp(targetId, SAFE_SETTING), 'no override row was written or changed').toBe(masterBefore);
     expect(hostValue(SAFE_SETTING)).toBe(original);
     expect(hostStamp(SAFE_SETTING)).toBe(hostBefore);
     expect(changeLogsFor(targetId, since), 'the change-log entry was rolled back too').toBe(0);
@@ -198,9 +218,10 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
 
   test('REC-04 a value changed in the host database is flagged, and Send to host puts HOST_MASTER\'s value back on the host', async ({ page, request, targetHost, shell }) => {
     test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
-    const drift = (await AdminApi.asAdmin(request).get(`/hosts/${targetHost.uuid}/environment`)).body.driftCount;
-    test.skip(drift !== 0, `The host already differs from HOST_MASTER on ${drift} settings; Send to host would overwrite them.`);
-    const original = masterValue(targetId, PUSH_SETTING);
+    const resent = await resentBySave(request, targetHost.uuid, PUSH_SETTING);
+    test.skip(resent.length > 0, `The host already differs from HOST_MASTER on ${resent.join(', ')}; Send to host would overwrite them.`);
+    const original = effectiveValue(targetId, PUSH_SETTING);
+    const masterBefore = masterValue(targetId, PUSH_SETTING);
     expect(hostValue(PUSH_SETTING)).toBe(original);
     const probe = probeFor(original, '121', '122');
     const environment = new HostEnvironmentPage(page);
@@ -215,7 +236,8 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
       await expect(environment.differsBadges()).toHaveCount(1);
       await expect(environment.hint(PUSH_SETTING)).toContainText(`host has "${probe}"`);
       await expect(environment.input(PUSH_SETTING)).toHaveValue(original!);
-      expect(masterValue(targetId, PUSH_SETTING), 'opening the page never overwrites a HOST_MASTER value').toBe(original);
+      expect(masterValue(targetId, PUSH_SETTING), 'opening the page never writes a HOST_MASTER value').toBe(masterBefore);
+      expect(effectiveValue(targetId, PUSH_SETTING)).toBe(original);
       await expect(environment.driftItems).toHaveCount(1);
       await expect(environment.driftItem(PUSH_SETTING)).toContainText(original!);
       await expect(environment.driftItem(PUSH_SETTING)).toContainText(probe);
@@ -223,11 +245,12 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
       await expect(environment.save).toHaveText(/Send to host/);
 
       await environment.save.click();
-      await shell.expectStatus("Sent HOST_MASTER's value for 1 setting changed on the host.", 'warning');
+      await shell.expectStatus("Sent HOST_MASTER's value for 1 setting the host had changed or did not have.", 'warning');
       await environment.countdown.decline();
 
       expect(hostValue(PUSH_SETTING)).toBe(original);
-      expect(masterValue(targetId, PUSH_SETTING)).toBe(original);
+      expect(masterValue(targetId, PUSH_SETTING), 'sending writes no override row').toBe(masterBefore);
+      expect(effectiveValue(targetId, PUSH_SETTING)).toBe(original);
 
       await environment.open(targetHost.uuid);
       await expect(environment.driftCard).toHaveCount(0);
@@ -241,9 +264,10 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
 
   test("REC-05 Take the host's values copies a host-side change into HOST_MASTER after confirming, and leaves the host as it is", async ({ page, request, targetHost, shell }) => {
     test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
-    const drift = (await AdminApi.asAdmin(request).get(`/hosts/${targetHost.uuid}/environment`)).body.driftCount;
-    test.skip(drift !== 0, `The host already differs from HOST_MASTER on ${drift} settings; taking the host's values would copy them all.`);
-    const original = masterValue(targetId, TAKE_SETTING);
+    const resent = await resentBySave(request, targetHost.uuid, TAKE_SETTING);
+    test.skip(resent.length > 0, `The host already differs from HOST_MASTER on ${resent.join(', ')}; taking the host's values would copy them all.`);
+    const original = effectiveValue(targetId, TAKE_SETTING);
+    const masterBefore = masterValue(targetId, TAKE_SETTING);
     expect(hostValue(TAKE_SETTING)).toBe(original);
     const probe = probeFor(original, '31', '32');
     const environment = new HostEnvironmentPage(page);
@@ -260,13 +284,14 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
 
       await environment.takeHostValues.click();
       await environment.confirmDialog.dismiss();
-      expect(masterValue(targetId, TAKE_SETTING), 'cancelling takes nothing').toBe(original);
+      expect(masterValue(targetId, TAKE_SETTING), 'cancelling takes nothing').toBe(masterBefore);
 
       await environment.takeHostValues.click();
       await environment.confirmDialog.accept();
       await shell.expectStatus("Took the host's value for 1 setting into HOST_MASTER.");
 
-      expect(masterValue(targetId, TAKE_SETTING)).toBe(probe);
+      expect(masterValue(targetId, TAKE_SETTING), 'the host value is kept as an override').toBe(probe);
+      expect(effectiveValue(targetId, TAKE_SETTING)).toBe(probe);
       expect(masterStamp(targetId, TAKE_SETTING)).toContain(`|${adminAccount()!.email}`);
       expect(hostValue(TAKE_SETTING)).toBe(probe);
       expect(hostStamp(TAKE_SETTING), 'the host row was not written').toBe(hostBefore);
@@ -277,9 +302,11 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
       await environment.reveal(TAKE_SETTING);
       await expect(environment.input(TAKE_SETTING)).toHaveValue(probe);
     } finally {
+      removeRowsCreatedSince(targetId, [TAKE_SETTING], started);
       restoreSettingRows(targetId, rows.filter((row) => row.key === TAKE_SETTING));
     }
-    expect(masterValue(targetId, TAKE_SETTING)).toBe(original);
+    expect(masterValue(targetId, TAKE_SETTING)).toBe(masterBefore);
+    expect(effectiveValue(targetId, TAKE_SETTING)).toBe(original);
     expect(hostValue(TAKE_SETTING)).toBe(original);
   });
 
@@ -314,11 +341,12 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     expect(stamps()).toBe(stampBefore);
   });
 
-  test('REC-07 an environment save for a host whose API cannot be reached returns 502 and changes nothing; the page shows the HOST_MASTER values with Save off', async ({ page, request }) => {
+  test('REC-07 an environment save for a ready host whose API cannot be reached returns 502 and changes nothing; the page shows the HOST_MASTER values with Save off (QC-745: keyed by the template uuid)', async ({ page, request }) => {
     test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
     const uuid = hostUuidByKey(UNREACHABLE_HOST_KEY);
     const id = hostIdByKey(UNREACHABLE_HOST_KEY);
-    const settingUuid = masterUuid(id, SAFE_SETTING);
+    expect(queryMasterDb(`SELECT CASE WHEN ReadyAt IS NULL THEN 0 ELSE 1 END FROM app.Hosts WHERE HostID = ${id}`), 'the unreachable host is marked ready, so Admin calls it').toBe('1');
+    const settingUuid = templateUuid(SAFE_SETTING);
     const before = masterStamp(id, SAFE_SETTING);
     const since = markChangeLogs();
 
@@ -370,8 +398,10 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     await expect(environment.notice).toContainText('no API address');
     await expect(environment.loadWarning).toHaveCount(0);
     await expect(environment.driftCard).toHaveCount(0);
-    await expect(environment.secretInputs()).toHaveCount(1);
-    await expect(environment.secretInputs()).toHaveValue('');
+    await expect(environment.secretInputs(), "the host's own secret plus the template's sensitive keys").toHaveCount(1 + sensitiveTemplateCount());
+    for (const secret of await environment.secretInputs().all()) {
+      await expect(secret).toHaveValue('');
+    }
 
     await environment.setValue(NO_API_SETTING, '8');
     await environment.save.click();

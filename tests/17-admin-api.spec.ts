@@ -9,7 +9,7 @@ import { env } from '../config/environment';
 const ADMIN_AUDIENCE = 'quarryconnect.admin.api';
 const OTHER_ORIGIN = 'http://localhost:4401';
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const HOST_KEYS = ['hostUuid', 'name', 'hostKey', 'clientId', 'databaseName', 'uiUrl', 'apiBaseUrl', 'hostOrganisationId', 'hasApiBaseUrl'];
+const HOST_KEYS = ['hostUuid', 'name', 'hostKey', 'clientId', 'databaseName', 'uiUrl', 'apiBaseUrl', 'hostOrganisationId', 'hasApiBaseUrl', 'isReady', 'readyAt'];
 const USER_KEYS = ['userId', 'email', 'displayName', 'isActive', 'lastLogin', 'isPlatformAdmin'];
 const READ_PATHS = ['/me', '/dashboard', '/hosts', '/activity', '/users', '/users/filters'];
 const ADMIN_PATHS = READ_PATHS.filter((path) => path !== '/me');

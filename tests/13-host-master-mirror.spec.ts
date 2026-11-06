@@ -1,6 +1,17 @@
 import { test, expect } from '../fixtures/test';
 import { canSeedLocalDb, canUseMasterDb, queryMasterDb, runMasterSeedScript } from '../fixtures/localDb';
-import { UNREACHABLE_HOST_KEY, hostIdByKey, hostUuidByKey, recordCounts, secretsDifferingFromHost } from '../fixtures/environmentRecord';
+import {
+  UNREACHABLE_HOST_KEY,
+  effectiveValue,
+  hostIdByKey,
+  hostUuidByKey,
+  secretsDifferingFromHost,
+  sensitiveTemplateCount,
+  settingsOf,
+  templateRecordCounts,
+  templateUuid,
+} from '../fixtures/environmentRecord';
+import { AdminApi, canUseAdminApi } from '../pages/AdminApi';
 import { HostEnvironmentPage, HostFeaturesPage } from '../pages/HostManagementPages';
 import { adminAccount } from '../fixtures/throwawayUsers';
 
@@ -56,8 +67,8 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     expect(lastSync(id, 'Features').syncedAt, 'opening the page sends nothing').toBe(syncedBefore);
   });
 
-  test('MIR-02 opening Environment reconciles HOST_MASTER with the host: every host row is recorded, secrets included, and the page shows the HOST_MASTER values (QC-744)', async ({ page, targetHost }) => {
-    test.skip(!canSeedLocalDb(), 'Needs the host database to compare with (local only).');
+  test('MIR-02 opening Environment reconciles HOST_MASTER with the host: every host row is covered by the template or a HOST_MASTER row, secrets included, and the page shows the effective values (QC-744, QC-745)', async ({ page, request, targetHost }) => {
+    test.skip(!canSeedLocalDb() || !canUseAdminApi(), 'Needs the host database to compare with and the Admin API (local only).');
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
 
@@ -65,24 +76,23 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     const secretInputs = await environment.secretInputs().count();
     const shownValue = await environment.input(SAFE_SETTING.key).inputValue();
     const id = hostId(targetHost.uuid);
-    const counts = recordCounts(id);
+    const counts = templateRecordCounts(id);
+    const view = await AdminApi.asAdmin(request).get(`/hosts/${targetHost.uuid}/environment`);
+    expect(view.status).toBe(200);
+    const settings = settingsOf(view.body);
 
-    expect(counts.masterActive, 'every host row is in HOST_MASTER').toBe(counts.hostRows);
-    expect(pageRows).toBe(counts.masterActive);
-    expect(secretInputs).toBe(counts.masterSecrets);
-    expect(counts.masterSecretsNull === 0, 'every secret is stored in HOST_MASTER').toBe(true);
+    expect(counts.hostRowsUncovered, 'every host row is a template key or a HOST_MASTER row').toBe(0);
+    expect(counts.hostSecretsUncovered, 'every host secret with a value is stored in HOST_MASTER').toBe(0);
+    expect(settings.length, 'one setting per template key plus each host row the template lacks').toBe(counts.templateKeys + counts.notInTemplate);
+    expect(pageRows).toBe(settings.length);
+    expect(secretInputs).toBe(settings.filter((s) => s.isSensitive).length);
     expect(secretsDifferingFromHost(id) === 0, 'each stored secret equals the host value').toBe(true);
     for (const secret of await environment.secretInputs().all()) {
       await expect(secret).toHaveValue('');
     }
 
-    const stored = queryMasterDb(
-      `SELECT PropertyValue FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND GroupName = N'${SAFE_SETTING.group}' AND SubGroupName IS NULL AND PropertyName = N'${SAFE_SETTING.property}'`,
-    );
-    expect(stored ?? '').toBe(shownValue);
-    expect(await environment.field(SAFE_SETTING.key).getAttribute('data-setting-id')).toBe(
-      queryMasterDb(`SELECT LOWER(CAST(HostEnvironmentSettingUUID AS varchar(36))) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${id} AND Active = 1 AND GroupName = N'${SAFE_SETTING.group}' AND SubGroupName IS NULL AND PropertyName = N'${SAFE_SETTING.property}'`),
-    );
+    expect(shownValue, 'the page shows the HOST_MASTER override or the template default').toBe(effectiveValue(id, SAFE_SETTING.key) ?? '');
+    expect(await environment.field(SAFE_SETTING.key).getAttribute('data-setting-id'), 'a template key is keyed by its template uuid').toBe(templateUuid(SAFE_SETTING.key));
   });
 
   test('MIR-03 saving a feature updates HOST_MASTER with the Admin user as the changer', { tag: '@write' }, async ({ page, targetHost, shell }) => {
@@ -110,7 +120,7 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
     expect(masterFeatures(id).maps).toBe(original);
   });
 
-  test('MIR-04 when the host API is unreachable, Features still lists the HOST_MASTER values for editing with a warning, and Environment shows the HOST_MASTER values with Save off (QC-744)', { tag: '@write' }, async ({ page }) => {
+  test('MIR-04 when the API of a ready host is unreachable, Features still lists the HOST_MASTER values for editing with a warning, and Environment shows the HOST_MASTER values with Save off (QC-744, QC-745)', { tag: '@write' }, async ({ page }) => {
     runMasterSeedScript('master-qc744-host.apply.sql');
     try {
       const uuid = hostUuidByKey(UNREACHABLE_HOST_KEY);
@@ -139,8 +149,10 @@ test.describe('HOST_MASTER copy of host features and environment (QC-737, Angula
       await environment.reveal(SAFE_SETTING.key);
       await expect(environment.input(SAFE_SETTING.key)).toHaveValue('60');
       await environment.reveal('E2E:ProbeSecret');
-      await expect(environment.secretInputs()).toHaveCount(1);
-      await expect(environment.secretInputs()).toHaveValue('');
+      await expect(environment.secretInputs(), "the host's own secret plus the template's sensitive keys").toHaveCount(1 + sensitiveTemplateCount());
+      for (const secret of await environment.secretInputs().all()) {
+        await expect(secret).toHaveValue('');
+      }
       await expect(environment.hint('E2E:ProbeSecret')).toHaveText(/^\s*Set\s*$/);
       expect(await page.content()).not.toContain('e2e-qc744-made-up-secret');
     } finally {

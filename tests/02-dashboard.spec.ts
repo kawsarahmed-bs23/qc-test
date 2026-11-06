@@ -30,9 +30,9 @@ test.describe('Dashboard and navigation (QC-742)', () => {
     }
   });
 
-  test('DASH-03 sidebar menu is Dashboard, Hosts, Users, Activity, Admins, Settings and reaches each one', async ({ page, shell }) => {
+  test('DASH-03 sidebar menu is Dashboard, Hosts, Settings template, Users, Activity, Admins, Settings and reaches each one (QC-745)', async ({ page, shell }) => {
     await new DashboardPage(page).open();
-    await expect(page.locator('#sidebar .sidebar-menu-link .title')).toHaveText(['Dashboard', 'Hosts', 'Users', 'Activity', 'Admins', 'Settings']);
+    await expect(page.locator('#sidebar .sidebar-menu-link .title')).toHaveText(['Dashboard', 'Hosts', 'Settings template', 'Users', 'Activity', 'Admins', 'Settings']);
     await expect(shell.nav('dashboard')).toHaveClass(/active/);
 
     await shell.nav('hosts').click();

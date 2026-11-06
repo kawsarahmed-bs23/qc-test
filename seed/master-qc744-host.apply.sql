@@ -1,7 +1,8 @@
 -- QC-744: two throwaway HOST_MASTER hosts, so the cases can try a save that cannot reach a host, or a host with no API
 -- address, without ever changing the target host's ApiBaseUrl. Run against MASTER_SQL_DATABASE.
---   e2e-qc744-unreachable  "E2E QC-744 Unreachable"  API https://localhost:9/ (nothing listens there).
---   e2e-qc744-no-api       "E2E QC-744 No API"       no API address, so saves stay in HOST_MASTER.
+--   e2e-qc744-unreachable  "E2E QC-744 Unreachable"  API https://localhost:9/ (nothing listens there). Marked ready (QC-745), so Admin
+--                          still calls its API and the unreachable-host paths are exercised.
+--   e2e-qc744-no-api       "E2E QC-744 No API"       no API address and not ready, so saves stay in HOST_MASTER.
 --   Features (both): every catalog feature, all off.
 --   Environment (both): two non-secret rows (DispatchSnapshot:RateLimitPermitsPerHour = 60, Jobs:ExpiryGraceDays = 7) and
 --   one sensitive row E2E:ProbeSecret holding a made-up value, so the page can be checked for never showing a secret.
@@ -23,10 +24,10 @@ DELETE app.HostBrandings WHERE HostID_FK IN (SELECT HostID FROM @Old);
 DELETE app.HostAllowedUrls WHERE HostID_FK IN (SELECT HostID FROM @Old);
 DELETE app.Hosts WHERE HostID IN (SELECT HostID FROM @Old);
 
-INSERT app.Hosts (Name, DatabaseName, Active, CreatedBy, UpdatedBy, ClientID, UiDomain, ApiDomain, HostOrganisationID, HostKey, ApiBaseUrl)
+INSERT app.Hosts (Name, DatabaseName, Active, CreatedBy, UpdatedBy, ClientID, UiDomain, ApiDomain, HostOrganisationID, HostKey, ApiBaseUrl, ReadyAt)
 VALUES
-    (N'E2E QC-744 Unreachable', N'QuarryConnect_Dev', 1, N'e2e', N'e2e', NULL, NULL, NULL, 99, N'e2e-qc744-unreachable', N'https://localhost:9/'),
-    (N'E2E QC-744 No API', N'QuarryConnect_Dev', 1, N'e2e', N'e2e', NULL, NULL, NULL, 99, N'e2e-qc744-no-api', NULL);
+    (N'E2E QC-744 Unreachable', N'QuarryConnect_Dev', 1, N'e2e', N'e2e', NULL, NULL, NULL, 99, N'e2e-qc744-unreachable', N'https://localhost:9/', SYSUTCDATETIME()),
+    (N'E2E QC-744 No API', N'QuarryConnect_Dev', 1, N'e2e', N'e2e', NULL, NULL, NULL, 99, N'e2e-qc744-no-api', NULL, NULL);
 
 DECLARE @New TABLE (HostID int PRIMARY KEY);
 INSERT @New SELECT HostID FROM app.Hosts WHERE HostKey IN (N'e2e-qc744-unreachable', N'e2e-qc744-no-api');
