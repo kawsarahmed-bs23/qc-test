@@ -4,7 +4,8 @@ test-results/
 playwright-report/
 blob-report/
 .auth/
-env/*.secrets.env
+config/.env.*.secrets
+config/.env.*.app.secrets
 
 # Playwright MCP output
 .playwright-mcp/

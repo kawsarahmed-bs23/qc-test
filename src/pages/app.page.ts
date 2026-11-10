@@ -30,7 +30,7 @@ export class AppSignInPage {
     await this.page.waitForURL((url) => url.origin !== identityOrigin || /\/Account\/LoginWith2fa/i.test(url.pathname), { timeout: 30_000 });
     if (/\/Account\/LoginWith2fa/i.test(new URL(this.page.url()).pathname)) {
       if (!authenticatorKey) {
-        throw new Error(`Identity asks ${credentials.email} for two-step verification; set APP_ADMIN_AUTHENTICATOR_KEY in env/<env>.app.secrets.env.`);
+        throw new Error(`Identity asks ${credentials.email} for two-step verification; set APP_ADMIN_AUTHENTICATOR_KEY in config/.env.<env>.app.secrets.`);
       }
       await new IdentityTwoStepPage(this.page).verify(authenticatorKey);
     }

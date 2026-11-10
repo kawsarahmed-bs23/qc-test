@@ -13,7 +13,7 @@ if (!env.allowRestart) blockedTags.push('@restart');
 
 export default defineConfig({
   testDir: './tests',
-  outputDir: path.join(runDir, 'artifacts'),
+  outputDir: 'test-results',
   fullyParallel: false,
   workers: 1,
   retries: env.name === 'local' ? 0 : 1,
@@ -25,7 +25,7 @@ export default defineConfig({
   grepInvert: blockedTags.length ? new RegExp(blockedTags.join('|')) : undefined,
   reporter: [
     ['list'],
-    ['html', { outputFolder: path.join(runDir, 'html'), open: 'never' }],
+    ['html', { outputFolder: 'playwright-report', open: 'never' }],
     ['junit', { outputFile: path.join(runDir, 'junit.xml') }],
     ['json', { outputFile: path.join(runDir, 'results.json') }],
   ],
@@ -46,6 +46,8 @@ export default defineConfig({
     actionTimeout: 15_000,
     navigationTimeout: 30_000,
     viewport: { width: 1440, height: 900 },
+    // SLOW_MO=500 slows every action by 500 ms so headed runs are easy to follow.
+    launchOptions: { slowMo: Number(process.env.SLOW_MO ?? 0) },
   },
   projects: [
     {

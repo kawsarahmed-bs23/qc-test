@@ -49,7 +49,7 @@ function escapeRegExp(text: string): string {
 
 function newestLogFile(): string {
   if (!env.identityLogDir) {
-    throw new Error('IDENTITY_LOG_DIR is not set, or TEST_ENV is not local.');
+    throw new Error('IDENTITY_LOG_DIR is not set, or ENV is not local.');
   }
   const files = fs
     .readdirSync(env.identityLogDir)

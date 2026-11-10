@@ -66,6 +66,9 @@ const ENVIRONMENTS: EnvironmentName[] = ['local', 'dev', 'prod'];
 /** The quarryconnect-e2e folder. Build file paths from here, never from a module's own __dirname. */
 export const ROOT_DIR = path.resolve(__dirname, '..');
 
+/** Where `.env.<env>` (committed) and `.env.<env>.secrets` / `.env.<env>.app.secrets` (git-ignored) live. */
+export const CONFIG_DIR = path.join(ROOT_DIR, 'config');
+
 /** Files the specs upload or read (images, documents). */
 export const TEST_DATA_DIR = path.join(ROOT_DIR, 'test-data');
 
@@ -75,7 +78,7 @@ const optionalUrl = (name: string) => url(name).optional();
 const booleanFlag = z.preprocess(blankToUndefined, z.enum(['true', 'false', 'TRUE', 'FALSE', 'True', 'False']).optional());
 
 /**
- * Shape of the raw variables, checked once before any test runs so a typo in env/*.env fails fast with
+ * Shape of the raw variables, checked once before any test runs so a typo in config/.env.<env> fails fast with
  * every problem listed. Credentials and SQL names stay free-form; they are optional per environment.
  */
 const rawEnvSchema = z.object({
@@ -97,11 +100,13 @@ const rawEnvSchema = z.object({
   ALLOW_RESTART: booleanFlag,
 });
 
-function validateRawEnvironment(name: EnvironmentName, envDir: string): void {
+function validateRawEnvironment(name: EnvironmentName): void {
   const result = rawEnvSchema.safeParse(process.env);
   if (result.success) return;
   const issues = result.error.issues.map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`).join('\n');
-  throw new Error(`Invalid test environment for TEST_ENV="${name}".\n${issues}\nChecked ${path.join(envDir, `${name}.env`)} and its *.secrets.env files.`);
+  throw new Error(
+    `Invalid test environment for ENV="${name}".\n${issues}\nChecked ${path.join(CONFIG_DIR, `.env.${name}`)} and its .secrets files (copy config/.env.example to create them).`,
+  );
 }
 
 function loadFile(file: string): void {
@@ -117,7 +122,7 @@ function flag(name: string): boolean {
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) {
-    throw new Error(`${name} is not set. Check env/${process.env.TEST_ENV}.env.`);
+    throw new Error(`${name} is not set. Check config/.env.${process.env.ENV}.`);
   }
   return value.replace(/\/+$/, '');
 }
@@ -146,17 +151,17 @@ function oidcClient(clientIdVar: string, redirectUriVar: string): OidcClient | n
 }
 
 export function loadEnvironment(): TestEnvironment {
-  const name = (process.env.TEST_ENV ?? 'local').trim().toLowerCase() as EnvironmentName;
+  const name = (process.env.ENV || process.env.TEST_ENV || 'local').trim().toLowerCase() as EnvironmentName;
   if (!ENVIRONMENTS.includes(name)) {
-    throw new Error(`TEST_ENV must be one of ${ENVIRONMENTS.join(', ')}; got '${name}'.`);
+    throw new Error(`ENV must be one of ${ENVIRONMENTS.join(', ')}; got '${name}'.`);
   }
+  process.env.ENV = name;
   process.env.TEST_ENV = name;
 
-  const envDir = path.join(ROOT_DIR, 'env');
-  loadFile(path.join(envDir, `${name}.secrets.env`));
-  loadFile(path.join(envDir, `${name}.app.secrets.env`));
-  loadFile(path.join(envDir, `${name}.env`));
-  validateRawEnvironment(name, envDir);
+  loadFile(path.join(CONFIG_DIR, `.env.${name}.secrets`));
+  loadFile(path.join(CONFIG_DIR, `.env.${name}.app.secrets`));
+  loadFile(path.join(CONFIG_DIR, `.env.${name}`));
+  validateRawEnvironment(name);
 
   const isProd = name === 'prod';
   const sqlServer = optional('LOCAL_SQL_SERVER');

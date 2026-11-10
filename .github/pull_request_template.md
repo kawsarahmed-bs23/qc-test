@@ -44,7 +44,7 @@ If you couldn't check something, leave it unticked and say why under Reviewer no
 - [ ] Any data a test changes is restored afterwards
 
 ### Hygiene
-- [ ] No credentials in code; secrets stay in `env/*.secrets.env` (gitignored)
+- [ ] No credentials in code; secrets stay in `config/.env.*.secrets` (gitignored)
 - [ ] `reports/`, `test-results/` and `.auth/` are not committed
 
 ### Sign-off

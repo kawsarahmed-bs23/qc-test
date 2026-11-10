@@ -10,7 +10,7 @@ export function canSeedLocalDb(): boolean {
 
 export function runSeedScript(fileName: string, variables: Record<string, string> = {}): string {
   if (!env.localSql) {
-    throw new Error('LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE are not set, or TEST_ENV is not local.');
+    throw new Error('LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE are not set, or ENV is not local.');
   }
 
   return execFileSync('sqlcmd', ['-S', env.localSql.server, '-d', env.localSql.database, '-E', '-C', '-I', '-b', '-i', path.join(SEED_DIR, fileName)], {
@@ -21,7 +21,7 @@ export function runSeedScript(fileName: string, variables: Record<string, string
 
 export function querySingleValue(query: string): string | null {
   if (!env.localSql) {
-    throw new Error('LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE are not set, or TEST_ENV is not local.');
+    throw new Error('LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE are not set, or ENV is not local.');
   }
 
   return runQuery(env.localSql, query);
@@ -33,7 +33,7 @@ export function canUseIdentityDb(): boolean {
 
 export function runIdentitySeedScript(fileName: string, variables: Record<string, string> = {}): string {
   if (!env.identitySql) {
-    throw new Error('LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE are not set, or TEST_ENV is not local.');
+    throw new Error('LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE are not set, or ENV is not local.');
   }
 
   return execFileSync('sqlcmd', ['-S', env.identitySql.server, '-d', env.identitySql.database, '-E', '-C', '-I', '-b', '-i', path.join(SEED_DIR, fileName)], {
@@ -44,7 +44,7 @@ export function runIdentitySeedScript(fileName: string, variables: Record<string
 
 export function queryIdentityDb(query: string): string | null {
   if (!env.identitySql) {
-    throw new Error('LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE are not set, or TEST_ENV is not local.');
+    throw new Error('LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE are not set, or ENV is not local.');
   }
 
   return runQuery(env.identitySql, query);
@@ -56,7 +56,7 @@ export function canUseMasterDb(): boolean {
 
 export function runMasterSeedScript(fileName: string, variables: Record<string, string> = {}): string {
   if (!env.masterSql) {
-    throw new Error('LOCAL_SQL_SERVER / MASTER_SQL_DATABASE are not set, or TEST_ENV is not local.');
+    throw new Error('LOCAL_SQL_SERVER / MASTER_SQL_DATABASE are not set, or ENV is not local.');
   }
 
   return execFileSync('sqlcmd', ['-S', env.masterSql.server, '-d', env.masterSql.database, '-E', '-C', '-I', '-b', '-i', path.join(SEED_DIR, fileName)], {
@@ -71,7 +71,7 @@ export function canUseDriversDb(): boolean {
 
 export function runDriversSeedScript(fileName: string, variables: Record<string, string> = {}): string {
   if (!env.driversSql) {
-    throw new Error('LOCAL_SQL_SERVER / DRIVERS_SQL_DATABASE are not set, or TEST_ENV is not local.');
+    throw new Error('LOCAL_SQL_SERVER / DRIVERS_SQL_DATABASE are not set, or ENV is not local.');
   }
 
   return execFileSync('sqlcmd', ['-S', env.driversSql.server, '-d', env.driversSql.database, '-E', '-C', '-I', '-b', '-i', path.join(SEED_DIR, fileName)], {
@@ -82,7 +82,7 @@ export function runDriversSeedScript(fileName: string, variables: Record<string,
 
 export function queryDriversDb(query: string): string | null {
   if (!env.driversSql) {
-    throw new Error('LOCAL_SQL_SERVER / DRIVERS_SQL_DATABASE are not set, or TEST_ENV is not local.');
+    throw new Error('LOCAL_SQL_SERVER / DRIVERS_SQL_DATABASE are not set, or ENV is not local.');
   }
 
   return runQuery(env.driversSql, query);
@@ -136,7 +136,7 @@ export function removeChangeLogsSince(mark: ChangeLogMark, adminEmail: string): 
 
 export function queryMasterDb(query: string): string | null {
   if (!env.masterSql) {
-    throw new Error('LOCAL_SQL_SERVER / MASTER_SQL_DATABASE are not set, or TEST_ENV is not local.');
+    throw new Error('LOCAL_SQL_SERVER / MASTER_SQL_DATABASE are not set, or ENV is not local.');
   }
 
   return runQuery(env.masterSql, query);
@@ -145,7 +145,7 @@ export function queryMasterDb(query: string): string | null {
 export function queryBinaryValues(database: 'host' | 'drivers', column: string, fromWhere: string): Buffer[] {
   const sql = database === 'host' ? env.localSql : env.driversSql;
   if (!sql) {
-    throw new Error(`The ${database} local database is not set, or TEST_ENV is not local.`);
+    throw new Error(`The ${database} local database is not set, or ENV is not local.`);
   }
 
   const output = execFileSync(
@@ -176,7 +176,7 @@ export function queryBinaryValues(database: 'host' | 'drivers', column: string, 
 
 export function queryUnicodeText(column: string, fromWhere: string): string | null {
   if (!env.localSql) {
-    throw new Error('LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE are not set, or TEST_ENV is not local.');
+    throw new Error('LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE are not set, or ENV is not local.');
   }
 
   const output = execFileSync(

@@ -8,23 +8,26 @@ multi-site, multi-environment setup. `README.md` has the environment variables a
 
 Playwright + TypeScript end-to-end tests for QuarryConnect Admin, its Identity sign-in and the host app, with:
 
-- **Multi-environment config**: `TEST_ENV` (`local | dev | prod`, default `local`) selects `env/<env>.env` plus the git-ignored `env/<env>.secrets.env` and `env/<env>.app.secrets.env`. `config/env.config.ts` validates them with `zod` and fails fast with every problem listed.
+- **Multi-environment config**: `ENV` (`local | dev | prod`, default `local`; `TEST_ENV` still works) selects `config/.env.<env>` (committed, no secrets) plus the git-ignored `config/.env.<env>.secrets` and `config/.env.<env>.app.secrets`. Copy `config/.env.example` to create a secrets file. `config/env.config.ts` validates them with `zod` and fails fast with every problem listed. Real environment variables (CI secrets) win over the files.
 - **Fixture-driven page objects**: page objects and API clients are injected into tests via `src/fixtures/pageFixtures.ts`.
-- **Risk tags**: `@smoke`, `@write`, `@create`, `@restart` (see Tags).
-- **Two browser projects**: `chromium` (Admin, `tests/*.spec.ts`, session from `setup`) and `app` (host app, `tests/app/*.spec.ts`, session from `app-setup`).
+- **Tags**: every suite is tagged `@regression` (identity suites also `@auth`); `@smoke` marks the read-only critical path; risk tags `@write`, `@create`, `@restart` gate what may run where (see Tags).
+- **Specs by feature**: `tests/<feature>/<name>.spec.ts` (`admin`, `identity`, `host-master`, `drivers`, `host-db`, `app`).
+- **Two browser projects** (Chromium only): `chromium` (everything outside `tests/app/`, session from `setup`) and `app` (host app, `tests/app/`, session from `app-setup`).
+- **Playwright MCP**: `.mcp.json` (Claude Code) and `.cursor/mcp.json` (Cursor) start `@playwright/mcp`.
 
 ## Commands
 
 | Task | Command |
 | --- | --- |
 | Run locally (default) | `npm run test:local` |
-| One case / one file | `npm run test:local -- --grep "ENV-21"` / `npx playwright test tests/05-environment.spec.ts` |
+| One case / one file | `npm run test:local -- --grep "ENV-21"` / `npx playwright test tests/admin/environment.spec.ts` |
 | Admin or host app only | `npm run test:admin` / `npm run test:app` |
-| Headed, one worker | `npm run test:local:headed` |
+| Headed, one worker | `npm run test:local:headed` (add `SLOW_MO=500` to slow it down) |
+| By suite | `npm run test:smoke` / `npm run test:regression` / `npm run test:auth` |
 | Dev / prod (read-only) | `npm run test:dev` / `npm run test:prod` / `npm run test:prod:smoke` |
 | List tests without running | `npm run test:list` |
 | Interactive UI | `npm run test:ui` |
-| Open latest report | `npm run report -- local` |
+| Open the HTML report | `npm run report` (`playwright-report/`) |
 | Type check | `npm run typecheck` |
 | Lint (no errors allowed) | `npm run lint` |
 | Format / check format | `npm run format` / `npm run format:check` |
@@ -50,11 +53,19 @@ the configured HTML/JUnit/JSON reporters.
 
 ## Tags
 
-Put tags in the `tag` option: `test('ENV-21 ...', { tag: ['@write'] }, async ({ ... }) => { ... })`.
+Put tags in the `tag` option. Every top-level `test.describe` (or top-level `test`) carries `@regression`, and identity suites also `@auth`; add `@smoke` to read-only critical-path tests and a risk tag where the test writes:
+
+```ts
+test.describe('Environment settings (QC-744)', { tag: ['@regression'] }, () => {
+  test('ENV-21 ...', { tag: ['@write'] }, async ({ hostEnvironmentPage }) => { ... });
+});
+```
 
 | Tag | The test | Runs on |
 | --- | --- | --- |
-| none or `@smoke` | only reads (`@smoke` = fast critical path) | local, dev, prod |
+| `@regression` | every suite (the full regression set) | everywhere its risk tags allow |
+| `@auth` | sign-in, tokens, passwords, invites (identity suites) | everywhere its risk tags allow |
+| `@smoke` | only reads, fast critical path | local, dev, prod |
 | `@write` | changes data and restores it | local; dev with `ALLOW_WRITES=true`; never prod |
 | `@create` | adds rows that cannot be deleted (hosts) | opt-in `ALLOW_CREATE_HOSTS=true` |
 | `@restart` | restarts the host API | opt-in `ALLOW_RESTART=true` |
@@ -87,14 +98,14 @@ Put tags in the `tag` option: `test('ENV-21 ...', { tag: ['@write'] }, async ({ 
    ```
 
 4. **Register the fixture** in `src/fixtures/pageFixtures.ts`.
-5. **Write the spec** in `tests/NN-<area>.spec.ts` (Admin) or `tests/app/NN-<area>.spec.ts` (host app), tagged, using only fixtures. Local-only data goes in `seed/<ticket>.apply.sql` / `.remove.sql`, run through `@utils/localDb`.
+5. **Write the spec** in `tests/<feature>/<name>.spec.ts` (host app: `tests/app/<name>.spec.ts`), with `@regression` on the suite (plus `@auth` under `identity/`), using only fixtures. Local-only data goes in `seed/<ticket>.apply.sql` / `.remove.sql`, run through `@utils/localDb`.
 6. **Verify:** `npm run check`, then run the new cases. If a locator is flaky, re-snapshot and fix the page object; do not add waits or retries.
 
 ## File map
 
 ```
 config/env.config.ts           zod-validated env loader: env, ADMIN_STATE, APP_STATE, ROOT_DIR, TEST_DATA_DIR
-env/                           <env>.env (committed) + *.secrets.env (git-ignored)
+config/.env.<env>              committed settings; .env.<env>.secrets / .app.secrets git-ignored; .env.example template
 src/pages/*.page.ts            UI page objects; base.page.ts is the base class for new ones
 src/api/*.api.ts               API clients (Admin API, Identity, drivers, host API)
 src/fixtures/pageFixtures.ts   test = base.extend<...>(): env, shell, targetHost, page objects, API clients
@@ -102,8 +113,10 @@ src/setup/                     globalSetup / globalTeardown
 src/utils/                     localDb (sqlcmd seeds), throwawayUsers, totp, identityLog, logger, ...
 seed/                          local-only SQL apply/remove scripts
 test-data/                     files specs upload
-tests/*.spec.ts                Admin specs (project chromium); auth.setup.ts signs in
+tests/<feature>/*.spec.ts      admin, identity, host-master, drivers, host-db (project chromium); auth.setup.ts signs in
 tests/app/*.spec.ts            host-app specs (project app); app.setup.ts signs in
-scripts/                       report opener, local SMTP sink
-reports/<env>/<run>/           html, junit.xml, results.json, artifacts (git-ignored)
+scripts/                       local SMTP sink
+playwright-report/             HTML report of the last run (git-ignored)
+test-results/                  traces, screenshots, videos of the last run (git-ignored)
+reports/<env>/<run>/           junit.xml and results.json per run, kept for history (git-ignored)
 ```

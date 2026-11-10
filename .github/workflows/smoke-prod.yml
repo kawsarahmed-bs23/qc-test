@@ -1,0 +1,32 @@
+name: Production Smoke
+
+# Read-only @smoke cases against production. Run by hand from the Actions tab; add a schedule once the
+# PROD_ADMIN_EMAIL and PROD_ADMIN_PASSWORD secrets are set on the repository.
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ENV: prod
+      ADMIN_EMAIL: ${{ secrets.PROD_ADMIN_EMAIL }}
+      ADMIN_PASSWORD: ${{ secrets.PROD_ADMIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run @smoke tests against prod
+        run: npx playwright test --grep @smoke --project=chromium
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: smoke-prod-report
+          path: playwright-report/
+          retention-days: 14
