@@ -1,7 +1,7 @@
-import { test, expect } from '../../fixtures/test';
-import { env } from '../../config/environment';
-import { canSeedLocalDb, runSeedScript } from '../../fixtures/localDb';
-import { CommsPage, PlanVsLivePage, TicketActivityPage, formatAppDateTime } from '../../pages/AppPages';
+import { test, expect } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, runSeedScript } from '@utils/localDb';
+import { CommsPage, PlanVsLivePage, TicketActivityPage, formatAppDateTime } from '@pages/app.page';
 
 const BROWSER_ZONE = 'Asia/Dhaka';
 const SEEDED_DAY = new Date(2026, 9, 5);
@@ -44,9 +44,7 @@ test.describe('App time zone (QC-654)', { tag: '@write' }, () => {
     await comms.open(seeded.driverUserId);
 
     const expected = formatAppDateTime(seeded.createdUtc, appZone);
-    expect(expected, 'the probe instant must read differently in the two zones').not.toBe(
-      formatAppDateTime(seeded.createdUtc, BROWSER_ZONE),
-    );
+    expect(expected, 'the probe instant must read differently in the two zones').not.toBe(formatAppDateTime(seeded.createdUtc, BROWSER_ZONE));
 
     await expect(comms.message(seeded.messageId)).toBeVisible({ timeout: 30_000 });
     await expect(comms.messageTime(seeded.messageId)).toHaveText(expected);

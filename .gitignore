@@ -5,3 +5,12 @@ playwright-report/
 blob-report/
 .auth/
 env/*.secrets.env
+
+# Playwright MCP output
+.playwright-mcp/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+*.log

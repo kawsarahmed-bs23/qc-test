@@ -1,15 +1,16 @@
 import type { Page } from '@playwright/test';
-import { test, expect } from '../../fixtures/test';
-import { env } from '../../config/environment';
-import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '../../fixtures/localDb';
-import { CommsPage } from '../../pages/AppPages';
-import { API_CHANNEL, CommsApi, CommsHostAdmin, MESSAGE_CHANNEL, QC804_ADMIN_STATE } from '../../pages/CommsSendGate';
-import { ASSIGNMENT_STATUS, TRIP_NOTE_STATUS } from '../../pages/MessageLink';
-import { SMS_SINGLE_SEGMENT, jobDocName } from '../../pages/SmsFraming';
+import { test, expect } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '@utils/localDb';
+import { CommsPage } from '@pages/app.page';
+import { API_CHANNEL, CommsApi, CommsHostAdmin, MESSAGE_CHANNEL, QC804_ADMIN_STATE } from '@pages/comms-send-gate.page';
+import { ASSIGNMENT_STATUS, TRIP_NOTE_STATUS } from '@pages/message-link.page';
+import { SMS_SINGLE_SEGMENT, jobDocName } from '@pages/sms-framing.page';
 import {
   AI,
   AssignmentNotifyApi,
   DIRECTION,
+  InboundSmsApi,
   LINK_NOT_FOUND,
   MESSAGE_TYPE,
   REPLY_LINK_ORIGIN,
@@ -17,13 +18,18 @@ import {
   ReplyLinkApi,
   ReplyLinkThread,
   TOO_MANY_REQUESTS,
+  asDispatcherDraft,
   codeIn,
+  dispatcherNoteOf,
+  driverPhone,
   expectedExpiryUtc,
   gsm7Units,
+  inboundBySid,
   latestOutbound,
   linkReplies,
   messageRow,
   randomCode,
+  removeInboundBySid,
   replyLinkOf,
   replyLinkReadOnlyDays,
   replyLinkUrl,
@@ -31,9 +37,10 @@ import {
   rowsHoldingText,
   setReplyLinkExpiry,
   sha256Hex,
-} from '../../pages/ReplyLinks';
+} from '@pages/reply-links.page';
 
 const MARKER = 'E2E-QC777';
+const NOTE_MARKER = 'E2E-QC894';
 const APP_TODAY = `CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'Central Standard Time' AS date)`;
 const DRIVER_ROLE = `u.Id IN (SELECT ur.UserId FROM auth.UserToRoles ur WHERE ur.RoleName LIKE '%Driver%')`;
 const CANCELED = 8;
@@ -45,6 +52,7 @@ interface Seeded {
   accept: number;
   cant: number;
   withdraw: number;
+  decline: number;
   watermark: number;
 }
 
@@ -62,7 +70,8 @@ function pickDriver(): string {
     AND NOT EXISTS (SELECT 1 FROM app.OrderAssignments a WHERE a.DriverUserID_FK = u.Id AND a.Active = 1
       AND a.AssignmentDate >= DATEADD(DAY, -1, ${APP_TODAY}) AND ISNULL(a.Notes, '') <> N'${MARKER}')
     ORDER BY u.Id DESC`);
-  if (!driver) throw new Error('QC-777 needs an active driver with a phone, a day-shift assignment on their own truck to copy and no live work from yesterday on.');
+  if (!driver)
+    throw new Error('QC-777 needs an active driver with a phone, a day-shift assignment on their own truck to copy and no live work from yesterday on.');
   return driver;
 }
 
@@ -73,8 +82,19 @@ function seed(driver: string): Seeded {
     runSeedScript('reply-links-qc777.remove.sql');
     throw new Error(`The QC-777 seed did not report its rows:\n${output}`);
   }
-  const v = Object.fromEntries(line.trim().replace(/^SEED /, '').split(';').map((p) => p.split('=')).map(([k, n]) => [k, Number(n)]));
-  return { driver, order: v.order, today: v.today, accept: v.accept, cant: v.cant, withdraw: v.withdraw, watermark: v.watermark };
+  const v = Object.fromEntries(
+    line
+      .trim()
+      .replace(/^SEED /, '')
+      .split(';')
+      .map((p) => p.split('='))
+      .map(([k, n]) => [k, Number(n)]),
+  );
+  return { driver, order: v.order, today: v.today, accept: v.accept, cant: v.cant, withdraw: v.withdraw, decline: v.decline, watermark: v.watermark };
+}
+
+function squash(line: string): string {
+  return line.trim().replace(/\s+/g, ' ');
 }
 
 function num(query: string): number {
@@ -82,9 +102,11 @@ function num(query: string): number {
 }
 
 function smsGoesToLogOnly(): boolean {
-  return querySingleValue(
-    `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
-  ) === '0';
+  return (
+    querySingleValue(
+      `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
+    ) === '0'
+  );
 }
 
 function assignmentStatus(id: number): number {
@@ -101,14 +123,19 @@ function tripNotes(assignmentId: number, statusType: number): number {
 }
 
 function rowCounts(assignmentId: number): string {
-  return querySingleValue(`SELECT CONCAT((SELECT COUNT(*) FROM app.Messages), '|', (SELECT COUNT(*) FROM app.MessageReplyLinks), '|',
+  return (
+    querySingleValue(`SELECT CONCAT((SELECT COUNT(*) FROM app.Messages), '|', (SELECT COUNT(*) FROM app.MessageReplyLinks), '|',
     (SELECT COUNT(*) FROM app.OrderAssignmentHistory WHERE OrderAssignmentID_FK = ${assignmentId}), '|',
-    (SELECT COUNT(*) FROM app.TripNotes WHERE OrderAssignmentID_FK = ${assignmentId}))`) ?? '';
+    (SELECT COUNT(*) FROM app.TripNotes WHERE OrderAssignmentID_FK = ${assignmentId}))`) ?? ''
+  );
 }
 
 test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag: '@write' }, () => {
   test.describe.configure({ mode: 'serial', timeout: 180_000 });
-  test.skip(env.name !== 'local' || !canSeedLocalDb(), 'Needs the local database (LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE) to seed assignments and read stored SMS.');
+  test.skip(
+    env.name !== 'local' || !canSeedLocalDb(),
+    'Needs the local database (LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE) to seed assignments and read stored SMS.',
+  );
   test.skip(!env.appApiUrl, 'APP_API_URL is not set, so the notify, ping and reply-link API cannot be called directly.');
   test.skip(!canUseIdentityDb() || !env.admin, "Needs Identity's local database and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway host admin.");
   test.skip(canSeedLocalDb() && !smsGoesToLogOnly(), 'Twilio FromPhoneNumber is set in app.EnvironmentSetting, so an SMS would really go out.');
@@ -166,7 +193,9 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     return { messageId: id!, code: codeIn(row.body), body: row.body ?? '', assignment: row.assignment };
   }
 
-  test('RLINK-01 an order-notify SMS carries a 10-character reply link whose code is stored only as its SHA-256, and fits one GSM-7 segment', async ({ page }) => {
+  test('RLINK-01 an order-notify SMS carries a 10-character reply link whose code is stored only as its SHA-256, and fits one GSM-7 segment', async ({
+    page,
+  }) => {
     const notify = await sendNotify(page, s.accept);
     sent.accept = notify;
     await test.info().attach('order-notify-sms', { body: notify.body, contentType: 'text/plain' });
@@ -192,7 +221,9 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(units!, 'one SMS segment').toBeLessThanOrEqual(SMS_SINGLE_SEGMENT);
   });
 
-  test('RLINK-02 a Status Ping by SMS carries a reply link that expires at the end of today; an in-app ping has no link, no token and no Reply line', async ({ page }) => {
+  test('RLINK-02 a Status Ping by SMS carries a reply link that expires at the end of today; an in-app ping has no link, no token and no Reply line', async ({
+    page,
+  }) => {
     const ping = await sendSmsPing(page);
     sent.ping = ping;
     expect(ping.assignment).toBe(s.today);
@@ -230,7 +261,8 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(assignmentStatus(s.accept)).toBe(status);
 
     const view = answers[0].view!;
-    expect(view).toMatchObject({ kind: 'message', state: 'open', reply: null, text: messageRow(link.messageId).body });
+    expect(view).toMatchObject({ kind: 'message', state: 'open', reply: null, text: '' });
+    expect(dispatcherNoteOf(link.messageId), 'a template-only SMS stores no dispatcher note').toBeNull();
     expect(view.sentAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
     expect(view.host.name, 'host.name').toBeTruthy();
     expect(view.host).toHaveProperty('logoUrl');
@@ -239,11 +271,14 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(view.job).toHaveProperty('to');
     expect(view.job!.loads).toBeGreaterThan(0);
     expect(view.options.map((o) => o.key)).toEqual(['accept', 'cant', 'question']);
+    expect(view.options.map((o) => o.label)).toEqual(['Accept', 'Decline', 'Question']);
     expect(view.options.find((o) => o.key === 'question')!.needsComment).toBe(true);
     expect(view.options.filter((o) => o.needsComment).map((o) => o.key)).toEqual(['question']);
   });
 
-  test('RLINK-04 accept on a Pending assignment accepts it, writes history and a Link-channel reply shown with a "Link" tag; a second accept is refused, a comment still goes through', async ({ page }) => {
+  test('RLINK-04 accept on a Pending assignment accepts it, writes history and a Link-channel reply shown with a "Link" tag; a second accept is refused, a comment still goes through', async ({
+    page,
+  }) => {
     const link = sent.accept!;
     expect(assignmentStatus(s.accept)).toBe(ASSIGNMENT_STATUS.Pending);
 
@@ -296,20 +331,25 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(assignmentStatus(s.accept)).toBe(ASSIGNMENT_STATUS.Accepted);
   });
 
-  test("RLINK-05 cant on another Pending assignment rejects it and the reply is classified Can't Make It", async ({ page }) => {
+  test("RLINK-05 cant, labelled Decline, on another Pending assignment rejects it and the reply 'Decline' is classified Can't Make It (60)", async ({
+    page,
+  }) => {
     const link = await sendNotify(page, s.cant);
     sent.cant = link;
 
+    const before = await links.get(link.code);
+    expect(before.view!.options.find((o) => o.key === 'cant')).toMatchObject({ label: 'Decline', needsComment: false });
+
     const answer = await links.reply(link.code, { option: 'cant' });
     expect(answer.status, answer.text).toBe(200);
-    expect(answer.view!.reply).toMatchObject({ option: 'cant', label: "Can't make it" });
+    expect(answer.view!.reply).toMatchObject({ option: 'cant', label: 'Decline', comment: null });
 
     expect(assignmentStatus(s.cant)).toBe(ASSIGNMENT_STATUS.Rejected);
     expect(historyCount(s.cant, 'Driver rejected the assignment.')).toBe(1);
     expect(historyCount(s.cant, `Driver answered by reply link (message #${link.messageId}).`)).toBe(1);
     const replies = linkReplies(link.messageId);
     expect(replies).toHaveLength(1);
-    expect(messageRow(replies[0])).toMatchObject({ channel: MESSAGE_CHANNEL.Link, body: "Can't make it", ai: AI.CantMakeIt, isActioned: 1 });
+    expect(messageRow(replies[0])).toMatchObject({ channel: MESSAGE_CHANNEL.Link, body: 'Decline', ai: AI.CantMakeIt, isActioned: 1 });
   });
 
   test('RLINK-06 question needs a comment; with one it is stored as "Question: <comment>" and left for review', async ({ page }) => {
@@ -328,7 +368,10 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     const replies = linkReplies(link.messageId);
     expect(replies).toHaveLength(1);
     expect(messageRow(replies[0])).toMatchObject({
-      channel: MESSAGE_CHANNEL.Link, body: `Question: ${MARKER} which pit gate?`, ai: AI.Unknown, isActioned: 0,
+      channel: MESSAGE_CHANNEL.Link,
+      body: `Question: ${MARKER} which pit gate?`,
+      ai: AI.Unknown,
+      isActioned: 0,
     });
     expect(assignmentStatus(s.today), 'a question changes no status').toBe(ASSIGNMENT_STATUS.Accepted);
   });
@@ -354,7 +397,9 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     sent.withdraw = link;
     expect((await links.get(link.code)).view!.state).toBe('open');
 
-    querySingleValue(`UPDATE app.OrderAssignments SET OrderAssignmentStatusID_FK = ${CANCELED} WHERE OrderAssignmentID = ${s.withdraw} AND Notes = N'${MARKER}'`);
+    querySingleValue(
+      `UPDATE app.OrderAssignments SET OrderAssignmentStatusID_FK = ${CANCELED} WHERE OrderAssignmentID = ${s.withdraw} AND Notes = N'${MARKER}'`,
+    );
     const view = await links.get(link.code);
     expect(view.status, view.text).toBe(200);
     expect(view.view!.state).toBe('withdrawn');
@@ -371,7 +416,9 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(replyLinkOf(link.messageId).answeredOption).toBeNull();
   });
 
-  test('RLINK-09 past ExpiresAt the link reads "expired" and refuses an option; past the read-only days it is a 404 identical to an unknown code', async ({ page }) => {
+  test('RLINK-09 past ExpiresAt the link reads "expired" and refuses an option; past the read-only days it is a 404 identical to an unknown code', async ({
+    page,
+  }) => {
     const link = await sendSmsPing(page);
     sent.expire = link;
 
@@ -436,5 +483,147 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(limited, 'a 429 within 12 replies').not.toBeNull();
     expect(Number(limited!.headers['retry-after'])).toBeGreaterThan(0);
     expect(limited!.errors).toEqual([TOO_MANY_REQUESTS]);
+  });
+
+  test('RLINK-13 a template-only order SMS, and one whose body is the unchanged preview, store no dispatcher note and the link shows empty text', async ({
+    page,
+  }) => {
+    const template = await sendNotify(page, s.today);
+    expect(dispatcherNoteOf(template.messageId)).toBeNull();
+    const view = await links.get(template.code);
+    expect(view.status, view.text).toBe(200);
+    expect(view.view!.text).toBe('');
+
+    const draft = asDispatcherDraft(template.body, template.code);
+    expect(draft).toContain(REPLY_LINK_TOKEN);
+    const unchanged = await sendNotify(page, s.today, draft);
+    expect(unchanged.body).toBe(template.body.replace(replyLinkUrl(template.code), replyLinkUrl(unchanged.code)));
+    expect(dispatcherNoteOf(unchanged.messageId)).toBeNull();
+    expect((await links.get(unchanged.code)).view!.text).toBe('');
+
+    const respaced = draft
+      .split('\n')
+      .map((l) => `  ${l.replace(/ /g, '   ')} `)
+      .join('\r\n');
+    const spaced = await sendNotify(page, s.today, respaced);
+    expect(dispatcherNoteOf(spaced.messageId), 'CRLF and extra spaces still match the template lines').toBeNull();
+    expect((await links.get(spaced.code)).view!.text).toBe('');
+  });
+
+  test('RLINK-14 an order SMS with a line added to the preview shows only that line as the link text; a template line the dispatcher edited shows too', async ({
+    page,
+  }) => {
+    const template = await sendNotify(page, s.today);
+    const draft = asDispatcherDraft(template.body, template.code);
+    const extra = `Bring tarps ${NOTE_MARKER}`;
+
+    const added = await sendNotify(page, s.today, `${draft}\n${extra}`);
+    expect(added.body).toContain(extra);
+    expect(added.body).toContain(replyLinkUrl(added.code));
+    expect(dispatcherNoteOf(added.messageId)).toBe(extra);
+    const view = await links.get(added.code);
+    expect(view.status, view.text).toBe(200);
+    expect(view.view!.text).toBe(extra);
+
+    const messy = await sendNotify(page, s.today, `${draft.split('\n').join('\r\n')}\r\n\r\n   Bring   tarps  ${NOTE_MARKER}  `);
+    expect(dispatcherNoteOf(messy.messageId), 'lines are trimmed, runs of spaces collapsed and blank lines dropped').toBe(extra);
+    expect((await links.get(messy.code)).view!.text).toBe(extra);
+
+    const lines = draft.split('\n');
+    const editedIndex = lines.findIndex((l) => !l.includes(REPLY_LINK_TOKEN));
+    lines[editedIndex] = `${lines[editedIndex]} use gate 3 ${NOTE_MARKER}`;
+    const edited = await sendNotify(page, s.today, `${lines.join('\n')}\n${extra}`);
+    const expected = `${squash(lines[editedIndex])}\n${extra}`;
+    expect(dispatcherNoteOf(edited.messageId)).toBe(expected);
+    expect((await links.get(edited.code)).view!.text).toBe(expected);
+  });
+
+  test('RLINK-15 cant with a comment on a Pending assignment rejects it and stores "Decline: <comment>" classified Can\'t Make It (60)', async ({ page }) => {
+    const link = await sendNotify(page, s.decline);
+    expect(assignmentStatus(s.decline)).toBe(ASSIGNMENT_STATUS.Pending);
+    const comment = `${NOTE_MARKER} truck in the shop`;
+
+    const answer = await links.reply(link.code, { option: 'cant', comment });
+    expect(answer.status, answer.text).toBe(200);
+    expect(answer.view!.reply).toMatchObject({ option: 'cant', label: 'Decline', comment });
+
+    expect(assignmentStatus(s.decline)).toBe(ASSIGNMENT_STATUS.Rejected);
+    expect(historyCount(s.decline, 'Driver rejected the assignment.')).toBe(1);
+    const replies = linkReplies(link.messageId);
+    expect(replies).toHaveLength(1);
+    expect(messageRow(replies[0])).toMatchObject({
+      channel: MESSAGE_CHANNEL.Link,
+      body: `Decline: ${comment}`,
+      ai: AI.CantMakeIt,
+      isActioned: 1,
+      assignment: s.decline,
+    });
+  });
+
+  test('RLINK-16 a Status Ping link stores no dispatcher note and shows empty text', async () => {
+    const link = sent.ping!;
+    expect(dispatcherNoteOf(link.messageId)).toBeNull();
+    const view = await links.get(link.code);
+    expect(view.status, view.text).toBe(200);
+    expect(view.view!.text).toBe('');
+    expect(view.view!.options.map((o) => o.key)).toEqual(['on-track', 'late', 'problem', 'question']);
+  });
+});
+
+test.describe('Inbound SMS keyword DECLINE (QC-894)', { tag: '@write' }, () => {
+  test.describe.configure({ mode: 'serial', timeout: 120_000 });
+  test.skip(
+    env.name !== 'local' || !canSeedLocalDb(),
+    'Needs the local database (LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE) to seed assignments and read stored SMS.',
+  );
+  test.skip(!env.appApiUrl, 'APP_API_URL is not set, so the Twilio inbound webhook cannot be called.');
+
+  let s: Seeded;
+  let inbound: InboundSmsApi;
+  const sids: string[] = [];
+
+  test.beforeAll(async () => {
+    s = seed(pickDriver());
+    inbound = await InboundSmsApi.open();
+  });
+
+  test.afterAll(async () => {
+    await inbound?.close();
+    const left = removeInboundBySid(sids);
+    const output = runSeedScript('reply-links-qc777.remove.sql');
+    if (left !== 0) throw new Error(`QC-894 inbound messages are left behind: ${sids.join(', ')}`);
+    if (!/REMOVED orders=0;assignments=0;messages=0/.test(output)) throw new Error(`QC-777 rows are left behind:\n${output}`);
+  });
+
+  async function receive(body: string): Promise<{ id: number; ai: number | null; confidence: number; isActioned: number; driver: string | null }> {
+    const sid = `SME894${Date.now()}${sids.length}`;
+    sids.push(sid);
+    const status = await inbound.receive(sid, driverPhone(s.driver), body);
+    test.skip(status === 403, 'The local API validates Twilio signatures (Twilio:ValidateSignature), so an unsigned webhook is refused.');
+    expect(status, `inbound SMS "${body}"`).toBe(204);
+    const id = inboundBySid(sid);
+    expect(id, `the stored inbound SMS "${body}"`).not.toBeNull();
+    const row = messageRow(id!);
+    return {
+      id: id!,
+      ai: row.ai,
+      confidence: num(`SELECT ISNULL(AiConfidence, -1) FROM app.Messages WHERE MessageID = ${id}`),
+      isActioned: row.isActioned,
+      driver: querySingleValue(`SELECT DriverUserID_FK FROM app.Messages WHERE MessageID = ${id}`),
+    };
+  }
+
+  test('RLINK-17 an inbound SMS "DECLINE" from the driver is classified Can\'t Make It (60) with High confidence and not auto-actioned; "CANT" and "CAN\'T" are no longer keywords', async () => {
+    const decline = await receive('DECLINE');
+    expect(decline.driver, 'the SMS lands with the driver who owns the phone').toBe(s.driver);
+    expect(decline).toMatchObject({ ai: AI.CantMakeIt, confidence: 10, isActioned: 0 });
+    expect(assignmentStatus(s.today), 'a keyword reply changes no status').toBe(ASSIGNMENT_STATUS.Accepted);
+
+    const cant = await receive('CANT');
+    expect(cant.ai).toBe(AI.Unknown);
+    expect(cant.isActioned).toBe(0);
+
+    const apostrophe = await receive("CAN'T");
+    expect(apostrophe.ai).not.toBe(AI.CantMakeIt);
   });
 });

@@ -1,7 +1,7 @@
 import type { Locator } from '@playwright/test';
-import { test, expect } from '../../fixtures/test';
-import { canSeedLocalDb, runSeedScript } from '../../fixtures/localDb';
-import { CommsPage } from '../../pages/AppPages';
+import { test, expect } from '@fixtures/pageFixtures';
+import { canSeedLocalDb, runSeedScript } from '@utils/localDb';
+import { CommsPage } from '@pages/app.page';
 
 const READ_GREEN = 'rgb(46, 212, 126)';
 const UNREAD_GRAY = 'rgb(187, 187, 187)';

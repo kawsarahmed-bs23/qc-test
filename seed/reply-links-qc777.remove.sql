@@ -25,6 +25,7 @@ WHERE MessageID_FK IN (SELECT Id FROM @Messages) OR AnswerMessageID_FK IN (SELEC
 DELETE app.TripNotes WHERE OrderAssignmentID_FK IN (SELECT Id FROM @Assignments);
 DELETE app.OrderAssignmentHistory WHERE OrderAssignmentID_FK IN (SELECT Id FROM @Assignments);
 DELETE app.DispatchScheduleSnapshots WHERE OrderAssignmentID_FK IN (SELECT Id FROM @Assignments);
+IF OBJECT_ID(N'app.DriverMirrorChanges', N'U') IS NOT NULL
 DELETE app.DriverMirrorChanges
 WHERE OrderAssignmentID_FK IN (SELECT Id FROM @Assignments) OR MessageID_FK IN (SELECT Id FROM @Messages);
 DELETE app.Messages WHERE MessageID IN (SELECT Id FROM @Messages);

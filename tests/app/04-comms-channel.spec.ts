@@ -1,8 +1,8 @@
 import { request as playwrightRequest } from '@playwright/test';
 import type { Locator, Page } from '@playwright/test';
-import { test, expect } from '../../fixtures/test';
-import { canSeedLocalDb, querySingleValue, runSeedScript } from '../../fixtures/localDb';
-import { CommsPage } from '../../pages/AppPages';
+import { test, expect } from '@fixtures/pageFixtures';
+import { canSeedLocalDb, querySingleValue, runSeedScript } from '@utils/localDb';
+import { CommsPage } from '@pages/app.page';
 
 // Never click anything that sends over SMS here: the local API may hold live Twilio credentials,
 // and the seeded drivers' numbers are not ours. Only the in-app channel is exercised end to end;
@@ -113,9 +113,7 @@ test.describe('Comms channel choice and unmatched inbound SMS (QC-630)', { tag: 
 
   test.beforeAll(() => {
     seeded = parseSeed(runSeedScript('comms-channel.apply.sql'));
-    driverName = querySingleValue(
-      `SELECT LTRIM(RTRIM(CONCAT(FirstName, ' ', LastName))) FROM auth.Users WHERE Id = '${seeded.driverUserId}'`,
-    ) ?? '';
+    driverName = querySingleValue(`SELECT LTRIM(RTRIM(CONCAT(FirstName, ' ', LastName))) FROM auth.Users WHERE Id = '${seeded.driverUserId}'`) ?? '';
   });
 
   test.afterAll(() => {
@@ -183,25 +181,24 @@ test.describe('Comms channel choice and unmatched inbound SMS (QC-630)', { tag: 
     await ui.pingCaret().click();
     await expect(ui.menuItem('Send by SMS')).toBeVisible();
     await expect(ui.menuItem('Post in-app only')).toBeVisible();
-    await page.locator('.mat-mdc-menu-panel').evaluate((panel) =>
-      Promise.all(panel.getAnimations({ subtree: true }).map((animation) => animation.finished)));
+    await page.locator('.mat-mdc-menu-panel').evaluate((panel) => Promise.all(panel.getAnimations({ subtree: true }).map((animation) => animation.finished)));
     await snapshot(page, 'status-ping-menu');
     await page.keyboard.press('Escape');
 
-    const before = Number(querySingleValue(
-      `SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${seeded.assignmentId} AND MessageType = 20`,
-    ));
+    const before = Number(querySingleValue(`SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${seeded.assignmentId} AND MessageType = 20`));
 
     await ui.pingMain().click();
     await expect(page.locator('.msg-tag--status').last()).toBeVisible({ timeout: 15_000 });
 
-    await expect.poll(() => Number(querySingleValue(
-      `SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${seeded.assignmentId} AND MessageType = 20`,
-    ))).toBe(before + 1);
+    await expect
+      .poll(() => Number(querySingleValue(`SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${seeded.assignmentId} AND MessageType = 20`)))
+      .toBe(before + 1);
 
-    const pingId = Number(querySingleValue(
-      `SELECT TOP 1 MessageID FROM app.Messages WHERE OrderAssignmentID_FK = ${seeded.assignmentId} AND MessageType = 20 ORDER BY MessageID DESC`,
-    ));
+    const pingId = Number(
+      querySingleValue(
+        `SELECT TOP 1 MessageID FROM app.Messages WHERE OrderAssignmentID_FK = ${seeded.assignmentId} AND MessageType = 20 ORDER BY MessageID DESC`,
+      ),
+    );
     expect(channelOf(pingId)).toBe(CHANNEL_IN_APP);
     expect(querySingleValue(`SELECT TwilioMessageSid FROM app.Messages WHERE MessageID = ${pingId}`)).toBeNull();
     await expect(ui.channelBadge(pingId)).toContainText('In-app');
@@ -234,10 +231,8 @@ test.describe('Comms channel choice and unmatched inbound SMS (QC-630)', { tag: 
 
     await expect(comms.message(seeded.unmatchedId)).toBeVisible({ timeout: 15_000 });
     await snapshot(page, 'attached-in-thread');
-    expect(querySingleValue(`SELECT DriverUserID_FK FROM app.Messages WHERE MessageID = ${seeded.unmatchedId}`))
-      .toBe(seeded.driverUserId);
-    expect(Number(querySingleValue(`SELECT OrderAssignmentID_FK FROM app.Messages WHERE MessageID = ${seeded.unmatchedId}`)))
-      .toBe(seeded.assignmentId);
+    expect(querySingleValue(`SELECT DriverUserID_FK FROM app.Messages WHERE MessageID = ${seeded.unmatchedId}`)).toBe(seeded.driverUserId);
+    expect(Number(querySingleValue(`SELECT OrderAssignmentID_FK FROM app.Messages WHERE MessageID = ${seeded.unmatchedId}`))).toBe(seeded.assignmentId);
   });
 
   test('CHAN-07 after attaching, the next text from that number lands with the same driver', async () => {

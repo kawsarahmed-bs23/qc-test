@@ -28,7 +28,7 @@ IF @HostOrganisationId IS NULL OR NOT EXISTS (SELECT 1 FROM auth.Organisations W
 IF @Email NOT LIKE N'e2e.qc829.%@quarryconnect.test'
     THROW 50001, 'The throwaway driver email must start with e2e.qc829. and end with @quarryconnect.test.', 1;
 
-DECLARE @PasswordHash nvarchar(max) = (SELECT PasswordHash FROM [$(IdentityDb)].dbo.Users WHERE Id = @UserId AND NormalizedEmail = UPPER(@Email));
+DECLARE @PasswordHash nvarchar(max) = (SELECT PasswordHash FROM [$(IdentityDb)].auth.Users WHERE Id = @UserId AND NormalizedEmail = UPPER(@Email));
 IF @PasswordHash IS NULL
     THROW 50002, 'The throwaway Identity driver does not exist; run identity-qc829-user.apply.sql first.', 1;
 
@@ -60,8 +60,10 @@ INSERT @OldAssignments SELECT OrderAssignmentID FROM app.OrderAssignments WHERE 
 DECLARE @OldOrders TABLE (Id int PRIMARY KEY);
 INSERT @OldOrders SELECT DISTINCT OrderID_FK FROM app.OrderAssignments WHERE OrderAssignmentID IN (SELECT Id FROM @OldAssignments);
 
-DELETE app.DriverMirrorSubscriptions WHERE UserID_FK = @UserId;
-DELETE app.DriverMirrorChanges WHERE UserID_FK = @UserId;
+IF OBJECT_ID(N'app.DriverMirrorSubscriptions', N'U') IS NOT NULL
+    DELETE app.DriverMirrorSubscriptions WHERE UserID_FK = @UserId;
+IF OBJECT_ID(N'app.DriverMirrorChanges', N'U') IS NOT NULL
+    DELETE app.DriverMirrorChanges WHERE UserID_FK = @UserId;
 DELETE app.TripGps WHERE OrderAssignmentID_FK IN (SELECT Id FROM @OldAssignments);
 DELETE app.Messages WHERE OrderAssignmentID_FK IN (SELECT Id FROM @OldAssignments);
 DELETE app.Trips WHERE OrderAssignmentID_FK IN (SELECT Id FROM @OldAssignments);
@@ -73,14 +75,14 @@ DELETE auth.Users WHERE Id = @UserId;
 INSERT auth.Users
 (
     Id, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PasswordHash, SecurityStamp, ConcurrencyStamp,
-    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, Discriminator, FirstName, LastName,
+    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     CreateDate, LastLoginDate, LastPasswordChangedDate, OrganisationIdFk, OrganisationLocationIdFk, PasswordResetFlag, IsActive, RejectedEULA, Digest
 )
 VALUES
 (
     @UserId, @Email, UPPER(@Email), @Email, UPPER(@Email), 1, @PasswordHash,
     UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
-    0, 0, 1, 0, N'Users', N'E2E', N'QC-829 Driver',
+    0, 0, 1, 0, N'E2E', N'QC-829 Driver',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @OrganisationId, 0, 0, 1, 0, 0
 );
 
@@ -92,14 +94,14 @@ DELETE auth.Users WHERE NormalizedEmail = UPPER(@DispatcherEmail);
 INSERT auth.Users
 (
     Id, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PasswordHash, SecurityStamp, ConcurrencyStamp,
-    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, Discriminator, FirstName, LastName,
+    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     CreateDate, LastLoginDate, LastPasswordChangedDate, OrganisationIdFk, OrganisationLocationIdFk, PasswordResetFlag, IsActive, RejectedEULA, Digest
 )
 VALUES
 (
     LOWER(CONVERT(nvarchar(36), NEWID())), @DispatcherEmail, UPPER(@DispatcherEmail), @DispatcherEmail, UPPER(@DispatcherEmail), 1, @PasswordHash,
     UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
-    0, 0, 1, 0, N'Users', N'E2E', N'QC-829 Dispatcher',
+    0, 0, 1, 0, N'E2E', N'QC-829 Dispatcher',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @HostOrganisationId,
     (SELECT TOP 1 OrganisationLocationIdFk FROM auth.Users WHERE OrganisationIdFk = @HostOrganisationId AND OrganisationLocationIdFk IS NOT NULL), 0, 1, 0, 0
 );

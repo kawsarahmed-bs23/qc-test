@@ -2,14 +2,42 @@
 -- $(UserIds) (a comma-separated list of Identity subs; pass none when there are none): their mirror assignments, trips,
 -- tickets and messages, their commands, sync tombstones, device tokens and links, every device token whose DeviceId
 -- starts with 'e2e-qc829', then every 'E2E QC-829%' host row with whatever is still attached to it.
+-- QC-902 one list: a DRIVERS database with migrations 027-030 keys rows by UserUUID / DriverUserUUID / HostUUID and names
+-- hosts in HostName; an older one uses UserID_FK / HostID_FK / Name. Each schema's statements run through sp_executesql.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
+DECLARE @UserIds nvarchar(max) = N'$(UserIds)';
+
+IF COL_LENGTH(N'app.DriverHostLinks', N'UserUUID') IS NOT NULL
+    EXEC sp_executesql N'
+DECLARE @Users TABLE (Id uniqueidentifier PRIMARY KEY);
+INSERT @Users SELECT DISTINCT TRY_CONVERT(uniqueidentifier, LTRIM(RTRIM(value))) FROM STRING_SPLIT(@UserIds, N'','')
+WHERE TRY_CONVERT(uniqueidentifier, LTRIM(RTRIM(value))) IS NOT NULL;
+
+DECLARE @Hosts TABLE (Id uniqueidentifier PRIMARY KEY);
+INSERT @Hosts SELECT HostUUID FROM app.Hosts WHERE HostName LIKE N''E2E QC-829%'' AND CreatedBy = N''e2e'';
+
+BEGIN TRANSACTION;
+
+DELETE app.Messages WHERE DriverUserUUID IN (SELECT Id FROM @Users) OR HostUUID IN (SELECT Id FROM @Hosts);
+DELETE app.Tickets WHERE UserUUID IN (SELECT Id FROM @Users) OR HostUUID IN (SELECT Id FROM @Hosts);
+DELETE app.Trips WHERE UserUUID IN (SELECT Id FROM @Users) OR HostUUID IN (SELECT Id FROM @Hosts);
+DELETE app.OrderAssignments WHERE DriverUserUUID IN (SELECT Id FROM @Users) OR HostUUID IN (SELECT Id FROM @Hosts);
+DELETE app.DriverCommands WHERE UserUUID IN (SELECT Id FROM @Users) OR HostUUID IN (SELECT Id FROM @Hosts);
+DELETE app.SyncTombstones WHERE UserUUID IN (SELECT Id FROM @Users) OR HostUUID IN (SELECT Id FROM @Hosts);
+DELETE app.DeviceTokens WHERE UserUUID IN (SELECT Id FROM @Users) OR DeviceId LIKE N''e2e-qc829%'';
+DELETE app.DriverHostLinks WHERE UserUUID IN (SELECT Id FROM @Users) OR HostUUID IN (SELECT Id FROM @Hosts);
+DELETE app.Hosts WHERE HostUUID IN (SELECT Id FROM @Hosts);
+
+COMMIT TRANSACTION;', N'@UserIds nvarchar(max)', @UserIds;
+ELSE
+    EXEC sp_executesql N'
 DECLARE @Users TABLE (Id nvarchar(450) PRIMARY KEY);
-INSERT @Users SELECT DISTINCT LTRIM(RTRIM(value)) FROM STRING_SPLIT(N'$(UserIds)', N',') WHERE LTRIM(RTRIM(value)) NOT IN (N'', N'none');
+INSERT @Users SELECT DISTINCT LTRIM(RTRIM(value)) FROM STRING_SPLIT(@UserIds, N'','') WHERE LTRIM(RTRIM(value)) NOT IN (N'''', N''none'');
 
 DECLARE @Hosts TABLE (Id int PRIMARY KEY);
-INSERT @Hosts SELECT HostID FROM app.Hosts WHERE Name LIKE N'E2E QC-829%' AND CreatedBy = N'e2e';
+INSERT @Hosts SELECT HostID FROM app.Hosts WHERE Name LIKE N''E2E QC-829%'' AND CreatedBy = N''e2e'';
 
 BEGIN TRANSACTION;
 
@@ -19,8 +47,8 @@ DELETE app.Trips WHERE UserID_FK IN (SELECT Id FROM @Users) OR HostID_FK IN (SEL
 DELETE app.OrderAssignments WHERE UserID_FK IN (SELECT Id FROM @Users) OR HostID_FK IN (SELECT Id FROM @Hosts);
 DELETE app.DriverCommands WHERE UserID_FK IN (SELECT Id FROM @Users) OR HostID_FK IN (SELECT Id FROM @Hosts);
 DELETE app.SyncTombstones WHERE UserID_FK IN (SELECT Id FROM @Users) OR HostID_FK IN (SELECT Id FROM @Hosts);
-DELETE app.DeviceTokens WHERE UserID_FK IN (SELECT Id FROM @Users) OR DeviceId LIKE N'e2e-qc829%';
+DELETE app.DeviceTokens WHERE UserID_FK IN (SELECT Id FROM @Users) OR DeviceId LIKE N''e2e-qc829%'';
 DELETE app.DriverHostLinks WHERE UserID_FK IN (SELECT Id FROM @Users) OR HostID_FK IN (SELECT Id FROM @Hosts);
 DELETE app.Hosts WHERE HostID IN (SELECT Id FROM @Hosts);
 
-COMMIT TRANSACTION;
+COMMIT TRANSACTION;', N'@UserIds nvarchar(max)', @UserIds;

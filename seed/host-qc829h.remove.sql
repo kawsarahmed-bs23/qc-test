@@ -36,9 +36,12 @@ WHERE OrderAssignmentID_FK IN (SELECT Id FROM @Assignments) OR DriverUserID_FK I
 
 BEGIN TRANSACTION;
 
-DELETE app.DriverMirrorSubscriptions WHERE UserID_FK IN (SELECT Id FROM @Users);
-DELETE app.DriverMirrorChanges WHERE UserID_FK IN (SELECT Id FROM @Users) OR OrderAssignmentID_FK IN (SELECT Id FROM @Assignments);
-DELETE app.DriverCommandReceipts WHERE UserID_FK IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'app.DriverMirrorSubscriptions', N'U') IS NOT NULL
+    DELETE app.DriverMirrorSubscriptions WHERE UserID_FK IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'app.DriverMirrorChanges', N'U') IS NOT NULL
+    DELETE app.DriverMirrorChanges WHERE UserID_FK IN (SELECT Id FROM @Users) OR OrderAssignmentID_FK IN (SELECT Id FROM @Assignments);
+IF OBJECT_ID(N'app.DriverCommandReceipts', N'U') IS NOT NULL
+    DELETE app.DriverCommandReceipts WHERE UserID_FK IN (SELECT Id FROM @Users);
 
 DELETE app.TripGps WHERE TripID_FK IN (SELECT Id FROM @Trips) OR OrderAssignmentID_FK IN (SELECT Id FROM @Assignments);
 UPDATE app.Trips SET TicketID_FK = NULL WHERE TripID IN (SELECT Id FROM @Trips) AND TicketID_FK IS NOT NULL;
@@ -58,17 +61,20 @@ DELETE app.OrderAssignments WHERE OrderAssignmentID IN (SELECT Id FROM @Assignme
 DELETE app.OrderHistory WHERE OrderID_FK IN (SELECT Id FROM @Orders);
 DELETE app.Orders WHERE OrderID IN (SELECT Id FROM @Orders);
 
-DELETE app.DriverSyncTombstones WHERE DriverUserID_FK IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'app.DriverSyncTombstones', N'U') IS NOT NULL
+    DELETE app.DriverSyncTombstones WHERE DriverUserID_FK IN (SELECT Id FROM @Users);
 
 DELETE app.IdentitySessions WHERE UserID_FK IN (SELECT Id FROM @Users);
 DELETE app.ThemeSettings WHERE UserID_FK IN (SELECT Id FROM @Users);
 DELETE auth.AccessLogs WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.LoginHistories WHERE UserId IN (SELECT Id FROM @Users);
-DELETE auth.PasswordHistories WHERE UserId IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'auth.PasswordHistories', N'U') IS NOT NULL
+    DELETE auth.PasswordHistories WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.RefreshTokens WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserSignedEULAs WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserClaims WHERE UserId IN (SELECT Id FROM @Users);
-DELETE auth.UserLogins WHERE UserId IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'auth.UserLogins', N'U') IS NOT NULL
+    DELETE auth.UserLogins WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserTokens WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserToRoles WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.Users WHERE Id IN (SELECT Id FROM @Users);

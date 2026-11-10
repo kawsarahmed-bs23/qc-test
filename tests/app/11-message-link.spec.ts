@@ -1,17 +1,10 @@
 import type { Page } from '@playwright/test';
-import { test, expect } from '../../fixtures/test';
-import { env } from '../../config/environment';
-import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '../../fixtures/localDb';
-import { CommsPage } from '../../pages/AppPages';
-import { CommsHostAdmin, QC804_ADMIN_STATE } from '../../pages/CommsSendGate';
-import {
-  AI_CLASSIFICATION,
-  ASSIGNMENT_STATUS,
-  assignmentDateLabel,
-  MessageLinkApi,
-  MessageLinkPanel,
-  TRIP_NOTE_STATUS,
-} from '../../pages/MessageLink';
+import { test, expect } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '@utils/localDb';
+import { CommsPage } from '@pages/app.page';
+import { CommsHostAdmin, QC804_ADMIN_STATE } from '@pages/comms-send-gate.page';
+import { AI_CLASSIFICATION, ASSIGNMENT_STATUS, assignmentDateLabel, MessageLinkApi, MessageLinkPanel, TRIP_NOTE_STATUS } from '@pages/message-link.page';
 
 const MARKER = 'E2E-QC805';
 const APP_TODAY = `CAST(SYSDATETIMEOFFSET() AT TIME ZONE 'Central Standard Time' AS date)`;
@@ -45,7 +38,14 @@ function seed(driver: string): Seeded {
     runSeedScript('message-link-qc805.remove.sql');
     throw new Error(`The QC-805 seed did not report its rows:\n${output}`);
   }
-  const values = Object.fromEntries(line.trim().replace(/^SEED /, '').split(';').map((p) => p.split('=')).map(([k, v]) => [k, Number(v)]));
+  const values = Object.fromEntries(
+    line
+      .trim()
+      .replace(/^SEED /, '')
+      .split(';')
+      .map((p) => p.split('='))
+      .map(([k, v]) => [k, Number(v)]),
+  );
   return {
     driver,
     order: values.order,
@@ -129,8 +129,9 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
   });
 
   async function openThread(page: Page): Promise<{ panel: MessageLinkPanel; api: MessageLinkApi }> {
-    const thread = page.waitForResponse((r) => r.request().method() === 'GET'
-      && new URL(r.url()).pathname.endsWith(`/messages/threads/${s.driver}`), { timeout: 30_000 });
+    const thread = page.waitForResponse((r) => r.request().method() === 'GET' && new URL(r.url()).pathname.endsWith(`/messages/threads/${s.driver}`), {
+      timeout: 30_000,
+    });
     await new CommsPage(page).open(s.driver);
     expect((await thread).ok(), 'GET thread').toBe(true);
     const api = new MessageLinkApi(page, env.appApiUrl!);
@@ -153,7 +154,9 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
     await snapshot(page, 'unlinked-message');
   });
 
-  test("LINK-02 the thread lists today's and tomorrow's open assignments (not yesterday's) by date and start, and the link menu offers all three", async ({ page }) => {
+  test("LINK-02 the thread lists today's and tomorrow's open assignments (not yesterday's) by date and start, and the link menu offers all three", async ({
+    page,
+  }) => {
     const { panel, api } = await openThread(page);
 
     const { openAssignments } = await api.thread(s.driver);
@@ -161,7 +164,9 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
     expect(openAssignments.map((a) => a.date)).toEqual([today, today, tomorrow]);
     expect(openAssignments.map((a) => a.status)).toEqual(['accepted', 'accepted', 'pending']);
     expect(openAssignments.map((a) => a.startTime)).toEqual([
-      expect.stringMatching(/^00:00/), expect.stringMatching(/^23:59/), expect.stringMatching(/^06:30/),
+      expect.stringMatching(/^00:00/),
+      expect.stringMatching(/^23:59/),
+      expect.stringMatching(/^06:30/),
     ]);
     expect(openAssignments[0].orderNumber).toBeTruthy();
     expect(new Set(openAssignments.map((a) => a.orderNumber)).size).toBe(1);
@@ -176,7 +181,7 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
     await page.keyboard.press('Escape');
   });
 
-  test("LINK-03 linking the message to tomorrow's assignment through the menu stores the link, writes history and offers Can't Make It + Noted", async ({ page }) => {
+  test("LINK-03 linking the message to tomorrow's assignment through the menu stores the link, writes history and offers Decline + Noted", async ({ page }) => {
     const { panel, api } = await openThread(page);
 
     await panel.linkMenuButton(s.m[1]).click();
@@ -191,7 +196,7 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
     await expect(panel.unlinkedTag(s.m[1])).toHaveCount(0);
     await expect(panel.threadActions(s.m[1])).toHaveCount(2);
     expect(await panel.actionsOf(panel.threadActions(s.m[1]))).toEqual(['cant-make-it', 'noted']);
-    expect(await panel.labelsOf(panel.threadActions(s.m[1]))).toEqual(["Can't Make It", 'Noted']);
+    expect(await panel.labelsOf(panel.threadActions(s.m[1]))).toEqual(['Decline', 'Noted']);
 
     expect(await api.message(s.driver, s.m[1])).toMatchObject({
       orderAssignmentId: s.tomorrow,
@@ -237,7 +242,7 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
     await snapshot(page, 'moved-and-unlinked');
   });
 
-  test("LINK-05 Can't Make It rejects tomorrow's assignment, writes history, no trip note, keeps its Notes, and frees the truck on the board", async ({ page }) => {
+  test("LINK-05 Decline rejects tomorrow's assignment, writes history, no trip note, keeps its Notes, and frees the truck on the board", async ({ page }) => {
     const { panel, api } = await openThread(page);
     expect(linkedAssignment(s.m[1])).toBe(s.tomorrow);
     expect(assignmentStatus(s.tomorrow)).toBe(ASSIGNMENT_STATUS.Pending);
@@ -246,29 +251,32 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
 
     const action = panel.waitForAction(s.m[1]);
     await panel.threadAction(s.m[1], 'cant-make-it').click();
-    expect((await action).status(), "PUT action cant-make-it").toBe(200);
+    expect((await action).status(), 'PUT action cant-make-it').toBe(200);
 
     await expect.poll(() => assignmentStatus(s.tomorrow)).toBe(ASSIGNMENT_STATUS.Rejected);
     expect(historyCount(s.tomorrow, 'Status changed from Pending to Rejected.')).toBe(1);
-    expect(historyCount(s.tomorrow, `Driver can't make it (message #${s.m[1]}): ${MARKER}%`)).toBe(1);
+    expect(historyCount(s.tomorrow, `Driver declined (message #${s.m[1]}): ${MARKER}%`)).toBe(1);
     expect(actioned(s.m[1])).toEqual({ isActioned: 1, classification: AI_CLASSIFICATION.CantMakeIt });
     expect(tripNotes(s.tomorrow, s.m[1])).toBe(0);
     expect(querySingleValue(`SELECT Notes FROM app.OrderAssignments WHERE OrderAssignmentID = ${s.tomorrow}`)).toBe(notesBefore);
 
-    expect(await api.unassigned(tomorrow, s.order)).toEqual([
-      expect.objectContaining({ orderId: s.order, date: tomorrow, trucksNeeded: 1, assignedCount: 0 }),
-    ]);
-    expect((await api.thread(s.driver)).openAssignments.map((a) => a.orderAssignmentId), 'a rejected assignment is no longer open').toEqual([s.noShow, s.today]);
+    expect(await api.unassigned(tomorrow, s.order)).toEqual([expect.objectContaining({ orderId: s.order, date: tomorrow, trucksNeeded: 1, assignedCount: 0 })]);
+    expect(
+      (await api.thread(s.driver)).openAssignments.map((a) => a.orderAssignmentId),
+      'a rejected assignment is no longer open',
+    ).toEqual([s.noShow, s.today]);
     await expect(panel.threadActions(s.m[1])).toHaveCount(0);
-    await snapshot(page, 'cant-make-it');
+    await snapshot(page, 'decline');
   });
 
-  test("LINK-06 a message on today's Accepted assignment whose start has not passed offers Mark Late, Flag Issue, Can't Make It, Noted; Mark Late writes a Late trip note only", async ({ page }) => {
+  test("LINK-06 a message on today's Accepted assignment whose start has not passed offers Mark Late, Flag Issue, Decline, Noted; Mark Late writes a Late trip note only", async ({
+    page,
+  }) => {
     const { panel, api } = await openThread(page);
 
     expect((await api.message(s.driver, s.m[3])).availableActions).toEqual(['late', 'issue', 'cant-make-it', 'noted']);
     await expect(panel.linkedTag(s.m[3])).toHaveText(label(orderNumber, assignmentDateLabel(today), '11:59 PM'));
-    expect(await panel.labelsOf(panel.threadActions(s.m[3]))).toEqual(['Mark Late', 'Flag Issue', "Can't Make It", 'Noted']);
+    expect(await panel.labelsOf(panel.threadActions(s.m[3]))).toEqual(['Mark Late', 'Flag Issue', 'Decline', 'Noted']);
     expect(await panel.actionsOf(panel.threadActions(s.m[3]))).toEqual(['late', 'issue', 'cant-make-it', 'noted']);
 
     const action = panel.waitForAction(s.m[3]);
@@ -280,7 +288,9 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
     expect(actioned(s.m[3]).isActioned).toBe(1);
   });
 
-  test("LINK-07 a message on today's Accepted assignment whose start has passed adds No Show, which sets NoShow and writes a NoShow trip note; yesterday's offers Noted only", async ({ page }) => {
+  test("LINK-07 a message on today's Accepted assignment whose start has passed adds No Show, which sets NoShow and writes a NoShow trip note; yesterday's offers Noted only", async ({
+    page,
+  }) => {
     const { panel, api } = await openThread(page);
 
     expect(await api.message(s.driver, s.m[8])).toMatchObject({
@@ -290,7 +300,7 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
       availableActions: ['late', 'issue', 'cant-make-it', 'no-show', 'noted'],
     });
     await expect(panel.linkedTag(s.m[8])).toHaveText(label(orderNumber, assignmentDateLabel(today), '12:00 AM'));
-    expect(await panel.labelsOf(panel.threadActions(s.m[8]))).toEqual(['Mark Late', 'Flag Issue', "Can't Make It", 'No Show', 'Noted']);
+    expect(await panel.labelsOf(panel.threadActions(s.m[8]))).toEqual(['Mark Late', 'Flag Issue', 'Decline', 'No Show', 'Noted']);
 
     expect(await api.message(s.driver, s.m[4])).toMatchObject({ orderAssignmentId: s.yesterday, availableActions: ['noted'] });
     expect(await panel.actionsOf(panel.threadActions(s.m[4]))).toEqual(['noted']);
@@ -325,7 +335,9 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
     expect(assignmentStatus(s.today)).toBe(ASSIGNMENT_STATUS.Accepted);
   });
 
-  test('LINK-09 the API refuses an action that does not fit, a link to another driver\'s or a past assignment, and a body id that differs from the route', async ({ page }) => {
+  test("LINK-09 the API refuses an action that does not fit, a link to another driver's or a past assignment, and a body id that differs from the route", async ({
+    page,
+  }) => {
     const { api } = await openThread(page);
     const otherDriversAssignment = num(`SELECT TOP 1 a.OrderAssignmentID FROM app.OrderAssignments a
       WHERE a.Active = 1 AND a.DriverUserID_FK IS NOT NULL AND a.DriverUserID_FK <> '${s.driver}'
@@ -368,13 +380,16 @@ test.describe('Comms: link a driver message to an assignment and offer only the 
     const queue = await api.queue();
     expect(queue.find((q) => q.messageId === s.m[6])?.availableActions).toEqual(['noted']);
     expect(queue.find((q) => q.messageId === s.m[7])?.availableActions).toEqual(['late', 'issue', 'cant-make-it', 'noted']);
-    expect(queue.find((q) => q.messageId === s.m[3]), 'an actioned message leaves the queue').toBeUndefined();
+    expect(
+      queue.find((q) => q.messageId === s.m[3]),
+      'an actioned message leaves the queue',
+    ).toBeUndefined();
 
     await panel.queueTab().click();
     await expect(panel.queueActions(s.m[6])).toHaveCount(1);
     expect(await panel.actionsOf(panel.queueActions(s.m[6]))).toEqual(['noted']);
     await expect(panel.queueActions(s.m[7])).toHaveCount(4);
-    expect(await panel.labelsOf(panel.queueActions(s.m[7]))).toEqual(['Mark Late', 'Flag Issue', "Can't Make It", 'Noted']);
+    expect(await panel.labelsOf(panel.queueActions(s.m[7]))).toEqual(['Mark Late', 'Flag Issue', 'Decline', 'Noted']);
     await snapshot(page, 'queue');
   });
 });

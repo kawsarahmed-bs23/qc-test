@@ -37,6 +37,7 @@ DELETE app.OrderAssignmentHistory WHERE OrderAssignmentID_FK IN (SELECT Id FROM 
 DELETE app.Messages WHERE MessageID IN (SELECT Id FROM @OldMessages);
 DELETE app.OrderAssignments WHERE OrderAssignmentID IN (SELECT Id FROM @OldAssignments);
 DELETE app.Orders WHERE Notes = @Marker;
+IF OBJECT_ID(N'app.DriverMirrorChanges', N'U') IS NOT NULL
 DELETE app.DriverMirrorChanges
 WHERE OrderAssignmentID_FK IN (SELECT Id FROM @OldAssignments) OR MessageID_FK IN (SELECT Id FROM @OldMessages);
 

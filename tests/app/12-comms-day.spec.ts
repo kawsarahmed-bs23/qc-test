@@ -1,10 +1,10 @@
 import type { Page } from '@playwright/test';
-import { test, expect } from '../../fixtures/test';
-import { env } from '../../config/environment';
-import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '../../fixtures/localDb';
-import { DateStrip } from '../../pages/AppPages';
-import { CommsHostAdmin, QC804_ADMIN_STATE } from '../../pages/CommsSendGate';
-import { CommsDayApi, CommsDayPage, dayLabel, isoToLocalDate } from '../../pages/CommsDay';
+import { test, expect } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '@utils/localDb';
+import { DateStrip } from '@pages/app.page';
+import { CommsHostAdmin, QC804_ADMIN_STATE } from '@pages/comms-send-gate.page';
+import { CommsDayApi, CommsDayPage, dayLabel, isoToLocalDate } from '@pages/comms-day.page';
 
 const MARKER = 'E2E-QC806';
 const APP_ZONE = 'America/Chicago';
@@ -44,7 +44,14 @@ function seed(): Seeded {
     runSeedScript('comms-day-qc806.remove.sql');
     throw new Error(`The QC-806 seed did not report its rows:\n${output}`);
   }
-  const values = Object.fromEntries(line.trim().replace(/^SEED /, '').split(';').map((p) => p.split('=')).map(([k, v]) => [k, Number(v)]));
+  const values = Object.fromEntries(
+    line
+      .trim()
+      .replace(/^SEED /, '')
+      .split(';')
+      .map((p) => p.split('='))
+      .map(([k, v]) => [k, Number(v)]),
+  );
   return { a, b, c, assignmentA: values.a, assignmentB: values.b, latest: values.latest };
 }
 
@@ -127,7 +134,9 @@ test.describe('Comms: pick a day, start a conversation with any driver, and page
     return comms;
   }
 
-  test("DAY-01 threads?date= lists drivers with a message or an assignment that day: today has A (not B or C), tomorrow has A and B (B with no message, unread 0), never C", async ({ page }) => {
+  test('DAY-01 threads?date= lists drivers with a message or an assignment that day: today has A (not B or C), tomorrow has A and B (B with no message, unread 0), never C', async ({
+    page,
+  }) => {
     const client = await api(page);
 
     const onToday = await client.threads(today);
@@ -207,7 +216,7 @@ test.describe('Comms: pick a day, start a conversation with any driver, and page
     await expect(comms.preview(names.a)).toHaveText(`${MARKER} today #12`);
   });
 
-  test("DAY-04 New message finds a driver with nothing on the day, opens their thread and pins them at the top until the day changes", async ({ page }) => {
+  test('DAY-04 New message finds a driver with nothing on the day, opens their thread and pins them at the top until the day changes', async ({ page }) => {
     await api(page);
     const comms = await openComms(page, { driverId: s.a });
     await expect(comms.driverItem(names.c)).toHaveCount(0);
@@ -242,7 +251,10 @@ test.describe('Comms: pick a day, start a conversation with any driver, and page
     expect(thread.hasEarlierMessages).toBe(true);
     const tomorrows = thread.assignments.find((a) => a.orderAssignmentId === s.assignmentA);
     expect(tomorrows).toMatchObject({ date: tomorrow, status: 'pending', startTime: expect.stringMatching(/^07:00/) });
-    expect(thread.assignments.some((a) => a.orderAssignmentId === s.assignmentB), "another driver's assignment").toBe(false);
+    expect(
+      thread.assignments.some((a) => a.orderAssignmentId === s.assignmentB),
+      "another driver's assignment",
+    ).toBe(false);
     expect(thread.messages.map((m) => m.messageId)).toEqual(todayIds(s.a));
 
     expect((await client.thread(s.a)).hasEarlierMessages, 'without a date there is nothing earlier').toBe(false);
@@ -257,7 +269,9 @@ test.describe('Comms: pick a day, start a conversation with any driver, and page
     await snapshot(page, 'assignments-panel');
   });
 
-  test('DAY-06 earlier pages back 30 at a time oldest-first by (Created, MessageId), then the rest with hasMore false; bad take/before are refused', async ({ page }) => {
+  test('DAY-06 earlier pages back 30 at a time oldest-first by (Created, MessageId), then the rest with hasMore false; bad take/before are refused', async ({
+    page,
+  }) => {
     const client = await api(page);
     const expected = earlierThanToday(s.a);
     expect(expected.length, 'messages before today').toBeGreaterThanOrEqual(45);
@@ -293,8 +307,10 @@ test.describe('Comms: pick a day, start a conversation with any driver, and page
     const zero = await client.earlier(s.a, { date: today, before: 0 });
     expect(zero.status, zero.text).toBe(400);
 
-    const foreign = Number(querySingleValue(`SELECT TOP 1 MessageID FROM app.Messages WHERE Active = 1 AND DriverUserID_FK IS NOT NULL
-      AND DriverUserID_FK <> N'${s.a}' ORDER BY MessageID DESC`));
+    const foreign = Number(
+      querySingleValue(`SELECT TOP 1 MessageID FROM app.Messages WHERE Active = 1 AND DriverUserID_FK IS NOT NULL
+      AND DriverUserID_FK <> N'${s.a}' ORDER BY MessageID DESC`),
+    );
     expect(foreign, "another driver's message").toBeGreaterThan(0);
     const notHis = await client.earlier(s.a, { date: today, before: foreign });
     expect(notHis.status, notHis.text).toBe(404);
@@ -303,7 +319,9 @@ test.describe('Comms: pick a day, start a conversation with any driver, and page
     expect(unknown.status, unknown.text).toBe(404);
   });
 
-  test('DAY-07 Load earlier and scrolling to the top add older pages above, keep the reading position, show the day divider and end at "Start of the conversation"', async ({ page }) => {
+  test('DAY-07 Load earlier and scrolling to the top add older pages above, keep the reading position, show the day divider and end at "Start of the conversation"', async ({
+    page,
+  }) => {
     await api(page);
     const expected = earlierThanToday(s.a);
     const todays = todayIds(s.a);
@@ -322,9 +340,11 @@ test.describe('Comms: pick a day, start a conversation with any driver, and page
     await expect(comms.threadRows()).toHaveCount(todays.length + 30);
     expect(await comms.threadMessageIds()).toEqual([...expected.slice(-30), ...todays]);
     await expect(comms.dayDivider()).toHaveText('Today');
-    await expect.poll(async () => Math.abs((await comms.offsetInThread(anchor)) - offsetBefore), {
-      message: 'the first message of the day stays where it was',
-    }).toBeLessThanOrEqual(40);
+    await expect
+      .poll(async () => Math.abs((await comms.offsetInThread(anchor)) - offsetBefore), {
+        message: 'the first message of the day stays where it was',
+      })
+      .toBeLessThanOrEqual(40);
     const divider = await comms.dayDivider().boundingBox();
     const anchorBox = await comms.message(anchor).boundingBox();
     const lastEarlier = await comms.message(expected[expected.length - 1]).boundingBox();
@@ -355,15 +375,17 @@ test.describe('Comms: pick a day, start a conversation with any driver, and page
 
     const state = await comms.scrollState();
     expect(state.height, 'the day has more messages than fit, so the scroll matters').toBeGreaterThan(state.client);
-    await expect.poll(async () => {
-      const now = await comms.scrollState();
-      return now.height - now.top - now.client;
-    }).toBeLessThanOrEqual(2);
+    await expect
+      .poll(async () => {
+        const now = await comms.scrollState();
+        return now.height - now.top - now.client;
+      })
+      .toBeLessThanOrEqual(2);
     expect(await comms.isInsideThreadView(s.latest)).toBe(true);
     expect(await comms.isInsideThreadView(todayIds(s.a)[0]), 'the first message of the day is scrolled out of view').toBe(false);
   });
 
-  test("DAY-09 Back and Forward after picking a day switch the list and the strip between today and tomorrow without a reload", async ({ page }) => {
+  test('DAY-09 Back and Forward after picking a day switch the list and the strip between today and tomorrow without a reload', async ({ page }) => {
     await api(page);
     const comms = await openComms(page, { driverId: s.a });
     const strip = new DateStrip(page);
@@ -400,11 +422,15 @@ test.describe('Comms: pick a day, start a conversation with any driver, and page
   test('DAY-10 earlier with before= is strictly older by (Created, MessageId) even when Created has 3 or 7 milliseconds', async ({ page }) => {
     const client = await api(page);
     const at = (ms: string) => `DATEADD(HOUR, -50, ${TODAY_START_UTC}) + CAST('00:00:00.${ms}' AS datetime)`;
-    const insert = (body: string, created: string) => Number(querySingleValue(`SET NOCOUNT ON;
+    const insert = (body: string, created: string) =>
+      Number(
+        querySingleValue(`SET NOCOUNT ON;
       INSERT app.Messages (Created, Updated, Active, DriverUserID_FK, MessageBody, PhoneNumber, SentAt, IsActioned, ActionedAt, SeenByDispatcherAt, Direction, MessageType, Channel)
       VALUES (${created}, ${created}, 1, N'${s.c}', N'${MARKER} ${body}', NULL, ${created}, 1, ${created}, ${created}, 10, 40, 10);
-      SELECT SCOPE_IDENTITY();`));
-    const remove = () => querySingleValue(`SET NOCOUNT ON; DELETE app.Messages WHERE DriverUserID_FK = N'${s.c}' AND MessageBody LIKE N'${MARKER} ms-%'; SELECT @@ROWCOUNT;`);
+      SELECT SCOPE_IDENTITY();`),
+      );
+    const remove = () =>
+      querySingleValue(`SET NOCOUNT ON; DELETE app.Messages WHERE DriverUserID_FK = N'${s.c}' AND MessageBody LIKE N'${MARKER} ms-%'; SELECT @@ROWCOUNT;`);
     try {
       const p0 = insert('ms-000 a', at('000'));
       const p3a = insert('ms-003 a', at('003'));

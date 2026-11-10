@@ -1,8 +1,8 @@
-import { env, type Credentials } from '../config/environment';
-import { test, expect, signedOut } from '../fixtures/test';
-import { adminAccount, adminAuthenticatorKey, canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '../fixtures/throwawayUsers';
-import { IdentityLoginPage } from '../pages/IdentityLoginPage';
-import { AdminShell, adminUrl } from '../pages/AdminShell';
+import { env, type Credentials } from '@config/env.config';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
+import { adminAccount, adminAuthenticatorKey, canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '@utils/throwawayUsers';
+import { IdentityLoginPage } from '@pages/identity-login.page';
+import { AdminShell, adminUrl } from '@pages/admin-shell.page';
 
 const NOT_AN_ADMIN = 'e2e.qc775.t.auth05@quarryconnect.test';
 

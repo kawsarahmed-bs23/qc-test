@@ -1,9 +1,9 @@
 import { randomUUID } from 'crypto';
 import type { APIRequestContext } from '@playwright/test';
-import { test, expect } from '../fixtures/test';
-import { canSeedLocalDb, canUseDriversDb, queryBinaryValues, queryDriversDb, querySingleValue } from '../fixtures/localDb';
-import { compactUuid, envelopeHeader, LocalStackSqs, MessagingProbeApi, sqsEnvelope, type MessagingProbe, type SqsMessage } from '../pages/MessagingProbeApi';
-import { env } from '../config/environment';
+import { test, expect } from '@fixtures/pageFixtures';
+import { canSeedLocalDb, canUseDriversDb, queryBinaryValues, queryDriversDb, querySingleValue } from '@utils/localDb';
+import { compactUuid, envelopeHeader, LocalStackSqs, MessagingProbeApi, sqsEnvelope, type MessagingProbe, type SqsMessage } from '@api/messaging-probe.api';
+import { env } from '@config/env.config';
 
 const SENT = 'message-probe-sent.V1';
 const ANSWERED = 'message-probe-answered.V1';
@@ -22,7 +22,9 @@ interface Messaging {
 }
 
 function setting(name: string): string | null {
-  return querySingleValue(`SELECT TOP 1 PropertyValue FROM app.EnvironmentSetting WHERE GroupName = N'Messaging' AND SubGroupName IS NULL AND PropertyName = N'${name}'`);
+  return querySingleValue(
+    `SELECT TOP 1 PropertyValue FROM app.EnvironmentSetting WHERE GroupName = N'Messaging' AND SubGroupName IS NULL AND PropertyName = N'${name}'`,
+  );
 }
 
 function bodyHas(uuid: string): string {
@@ -30,11 +32,11 @@ function bodyHas(uuid: string): string {
 }
 
 function hostCount(table: string, uuid: string, messageType?: string): number {
-  return Number(querySingleValue(`SELECT COUNT(*) FROM wolverine.${table} WHERE ${bodyHas(uuid)}${messageType ? ` AND message_type = '${messageType}'` : ''}`));
+  return Number(querySingleValue(`SELECT COUNT(*) FROM msg.${table} WHERE ${bodyHas(uuid)}${messageType ? ` AND message_type = '${messageType}'` : ''}`));
 }
 
 function driversCount(table: string, uuid: string, messageType?: string): number {
-  return Number(queryDriversDb(`SELECT COUNT(*) FROM wolverine.${table} WHERE ${bodyHas(uuid)}${messageType ? ` AND message_type = '${messageType}'` : ''}`));
+  return Number(queryDriversDb(`SELECT COUNT(*) FROM msg.${table} WHERE ${bodyHas(uuid)}${messageType ? ` AND message_type = '${messageType}'` : ''}`));
 }
 
 function probeRows(uuid: string): number {
@@ -42,13 +44,19 @@ function probeRows(uuid: string): number {
 }
 
 function handledProbeEnvelope(uuid: string): Buffer | null {
-  return queryBinaryValues('drivers', 'body', `wolverine.wolverine_incoming_envelopes WHERE message_type = '${SENT}' AND status = 'Handled' AND ${bodyHas(uuid)}`)[0] ?? null;
+  return (
+    queryBinaryValues(
+      'drivers',
+      'body',
+      `msg.wolverine_incoming_envelopes WHERE message_type = '${SENT}' AND status = 'Handled' AND ${bodyHas(uuid)}`,
+    )[0] ?? null
+  );
 }
 
 function answerEnvelope(uuid: string): { where: string; body: Buffer } | null {
-  const sent = queryBinaryValues('drivers', 'body', `wolverine.wolverine_outgoing_envelopes WHERE message_type = '${ANSWERED}' AND ${bodyHas(uuid)}`)[0];
+  const sent = queryBinaryValues('drivers', 'body', `msg.wolverine_outgoing_envelopes WHERE message_type = '${ANSWERED}' AND ${bodyHas(uuid)}`)[0];
   if (sent) return { where: 'Drivers wolverine_outgoing_envelopes (not yet delivered)', body: sent };
-  const received = queryBinaryValues('host', 'body', `wolverine.wolverine_incoming_envelopes WHERE message_type = '${ANSWERED}' AND ${bodyHas(uuid)}`)[0];
+  const received = queryBinaryValues('host', 'body', `msg.wolverine_incoming_envelopes WHERE message_type = '${ANSWERED}' AND ${bodyHas(uuid)}`)[0];
   return received ? { where: 'host wolverine_incoming_envelopes', body: received } : null;
 }
 
@@ -108,7 +116,7 @@ test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)
   test.afterAll(async () => {
     for (const uuid of probes) {
       querySingleValue(`DELETE FROM app.MessagingProbes WHERE ProbeUUID = '${uuid}'`);
-      queryDriversDb(`DELETE FROM wolverine.wolverine_outgoing_envelopes WHERE message_type = '${ANSWERED}' AND ${bodyHas(uuid)}`);
+      queryDriversDb(`DELETE FROM msg.wolverine_outgoing_envelopes WHERE message_type = '${ANSWERED}' AND ${bodyHas(uuid)}`);
     }
     await request?.dispose();
   });
@@ -118,7 +126,11 @@ test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)
     expect(probeRows(sent.probeUuid), 'the probe row is saved').toBe(1);
 
     await expect
-      .poll(async () => (await probe(sent.probeUuid))?.answeredAt ?? null, { message: 'the host gets MessageProbeAnswered and sets answeredAt', timeout: ANSWER_WINDOW, ...POLL })
+      .poll(async () => (await probe(sent.probeUuid))?.answeredAt ?? null, {
+        message: 'the host gets MessageProbeAnswered and sets answeredAt',
+        timeout: ANSWER_WINDOW,
+        ...POLL,
+      })
       .not.toBeNull();
     expect((await probe(sent.probeUuid))!.attempts).toBe(1);
   });
@@ -147,7 +159,11 @@ test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)
     const sent = await sendProbe(2);
 
     await expect
-      .poll(async () => (await probe(sent.probeUuid))?.answeredAt ?? null, { message: 'answered after two failed attempts (cooldowns 1 s and 5 s)', timeout: RETRY_WINDOW, ...POLL })
+      .poll(async () => (await probe(sent.probeUuid))?.answeredAt ?? null, {
+        message: 'answered after two failed attempts (cooldowns 1 s and 5 s)',
+        timeout: RETRY_WINDOW,
+        ...POLL,
+      })
       .not.toBeNull();
     expect((await probe(sent.probeUuid))!.attempts).toBe(3);
   });
@@ -174,7 +190,8 @@ test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)
       const body = sqsEnvelope(found);
       test.info().annotations.push({
         type: 'dead letter',
-        description: `SQS ${messaging.driversDeadLetterQueue}: MessageGroupId=${found.Attributes?.MessageGroupId}, MessageDeduplicationId=${found.Attributes?.MessageDeduplicationId}, ` +
+        description:
+          `SQS ${messaging.driversDeadLetterQueue}: MessageGroupId=${found.Attributes?.MessageGroupId}, MessageDeduplicationId=${found.Attributes?.MessageDeduplicationId}, ` +
           `qc-sender=${envelopeHeader(body, 'qc-sender')}, qc-recipient=${envelopeHeader(body, 'qc-recipient')}, group-id=${envelopeHeader(body, 'group-id')}, ` +
           `SQS attributes=${Object.keys(found.MessageAttributes ?? {}).join(',')}; wolverine_dead_letters rows=${wolverineDeadLetters}`,
       });
@@ -183,8 +200,8 @@ test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)
     expect(
       found,
       wolverineDeadLetters > 0
-        ? `Probe ${uuid} is NOT in the SQS queue ${messaging.driversDeadLetterQueue}; it is in the Drivers database wolverine.wolverine_dead_letters (${wolverineDeadLetters} row).`
-        : `Probe ${uuid} is in neither ${messaging.driversDeadLetterQueue} nor Drivers wolverine.wolverine_dead_letters after ${DEAD_LETTER_WINDOW / 1000} s.`,
+        ? `Probe ${uuid} is NOT in the SQS queue ${messaging.driversDeadLetterQueue}; it is in the Drivers database msg.wolverine_dead_letters (${wolverineDeadLetters} row).`
+        : `Probe ${uuid} is in neither ${messaging.driversDeadLetterQueue} nor Drivers msg.wolverine_dead_letters after ${DEAD_LETTER_WINDOW / 1000} s.`,
     ).not.toBeNull();
     const body = sqsEnvelope(found!);
     expect(found!.Attributes?.MessageGroupId, 'the SQS group is the probe').toBe(compactUuid(uuid));
@@ -200,22 +217,29 @@ test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)
     const sent = await sendProbe(0);
     const uuid = sent.probeUuid.toLowerCase();
 
-    await expect.poll(() => handledProbeEnvelope(uuid) !== null, { message: 'the Drivers inbox handled the probe', timeout: ANSWER_WINDOW, ...POLL }).toBe(true);
+    await expect
+      .poll(() => handledProbeEnvelope(uuid) !== null, { message: 'the Drivers inbox handled the probe', timeout: ANSWER_WINDOW, ...POLL })
+      .toBe(true);
     const envelope = handledProbeEnvelope(uuid)!;
     const envelopeId = envelopeHeader(envelope, 'id');
     expect(envelopeId, 'the stored envelope carries its id').toMatch(/^[0-9a-f-]{36}$/);
 
     let before: MessagingProbe | null = null;
-    for (const until = Date.now() + ANSWER_WINDOW; Date.now() < until && !before?.answeredAt; ) {
+    for (const until = Date.now() + ANSWER_WINDOW; Date.now() < until && !before?.answeredAt;) {
       before = await probe(uuid);
       if (!before?.answeredAt) await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
 
     await sqs.sendEnvelope(messaging.driversQueue, envelope, compactUuid(uuid), `e2e-qc776-${randomUUID()}`);
-    await expect.poll(() => sqs.depth(messaging.driversQueue), { message: 'the Drivers API took the duplicate off its queue', timeout: ANSWER_WINDOW, ...POLL }).toBe(0);
+    await expect
+      .poll(() => sqs.depth(messaging.driversQueue), { message: 'the Drivers API took the duplicate off its queue', timeout: ANSWER_WINDOW, ...POLL })
+      .toBe(0);
     await new Promise((resolve) => setTimeout(resolve, QUIET_WAIT));
 
-    expect(Number(queryDriversDb(`SELECT COUNT(*) FROM wolverine.wolverine_incoming_envelopes WHERE id = '${envelopeId}'`)), 'one inbox row for the envelope id').toBe(1);
+    expect(
+      Number(queryDriversDb(`SELECT COUNT(*) FROM msg.wolverine_incoming_envelopes WHERE id = '${envelopeId}'`)),
+      'one inbox row for the envelope id',
+    ).toBe(1);
     expect(driversCount('wolverine_incoming_envelopes', uuid, SENT), 'no second inbox row for the probe').toBe(1);
     expect(driversCount('wolverine_dead_letters', uuid), 'the duplicate was not dead-lettered').toBe(0);
     expect(answersProduced(uuid), 'the Drivers handler answered once').toBe(1);
@@ -230,15 +254,20 @@ test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)
     const sent = await sendProbe(0);
     const uuid = sent.probeUuid.toLowerCase();
 
-    await expect.poll(() => handledProbeEnvelope(uuid) !== null, { message: 'the Drivers inbox stored MessageProbeSent', timeout: ANSWER_WINDOW, ...POLL }).toBe(true);
+    await expect
+      .poll(() => handledProbeEnvelope(uuid) !== null, { message: 'the Drivers inbox stored MessageProbeSent', timeout: ANSWER_WINDOW, ...POLL })
+      .toBe(true);
     const probeSent = handledProbeEnvelope(uuid)!;
-    expect({
-      sender: envelopeHeader(probeSent, 'qc-sender'),
-      recipient: envelopeHeader(probeSent, 'qc-recipient'),
-      group: envelopeHeader(probeSent, 'group-id'),
-      deduplication: envelopeHeader(probeSent, 'deduplication-id'),
-      occurredAt: !!envelopeHeader(probeSent, 'qc-occurred-at'),
-    }, 'MessageProbeSent headers').toEqual({
+    expect(
+      {
+        sender: envelopeHeader(probeSent, 'qc-sender'),
+        recipient: envelopeHeader(probeSent, 'qc-recipient'),
+        group: envelopeHeader(probeSent, 'group-id'),
+        deduplication: envelopeHeader(probeSent, 'deduplication-id'),
+        occurredAt: !!envelopeHeader(probeSent, 'qc-occurred-at'),
+      },
+      'MessageProbeSent headers',
+    ).toEqual({
       sender: messaging.hostUuid,
       recipient: messaging.driversUuid,
       group: compactUuid(uuid),
@@ -246,15 +275,20 @@ test.describe('Host and Drivers API talk over SQS with outbox and inbox (QC-776)
       occurredAt: true,
     });
 
-    await expect.poll(() => answerEnvelope(uuid) !== null, { message: 'the answer envelope is stored on either side', timeout: ANSWER_WINDOW, ...POLL }).toBe(true);
+    await expect
+      .poll(() => answerEnvelope(uuid) !== null, { message: 'the answer envelope is stored on either side', timeout: ANSWER_WINDOW, ...POLL })
+      .toBe(true);
     const answer = answerEnvelope(uuid)!;
-    expect({
-      sender: envelopeHeader(answer.body, 'qc-sender'),
-      recipient: envelopeHeader(answer.body, 'qc-recipient'),
-      group: envelopeHeader(answer.body, 'group-id'),
-      deduplication: envelopeHeader(answer.body, 'deduplication-id'),
-      occurredAt: !!envelopeHeader(answer.body, 'qc-occurred-at'),
-    }, `MessageProbeAnswered headers (read from ${answer.where})`).toEqual({
+    expect(
+      {
+        sender: envelopeHeader(answer.body, 'qc-sender'),
+        recipient: envelopeHeader(answer.body, 'qc-recipient'),
+        group: envelopeHeader(answer.body, 'group-id'),
+        deduplication: envelopeHeader(answer.body, 'deduplication-id'),
+        occurredAt: !!envelopeHeader(answer.body, 'qc-occurred-at'),
+      },
+      `MessageProbeAnswered headers (read from ${answer.where})`,
+    ).toEqual({
       sender: messaging.driversUuid,
       recipient: messaging.hostUuid,
       group: compactUuid(uuid),

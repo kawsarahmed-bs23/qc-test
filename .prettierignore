@@ -1,0 +1,14 @@
+node_modules/
+reports/
+test-results/
+playwright-report/
+blob-report/
+.auth/
+seed/
+env/
+package-lock.json
+*.md
+scripts/
+test-data/
+.github/
+*.yml

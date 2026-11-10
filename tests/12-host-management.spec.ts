@@ -1,5 +1,15 @@
-import { test, expect } from '../fixtures/test';
-import { canSeedLocalDb, canUseIdentityDb, canUseMasterDb, queryIdentityDb, queryMasterDb, querySingleValue, runIdentitySeedScript, runMasterSeedScript, runSeedScript } from '../fixtures/localDb';
+import { test, expect } from '@fixtures/pageFixtures';
+import {
+  canSeedLocalDb,
+  canUseIdentityDb,
+  canUseMasterDb,
+  queryIdentityDb,
+  queryMasterDb,
+  querySingleValue,
+  runIdentitySeedScript,
+  runMasterSeedScript,
+  runSeedScript,
+} from '@utils/localDb';
 import {
   featureCatalog,
   featuresSync,
@@ -9,20 +19,21 @@ import {
   restoreHostFeatures,
   snapshotHostFeatures,
   type FeatureSnapshot,
-} from '../fixtures/featureSnapshot';
-import { adminAccount } from '../fixtures/throwawayUsers';
-import { AdminApi, canUseAdminApi } from '../pages/AdminApi';
-import { adminUrl } from '../pages/AdminShell';
-import { authorizeUrl, identityLanding } from '../pages/HostSignInFlow';
-import { HostEnvironmentPage, HostFeaturesPage, HostFormPage, HostListPage, UserDetailPage } from '../pages/HostManagementPages';
-import { DashboardPage, HostNav } from '../pages/HostPages';
-import { UserListPage } from '../pages/UserListPage';
-import { env } from '../config/environment';
+} from '@utils/featureSnapshot';
+import { adminAccount } from '@utils/throwawayUsers';
+import { AdminApi, canUseAdminApi } from '@api/admin.api';
+import { adminUrl } from '@pages/admin-shell.page';
+import { authorizeUrl, identityLanding } from '@pages/host-sign-in-flow.page';
+import { HostEnvironmentPage, HostFeaturesPage, HostFormPage, HostListPage, UserDetailPage } from '@pages/host-management.page';
+import { DashboardPage, HostNav } from '@pages/host.page';
+import { UserListPage } from '@pages/user-list.page';
+import { env } from '@config/env.config';
 
 const MEMBER = 'e2e.qc739.member@quarryconnect.test';
 const SAFE_SETTING = 'DispatchSnapshot:RateLimitPermitsPerHour';
 const PROBE = { key: 'e2e_qc775_probe', label: 'E2E QC-775 probe' };
-const NO_API_SAVED = (saving: string) => `${saving} This host has no API address, so its features are kept in HOST_MASTER until one is added on the host's details page.`;
+const NO_API_SAVED = (saving: string) =>
+  `${saving} This host has no API address, so its features are kept in HOST_MASTER until one is added on the host's details page.`;
 const PENDING_TEXT = "The host holds a different value for some features. Save to send HOST_MASTER's values.";
 
 function sqlText(value: string): string {
@@ -30,17 +41,21 @@ function sqlText(value: string): string {
 }
 
 test.describe('Hosts (QC-739, Angular since QC-742)', () => {
-  test('HM-01 the hosts list links each host by its UUID and shows its sign-in client, with no Identity link column', { tag: '@smoke' }, async ({ page, targetHost }) => {
-    const list = new HostListPage(page);
-    await list.open();
-    const row = list.row(targetHost.uuid);
-    await expect(row).toContainText(targetHost.name);
-    if (env.hostClient) {
-      await expect(row.locator('td.mat-column-clientId')).toHaveText(env.hostClient.clientId);
-    }
-    await expect(row.locator('[data-testid="host-identity"]')).toHaveCount(0);
-    await expect(list.link(targetHost.uuid)).toHaveAttribute('href', `#/hosts/${targetHost.uuid}`);
-  });
+  test(
+    'HM-01 the hosts list links each host by its UUID and shows its sign-in client, with no Identity link column',
+    { tag: '@smoke' },
+    async ({ page, targetHost }) => {
+      const list = new HostListPage(page);
+      await list.open();
+      const row = list.row(targetHost.uuid);
+      await expect(row).toContainText(targetHost.name);
+      if (env.hostClient) {
+        await expect(row.locator('td.mat-column-clientId')).toHaveText(env.hostClient.clientId);
+      }
+      await expect(row.locator('[data-testid="host-identity"]')).toHaveCount(0);
+      await expect(list.link(targetHost.uuid)).toHaveAttribute('href', `#/hosts/${targetHost.uuid}`);
+    },
+  );
 
   test("HM-02 a host's page shows its UUID and sign-in client and links to its Sign-in tab, never a numeric id", async ({ page, targetHost }) => {
     const form = new HostFormPage(page);
@@ -82,52 +97,62 @@ test.describe('Hosts (QC-739, Angular since QC-742)', () => {
       if (canUseMasterDb()) runMasterSeedScript('master-e2e-hosts.remove.sql');
     });
 
-    test('HM-05 a created host can be signed into once Identity reads the HOST_MASTER feed, and deactivating it after confirming stops sign-in', { tag: '@create' }, async ({ page, shell }) => {
-      test.setTimeout(2 * env.identityHostCacheSeconds * 1000 + 90_000);
-      const stamp = Date.now().toString(36);
-      const clientId = `e2e-qc739.web${stamp}`;
-      const uiUrl = 'http://localhost:4297';
-      const form = new HostFormPage(page);
+    test(
+      'HM-05 a created host can be signed into once Identity reads the HOST_MASTER feed, and deactivating it after confirming stops sign-in',
+      { tag: '@create' },
+      async ({ page, shell }) => {
+        test.setTimeout(2 * env.identityHostCacheSeconds * 1000 + 90_000);
+        const stamp = Date.now().toString(36);
+        const clientId = `e2e-qc739.web${stamp}`;
+        const uiUrl = 'http://localhost:4297';
+        const form = new HostFormPage(page);
 
-      await form.openNew();
-      await form.fill({
-        name: `E2E QC-739 ${stamp}`,
-        hostKey: `e2e-qc739-${stamp}`,
-        clientId,
-        databaseName: 'QuarryConnect_Dev',
-        organisationId: '99',
-        uiUrl,
-      });
-      await form.create.click();
+        await form.openNew();
+        await form.fill({
+          name: `E2E QC-739 ${stamp}`,
+          hostKey: `e2e-qc739-${stamp}`,
+          clientId,
+          databaseName: 'QuarryConnect_Dev',
+          organisationId: '99',
+          uiUrl,
+        });
+        await form.create.click();
 
-      await expect(page).toHaveURL(/#\/hosts\/[0-9a-f-]{36}$/);
-      await shell.expectStatus('created');
-      await expect(form.clientId).toHaveText(clientId);
+        await expect(page).toHaveURL(/#\/hosts\/[0-9a-f-]{36}$/);
+        await shell.expectStatus('created');
+        await expect(form.clientId).toHaveText(clientId);
 
-      const flow = authorizeUrl({ client_id: clientId, redirect_uri: `${uiUrl}/` });
-      const wait = { timeout: env.identityHostCacheSeconds * 1000, intervals: [2_000, 5_000, 10_000] };
-      await expect.poll(() => identityLanding(flow), { message: 'Identity reads the new host', ...wait }).toMatch(/\/Account\/Login/i);
+        const flow = authorizeUrl({ client_id: clientId, redirect_uri: `${uiUrl}/` });
+        const wait = { timeout: env.identityHostCacheSeconds * 1000, intervals: [2_000, 5_000, 10_000] };
+        await expect.poll(() => identityLanding(flow), { message: 'Identity reads the new host', ...wait }).toMatch(/\/Account\/Login/i);
 
-      await form.deactivate.click();
-      await form.confirmDialog.accept();
-      await expect(page).toHaveURL(adminUrl('/hosts'));
-      await shell.expectStatus('deactivated');
-      await expect.poll(() => identityLanding(flow), { message: 'Identity drops the deactivated host', ...wait }).toBe(env.landingUrl ?? 'https://www.quarryconnect.com/');
-    });
+        await form.deactivate.click();
+        await form.confirmDialog.accept();
+        await expect(page).toHaveURL(adminUrl('/hosts'));
+        await shell.expectStatus('deactivated');
+        await expect
+          .poll(() => identityLanding(flow), { message: 'Identity drops the deactivated host', ...wait })
+          .toBe(env.landingUrl ?? 'https://www.quarryconnect.com/');
+      },
+    );
   });
 });
 
 test.describe('Host features (QC-739, Angular since QC-742)', () => {
-  test('HF-01 product features come from the HOST_MASTER catalog with their rules, and MFA from HOST_MASTER', { tag: '@smoke' }, async ({ page, targetHost }) => {
-    const features = new HostFeaturesPage(page);
-    await features.open(targetHost.uuid);
-    for (const key of ['quickbooks', 'sage', 'dispatch', 'dispatch_statewide', 'maps']) {
-      await expect(features.feature(key)).toBeAttached();
-    }
-    await expect(features.feature('sage')).toHaveAttribute('data-exclusive', 'quickbooks');
-    await expect(features.feature('dispatch_statewide')).toHaveAttribute('data-requires', 'dispatch');
-    await expect(features.mfa).toBeAttached();
-  });
+  test(
+    'HF-01 product features come from the HOST_MASTER catalog with their rules, and MFA from HOST_MASTER',
+    { tag: '@smoke' },
+    async ({ page, targetHost }) => {
+      const features = new HostFeaturesPage(page);
+      await features.open(targetHost.uuid);
+      for (const key of ['quickbooks', 'sage', 'dispatch', 'dispatch_statewide', 'maps']) {
+        await expect(features.feature(key)).toBeAttached();
+      }
+      await expect(features.feature('sage')).toHaveAttribute('data-exclusive', 'quickbooks');
+      await expect(features.feature('dispatch_statewide')).toHaveAttribute('data-requires', 'dispatch');
+      await expect(features.mfa).toBeAttached();
+    },
+  );
 
   test('HF-02 the page locks a feature whose dependency is off or whose rival is on', async ({ page, targetHost }) => {
     const features = new HostFeaturesPage(page);
@@ -157,7 +182,9 @@ test.describe('Host features (QC-739, Angular since QC-742)', () => {
     expect(exclusive.status).toBe(400);
     expect(exclusive.text).toContain('QuickBooks and Sage cannot both be on.');
 
-    const dependency = await api.put(`/hosts/${targetHost.uuid}/features/product`, { enabled: [...before.filter((k) => k !== 'dispatch'), 'dispatch_statewide'] });
+    const dependency = await api.put(`/hosts/${targetHost.uuid}/features/product`, {
+      enabled: [...before.filter((k) => k !== 'dispatch'), 'dispatch_statewide'],
+    });
     expect(dependency.status).toBe(400);
     expect(dependency.text).toContain('Statewide dispatch needs Dispatch to be on.');
 
@@ -169,27 +196,31 @@ test.describe('Host features (QC-739, Angular since QC-742)', () => {
     expect((await features.enabledKeys()).sort()).toEqual([...before].sort());
   });
 
-  test('HF-04 switching Maps saves through the host API, survives a reload and names who changed it', { tag: '@write' }, async ({ page, targetHost, shell }) => {
-    const features = new HostFeaturesPage(page);
-    await features.open(targetHost.uuid);
-    const original = await features.isOn('maps');
+  test(
+    'HF-04 switching Maps saves through the host API, survives a reload and names who changed it',
+    { tag: '@write' },
+    async ({ page, targetHost, shell }) => {
+      const features = new HostFeaturesPage(page);
+      await features.open(targetHost.uuid);
+      const original = await features.isOn('maps');
 
-    try {
-      await features.setOn('maps', !original);
-      await features.save.click();
-      await shell.expectStatus('Saved 1 feature change.');
-      await features.open(targetHost.uuid);
-      await expect(features.checkbox('maps')).toBeChecked({ checked: !original });
-      await expect(features.row('maps')).toContainText(`Changed by ${adminAccount()!.email}`);
-    } finally {
-      await features.open(targetHost.uuid);
-      if ((await features.isOn('maps')) !== original) {
-        await features.setOn('maps', original);
+      try {
+        await features.setOn('maps', !original);
         await features.save.click();
         await shell.expectStatus('Saved 1 feature change.');
+        await features.open(targetHost.uuid);
+        await expect(features.checkbox('maps')).toBeChecked({ checked: !original });
+        await expect(features.row('maps')).toContainText(`Changed by ${adminAccount()!.email}`);
+      } finally {
+        await features.open(targetHost.uuid);
+        if ((await features.isOn('maps')) !== original) {
+          await features.setOn('maps', original);
+          await features.save.click();
+          await shell.expectStatus('Saved 1 feature change.');
+        }
       }
-    }
-  });
+    },
+  );
 
   test("HF-05 the MFA switch shows the host's HOST_MASTER mfa row and says Identity applies it within 5 minutes (QC-775)", async ({ page, targetHost }) => {
     test.skip(!canUseMasterDb(), 'Needs MASTER_SQL_DATABASE (local only).');
@@ -246,7 +277,11 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
     await expect(features.empty).toHaveCount(0);
   });
 
-  test('HF-07 a host with no API address lists the whole catalog for editing, warns, and a save is kept in HOST_MASTER (QC-744 wording)', async ({ page, request, shell }) => {
+  test('HF-07 a host with no API address lists the whole catalog for editing, warns, and a save is kept in HOST_MASTER (QC-744 wording)', async ({
+    page,
+    request,
+    shell,
+  }) => {
     const uuid = throwawayUuid('e2e-qc775-features');
     const id = masterHostId(uuid);
     const catalog = featureCatalog();
@@ -269,7 +304,12 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
 
     const stored = masterFeatureFlags(id);
     expect(Object.keys(stored).sort()).toEqual(catalog.map((f) => f.key).sort());
-    expect(Object.entries(stored).filter(([, on]) => on).map(([key]) => key).sort()).toEqual(['maps', 'reports']);
+    expect(
+      Object.entries(stored)
+        .filter(([, on]) => on)
+        .map(([key]) => key)
+        .sort(),
+    ).toEqual(['maps', 'reports']);
     expect(featuresSync(id), 'nothing was sent, so no sync is recorded').toBeNull();
 
     await features.open(uuid);
@@ -289,7 +329,11 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
     expect(masterFeatureFlags(id).reports).toBe(false);
   });
 
-  test('HF-08 a save on the target host reaches the host database for every catalog feature and leaves nothing pending', async ({ page, targetHost, shell }) => {
+  test('HF-08 a save on the target host reaches the host database for every catalog feature and leaves nothing pending', async ({
+    page,
+    targetHost,
+    shell,
+  }) => {
     const features = new HostFeaturesPage(page);
     await features.open(targetHost.uuid);
     const original = await features.isOn('ai_ocr');
@@ -325,13 +369,20 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
     expect(hostDbFeatureFlags(rockRidge.organisationId).ai_ocr ?? false).toBe(original);
   });
 
-  test('HF-09 a new catalog feature is listed for every host, can be switched on, reaches the host database and shows on the dashboard card', async ({ page, request, targetHost, shell }) => {
+  test('HF-09 a new catalog feature is listed for every host, can be switched on, reaches the host database and shows on the dashboard card', async ({
+    page,
+    request,
+    targetHost,
+    shell,
+  }) => {
     test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
     const features = new HostFeaturesPage(page);
     const api = AdminApi.asAdmin(request);
 
     try {
-      queryMasterDb(`INSERT app.Features (FeatureKey, Label, SortOrder, CreatedBy, UpdatedBy) VALUES ('${PROBE.key}', N'${PROBE.label}', 9990, N'e2e', N'e2e')`);
+      queryMasterDb(
+        `INSERT app.Features (FeatureKey, Label, SortOrder, CreatedBy, UpdatedBy) VALUES ('${PROBE.key}', N'${PROBE.label}', 9990, N'e2e', N'e2e')`,
+      );
 
       const hosts = (queryMasterDb(`SELECT CAST(HostUUID AS varchar(36)) FROM app.Hosts WHERE Active = 1`) ?? '').split(/\r?\n/).filter(Boolean);
       expect(hosts.length).toBeGreaterThan(1);
@@ -372,7 +423,11 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
     await expect(features.pendingBadges).toHaveCount(0);
   });
 
-  test('HF-10 a value changed in the host database behind Admin is flagged as not on the host yet, and saving sends it back', async ({ page, targetHost, shell }) => {
+  test('HF-10 a value changed in the host database behind Admin is flagged as not on the host yet, and saving sends it back', async ({
+    page,
+    targetHost,
+    shell,
+  }) => {
     const before = hostDbFeatureFlags(rockRidge.organisationId);
     test.skip(before.maps === undefined, 'The host database has no maps row to change.');
     const master = masterFeatureFlags(rockRidge.hostId).maps ?? false;
@@ -395,11 +450,15 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
       await expect(features.pending).toHaveCount(0);
       await expect(features.pendingBadges).toHaveCount(0);
     } finally {
-      querySingleValue(`UPDATE app.HostFeatures SET Enabled = ${before.maps ? 1 : 0} WHERE OrganisationID_FK = ${rockRidge.organisationId} AND FeatureKey = 'maps'`);
+      querySingleValue(
+        `UPDATE app.HostFeatures SET Enabled = ${before.maps ? 1 : 0} WHERE OrganisationID_FK = ${rockRidge.organisationId} AND FeatureKey = 'maps'`,
+      );
     }
   });
 
-  test('HF-11 when the host API cannot be reached, a save is refused with an error, HOST_MASTER keeps its values and the sync is marked failed (QC-744)', async ({ page }) => {
+  test('HF-11 when the host API cannot be reached, a save is refused with an error, HOST_MASTER keeps its values and the sync is marked failed (QC-744)', async ({
+    page,
+  }) => {
     runMasterSeedScript('master-qc744-host.apply.sql');
     try {
       const uuid = throwawayUuid('e2e-qc744-unreachable');
@@ -447,25 +506,29 @@ test.describe('Host features owned by HOST_MASTER (QC-775)', { tag: '@write' }, 
 });
 
 test.describe('Host environment (QC-739, Angular since QC-742)', () => {
-  test('HE-01 secrets are never filled in: each shows only whether it is set, and every setting is keyed by its HOST_MASTER uuid (QC-744)', { tag: '@smoke' }, async ({ page, targetHost }) => {
-    const environment = new HostEnvironmentPage(page);
-    await environment.open(targetHost.uuid);
-    await expect(page.locator('#environment-saved-copy')).toHaveCount(0);
-    const ids = await environment.rows().evaluateAll((rows) => rows.map((row) => row.getAttribute('data-setting-id')!));
-    expect(ids.length).toBeGreaterThan(0);
-    for (const id of ids) {
-      expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
-    }
-    expect(new Set(ids).size).toBe(ids.length);
-    const secrets = environment.secretInputs();
-    expect(await secrets.count()).toBeGreaterThan(0);
-    for (const secret of await secrets.all()) {
-      await expect(secret).toHaveAttribute('type', 'password');
-      await expect(secret).toHaveAttribute('autocomplete', 'new-password');
-      await expect(secret).toHaveValue('');
-    }
-    await expect(environment.secretFields().first().locator('mat-hint')).toHaveText(/^\s*(Set|Not set)\s*$/);
-  });
+  test(
+    'HE-01 secrets are never filled in: each shows only whether it is set, and every setting is keyed by its HOST_MASTER uuid (QC-744)',
+    { tag: '@smoke' },
+    async ({ page, targetHost }) => {
+      const environment = new HostEnvironmentPage(page);
+      await environment.open(targetHost.uuid);
+      await expect(page.locator('#environment-saved-copy')).toHaveCount(0);
+      const ids = await environment.rows().evaluateAll((rows) => rows.map((row) => row.getAttribute('data-setting-id')!));
+      expect(ids.length).toBeGreaterThan(0);
+      for (const id of ids) {
+        expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+      }
+      expect(new Set(ids).size).toBe(ids.length);
+      const secrets = environment.secretInputs();
+      expect(await secrets.count()).toBeGreaterThan(0);
+      for (const secret of await secrets.all()) {
+        await expect(secret).toHaveAttribute('type', 'password');
+        await expect(secret).toHaveAttribute('autocomplete', 'new-password');
+        await expect(secret).toHaveValue('');
+      }
+      await expect(environment.secretFields().first().locator('mat-hint')).toHaveText(/^\s*(Set|Not set)\s*$/);
+    },
+  );
 
   test('HE-02 a value of the wrong type is refused on its own field and nothing is sent', async ({ page, targetHost, shell }) => {
     const environment = new HostEnvironmentPage(page);
@@ -538,7 +601,10 @@ test.describe('Users (QC-739, Angular since QC-742; no host mappings since QC-77
     runIdentitySeedScript('identity-qc739.remove.sql');
   });
 
-  test('HU-03 the user page shows the account with no hosts, says whether it is a platform admin, and switches it off and on after confirming', async ({ page, shell }) => {
+  test('HU-03 the user page shows the account with no hosts, says whether it is a platform admin, and switches it off and on after confirming', async ({
+    page,
+    shell,
+  }) => {
     const list = new UserListPage(page);
     await list.open({ search: 'e2e.qc739.member' });
     await list.rowByEmail(MEMBER).locator('[data-testid="user-name"]').click();
@@ -559,12 +625,12 @@ test.describe('Users (QC-739, Angular since QC-742; no host mappings since QC-77
     await detail.setActive(false);
     await shell.expectStatus('deactivated and every session was ended');
     await expect(detail.state).toHaveText('Account deactivated');
-    expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM Users WHERE Email = ${sqlText(MEMBER)}`)).toBe('0');
+    expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM auth.Users WHERE Email = ${sqlText(MEMBER)}`)).toBe('0');
 
     await detail.setActive(true);
     await shell.expectStatus('active again');
     await expect(detail.state).toHaveText('Account active');
-    expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM Users WHERE Email = ${sqlText(MEMBER)}`)).toBe('1');
+    expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM auth.Users WHERE Email = ${sqlText(MEMBER)}`)).toBe('1');
   });
 
   test('HU-05 the Users page finds a user and links to them by their Identity id', async ({ page }) => {

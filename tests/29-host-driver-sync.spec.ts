@@ -2,18 +2,18 @@ import { createHash, randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { APIRequestContext } from '@playwright/test';
-import { test, expect } from '../fixtures/test';
-import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '../fixtures/localDb';
-import { HostApi } from '../pages/DriversMirrorApi';
-import { isReplayed, withCursor, type TicketFile } from '../pages/DriverSyncApi';
-import { HostDriverSyncApi, type HostSyncPayload } from '../pages/HostDriverSyncApi';
-import { env } from '../config/environment';
+import { test, expect } from '@fixtures/pageFixtures';
+import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '@utils/localDb';
+import { HostApi } from '@api/drivers-mirror.api';
+import { isReplayed, withCursor, type TicketFile } from '@api/driver-sync.api';
+import { HostDriverSyncApi, type HostSyncPayload } from '@api/host-driver-sync.api';
+import { env, TEST_DATA_DIR } from '@config/env.config';
 
 const DRIVER_EMAIL = 'e2e.qc829h.driver@quarryconnect.test';
 const SECOND_DRIVER_EMAIL = 'e2e.qc829h.driver2@quarryconnect.test';
 const DISPATCHER_EMAIL = 'e2e.qc829h.dispatcher@quarryconnect.test';
 const MARKER = 'e2e-qc829h';
-const TICKET_JPEG = path.resolve(__dirname, '..', 'fixtures', 'qc803', 'logo-solid.jpg');
+const TICKET_JPEG = path.join(TEST_DATA_DIR, 'qc803', 'logo-solid.jpg');
 const DAY_MS = 24 * 3600 * 1000;
 
 type Role = 'work' | 'other' | 'edit' | 'gone' | 'move' | 'chat';
@@ -66,6 +66,7 @@ function removeAll(): void {
 
 test.describe('Host API local-first driver sync: delta reads, batched writes and idempotency keys (QC-829)', { tag: '@write' }, () => {
   test.describe.configure({ mode: 'serial' });
+  test.skip(true, 'QC-920: host api/driver-sync removed (D74); DEVT-11 asserts the 404.');
   test.skip(!canSeedLocalDb() || !canUseIdentityDb(), 'Needs the host and Identity local databases (local only; Identity is only read for the password hash).');
   test.skip(!env.admin, 'Needs ADMIN_EMAIL / ADMIN_PASSWORD; the throwaway host users copy that password.');
   test.skip(!env.appApiUrl, 'Needs APP_API_URL (the host API).');
@@ -78,7 +79,8 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
   let uploaded: Buffer | null = null;
 
   const receipts = (where: string) => hostNumber(`SELECT COUNT(*) FROM app.DriverCommandReceipts WHERE UserID_FK = ${sqlText(seeded.userId)} AND ${where}`);
-  const assignmentStatus = (role: Role) => hostNumber(`SELECT OrderAssignmentStatusID_FK FROM app.OrderAssignments WHERE OrderAssignmentID = ${seeded.ids[role]}`);
+  const assignmentStatus = (role: Role) =>
+    hostNumber(`SELECT OrderAssignmentStatusID_FK FROM app.OrderAssignments WHERE OrderAssignmentID = ${seeded.ids[role]}`);
   const messagesByBody = (body: string) => hostNumber(`SELECT COUNT(*) FROM app.Messages WHERE MessageBody = ${sqlText(body)}`);
 
   const dispatcher = async (): Promise<HostApi> => {
@@ -126,7 +128,11 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
     expect(first.reset).toBe(true);
     expect(first.cursor).toBeTruthy();
     expect(idsOf(first.assignments, 'orderAssignmentId')).toEqual(ROLES.map((role) => seeded.ids[role]).sort((a, b) => a - b));
-    const seededMessages = (hostValue(`SELECT STRING_AGG(m.MessageID, ',') FROM app.Messages m JOIN app.OrderAssignments oa ON oa.OrderAssignmentID = m.OrderAssignmentID_FK WHERE oa.DriverUserID_FK = ${sqlText(seeded.userId)}`) ?? '')
+    const seededMessages = (
+      hostValue(
+        `SELECT STRING_AGG(m.MessageID, ',') FROM app.Messages m JOIN app.OrderAssignments oa ON oa.OrderAssignmentID = m.OrderAssignmentID_FK WHERE oa.DriverUserID_FK = ${sqlText(seeded.userId)}`,
+      ) ?? ''
+    )
       .split(',')
       .map(Number)
       .sort((a, b) => a - b);
@@ -134,7 +140,10 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
     expect(idsOf(first.messages, 'messageId'), 'the dispatch message to the driver and the one on the move job that names no driver').toEqual(seededMessages);
     expect(first.trips).toEqual([]);
     expect(first.deleted, 'a reset carries no tombstones').toEqual([]);
-    expect(first.assignments.find((a) => a.orderAssignmentId === seeded.ids.work), 'assignment rows have the my-assignments shape').toMatchObject({
+    expect(
+      first.assignments.find((a) => a.orderAssignmentId === seeded.ids.work),
+      'assignment rows have the my-assignments shape',
+    ).toMatchObject({
       status: 'pending',
       completedTripCount: 0,
       notes: `${MARKER} work`,
@@ -185,16 +194,27 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
     const body = `${MARKER} dispatch delta ${Date.now()}`;
     const sent = await (await dispatcher()).sendDispatchMessage(seeded.userId, seeded.ids.chat, body);
     expect(sent.status(), `the host stores the dispatch message: ${sent.status() === 200 ? '' : await sent.text()}`).toBe(200);
-    const stored = hostValue(`SELECT CONCAT(COUNT(*), '|', MIN(MessageID), '|', MIN(OrderAssignmentID_FK)) FROM app.Messages WHERE MessageBody = ${sqlText(body)}`)!;
+    const stored = hostValue(
+      `SELECT CONCAT(COUNT(*), '|', MIN(MessageID), '|', MIN(OrderAssignmentID_FK)) FROM app.Messages WHERE MessageBody = ${sqlText(body)}`,
+    )!;
     const [count, messageId, threadId] = stored.split('|').map(Number);
     expect(count, `the host stored the dispatch message once (${stored})`).toBe(1);
     expect(threadId).toBe(seeded.ids.chat);
 
     const delta = await driver.changes(from);
     expect(delta.reset).toBe(false);
-    expect(delta.messages.map((m) => ({ messageId: m.messageId, messageBody: m.messageBody, isFromDispatch: m.isFromDispatch, orderAssignmentId: m.orderAssignmentId })))
-      .toEqual([{ messageId, messageBody: body, isFromDispatch: true, orderAssignmentId: seeded.ids.chat }]);
-    expect(delta.assignments.every((a) => a.orderAssignmentId === seeded.ids.chat), 'no other assignment changed').toBe(true);
+    expect(
+      delta.messages.map((m) => ({
+        messageId: m.messageId,
+        messageBody: m.messageBody,
+        isFromDispatch: m.isFromDispatch,
+        orderAssignmentId: m.orderAssignmentId,
+      })),
+    ).toEqual([{ messageId, messageBody: body, isFromDispatch: true, orderAssignmentId: seeded.ids.chat }]);
+    expect(
+      delta.assignments.every((a) => a.orderAssignmentId === seeded.ids.chat),
+      'no other assignment changed',
+    ).toBe(true);
     expect({ trips: delta.trips, deleted: delta.deleted }).toEqual({ trips: [], deleted: [] });
     settled = delta.cursor;
   });
@@ -203,23 +223,33 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
     const from = settled;
     const voided = await (await dispatcher()).voidOrder(seeded.orders.gone);
     expect(voided.status(), `DELETE api/order/${seeded.orders.gone}: ${voided.status() === 200 ? '' : await voided.text()}`).toBe(200);
-    expect(hostValue(`SELECT CAST(Active AS int) FROM app.OrderAssignments WHERE OrderAssignmentID = ${seeded.ids.gone}`), 'the void soft-deletes the assignment').toBe('0');
+    expect(
+      hostValue(`SELECT CAST(Active AS int) FROM app.OrderAssignments WHERE OrderAssignmentID = ${seeded.ids.gone}`),
+      'the void soft-deletes the assignment',
+    ).toBe('0');
 
     const delta = await driver.changes(from);
     expect(delta.reset).toBe(false);
     expect(delta.deleted).toEqual([{ type: 'assignment', id: seeded.ids.gone, uuid: seeded.uuids.gone }]);
-    expect(delta.assignments.map((a) => a.orderAssignmentId), 'the voided assignment is not current too').not.toContain(seeded.ids.gone);
+    expect(
+      delta.assignments.map((a) => a.orderAssignmentId),
+      'the voided assignment is not current too',
+    ).not.toContain(seeded.ids.gone);
 
     const reset = await driver.changes();
     expect(idsOf(reset.assignments, 'orderAssignmentId')).not.toContain(seeded.ids.gone);
     settled = delta.cursor;
   });
 
-  test('HSYNC-07 an assignment moved to a second driver shows in the first driver\'s deleted from its tombstone, does not come back as current, and is current for the second driver', async () => {
+  test("HSYNC-07 an assignment moved to a second driver shows in the first driver's deleted from its tombstone, does not come back as current, and is current for the second driver", async () => {
     const from = settled;
-    hostValue(`UPDATE app.OrderAssignments SET DriverUserID_FK = ${sqlText(seeded.secondDriverId)}, Updated = GETUTCDATE() WHERE OrderAssignmentID = ${seeded.ids.move}`);
+    hostValue(
+      `UPDATE app.OrderAssignments SET DriverUserID_FK = ${sqlText(seeded.secondDriverId)}, Updated = GETUTCDATE() WHERE OrderAssignmentID = ${seeded.ids.move}`,
+    );
     expect(
-      hostNumber(`SELECT COUNT(*) FROM app.DriverSyncTombstones WHERE DriverUserID_FK = ${sqlText(seeded.userId)} AND EntityType = N'assignment' AND EntityID = ${seeded.ids.move}`),
+      hostNumber(
+        `SELECT COUNT(*) FROM app.DriverSyncTombstones WHERE DriverUserID_FK = ${sqlText(seeded.userId)} AND EntityType = N'assignment' AND EntityID = ${seeded.ids.move}`,
+      ),
       'TR_OrderAssignments_DriverSync writes a tombstone for the first driver',
     ).toBe(1);
 
@@ -230,14 +260,20 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
     expect(await driver.changes(delta.cursor), 'the tombstone is not repeated').toMatchObject({ reset: false, assignments: [], deleted: [] });
 
     const reset = await driver.changes();
-    expect(idsOf(reset.assignments, 'orderAssignmentId'), 'a reset lists only what is still the first driver\'s').toEqual(
+    expect(idsOf(reset.assignments, 'orderAssignmentId'), "a reset lists only what is still the first driver's").toEqual(
       [seeded.ids.work, seeded.ids.other, seeded.ids.edit, seeded.ids.chat].sort((a, b) => a - b),
     );
-    expect(reset.messages.map((m) => m.orderAssignmentId), 'the moved job\'s thread goes with it').not.toContain(seeded.ids.move);
+    expect(
+      reset.messages.map((m) => m.orderAssignmentId),
+      "the moved job's thread goes with it",
+    ).not.toContain(seeded.ids.move);
 
     const second = await (await HostDriverSyncApi.signIn(context, SECOND_DRIVER_EMAIL, env.admin!.password)).changes();
     expect(idsOf(second.assignments, 'orderAssignmentId'), 'the second driver now has the job').toEqual([seeded.ids.move]);
-    expect(second.messages.map((m) => m.orderAssignmentId), 'with its dispatch message that names no driver').toEqual([seeded.ids.move]);
+    expect(
+      second.messages.map((m) => m.orderAssignmentId),
+      'with its dispatch message that names no driver',
+    ).toEqual([seeded.ids.move]);
     settled = delta.cursor;
   });
 
@@ -265,23 +301,47 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
       [keys.missing, 'accept-assignment', 'not-found'],
     ]);
     expect(results.filter((r) => r.status === 'sent').every((r) => r.error === null)).toBe(true);
-    expect(results.filter((r) => r.status !== 'sent').every((r) => !!r.error), 'every refusal says why').toBe(true);
+    expect(
+      results.filter((r) => r.status !== 'sent').every((r) => !!r.error),
+      'every refusal says why',
+    ).toBe(true);
     const messageId = results[2].targetId!;
-    expect(hostValue(`SELECT CONCAT(OrderAssignmentID_FK, ':', Direction, ':', LOWER(CONVERT(nvarchar(36), MessageUUID))) FROM app.Messages WHERE MessageID = ${messageId}`), 'send-message answers with the new host message id, stored under the key').toBe(`${seeded.ids.work}:10:${keys.send}`);
+    expect(
+      hostValue(
+        `SELECT CONCAT(OrderAssignmentID_FK, ':', Direction, ':', LOWER(CONVERT(nvarchar(36), MessageUUID))) FROM app.Messages WHERE MessageID = ${messageId}`,
+      ),
+      'send-message answers with the new host message id, stored under the key',
+    ).toBe(`${seeded.ids.work}:10:${keys.send}`);
 
     expect(changes.reset).toBe(false);
-    expect(changes.assignments.find((a) => a.orderAssignmentId === seeded.ids.other), 'the changes since the cursor carry the accept').toMatchObject({ status: 'accepted' });
+    expect(
+      changes.assignments.find((a) => a.orderAssignmentId === seeded.ids.other),
+      'the changes since the cursor carry the accept',
+    ).toMatchObject({ status: 'accepted' });
     expect(changes.messages.map((m) => m.messageId)).toContain(messageId);
 
     expect(assignmentStatus('other'), 'the host accepted the job').toBe(2);
     expect(messagesByBody(body), 'one host message').toBe(1);
-    expect(hostNumber(`SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${seeded.ids.work} AND Direction = 20 AND SeenByDriverAt IS NULL`), 'the dispatch thread is seen').toBe(0);
     expect(
-      hostValue(`SELECT STRING_AGG(CONCAT(CommandType, ':', LOWER(CONVERT(nvarchar(36), TargetUUID))), ',') WITHIN GROUP (ORDER BY CommandType) FROM app.DriverCommandReceipts WHERE CommandUUID IN ('${keys.accept}', '${keys.seen}', '${keys.send}') AND Accepted = 1`),
+      hostNumber(`SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${seeded.ids.work} AND Direction = 20 AND SeenByDriverAt IS NULL`),
+      'the dispatch thread is seen',
+    ).toBe(0);
+    expect(
+      hostValue(
+        `SELECT STRING_AGG(CONCAT(CommandType, ':', LOWER(CONVERT(nvarchar(36), TargetUUID))), ',') WITHIN GROUP (ORDER BY CommandType) FROM app.DriverCommandReceipts WHERE CommandUUID IN ('${keys.accept}', '${keys.seen}', '${keys.send}') AND Accepted = 1`,
+      ),
       'one receipt per sent key, named after its command, on its target',
     ).toBe(`AcceptAssignmentCommand:${seeded.uuids.other},MarkThreadSeenCommand:${seeded.uuids.work},SendDriverMessageCommand:${seeded.uuids.work}`);
-    expect(hostNumber(`SELECT COUNT(*) FROM app.DriverCommandReceipts WHERE CommandUUID IN ('${keys.reject}', '${keys.unknown}', '${keys.missing}')`), 'no receipt for the refused operations').toBe(0);
-    expect(hostNumber(`SELECT COUNT(*) FROM app.OrderAssignmentHistory WHERE OrderAssignmentID_FK = ${seeded.ids.other} AND OrderAssignmentHistoryData LIKE N'%reject%'`), 'the invalid reject changed nothing').toBe(0);
+    expect(
+      hostNumber(`SELECT COUNT(*) FROM app.DriverCommandReceipts WHERE CommandUUID IN ('${keys.reject}', '${keys.unknown}', '${keys.missing}')`),
+      'no receipt for the refused operations',
+    ).toBe(0);
+    expect(
+      hostNumber(
+        `SELECT COUNT(*) FROM app.OrderAssignmentHistory WHERE OrderAssignmentID_FK = ${seeded.ids.other} AND OrderAssignmentHistoryData LIKE N'%reject%'`,
+      ),
+      'the invalid reject changed nothing',
+    ).toBe(0);
 
     const again = await driver.apply(batch.slice(0, 3), changes.cursor);
     expect(again.results.map((r) => [r.key, r.status, r.targetId])).toEqual([
@@ -290,7 +350,10 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
       [keys.send, 'duplicate', messageId],
     ]);
     expect(messagesByBody(body), 'still one host message').toBe(1);
-    expect(hostNumber(`SELECT COUNT(*) FROM app.DriverCommandReceipts WHERE CommandUUID IN ('${keys.accept}', '${keys.seen}', '${keys.send}')`), 'still one receipt per key').toBe(3);
+    expect(
+      hostNumber(`SELECT COUNT(*) FROM app.DriverCommandReceipts WHERE CommandUUID IN ('${keys.accept}', '${keys.seen}', '${keys.send}')`),
+      'still one receipt per key',
+    ).toBe(3);
     settled = again.changes.cursor;
   });
 
@@ -305,15 +368,22 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
     const routed = await driver.sendMessage(seeded.ids.work, body, key);
     expect(routed.status(), await routed.text()).toBe(200);
     expect(isReplayed(routed), 'Idempotent-Replayed: true').toBe(true);
-    expect((await routed.json()).data, 'the replay answers with the stored message').toMatchObject({ messageId, messageBody: body, orderAssignmentId: seeded.ids.work });
+    expect((await routed.json()).data, 'the replay answers with the stored message').toMatchObject({
+      messageId,
+      messageBody: body,
+      orderAssignmentId: seeded.ids.work,
+    });
 
     const batchedAgain = await driver.apply([{ key, type: 'send-message', targetId: seeded.ids.work, messageBody: body }]);
     expect(batchedAgain.results[0]).toMatchObject({ key, status: 'duplicate', targetId: messageId });
 
     expect(messagesByBody(body), 'one host app.Messages row').toBe(1);
-    expect(hostValue(`SELECT CONCAT(COUNT(*), ':', MIN(CommandType), ':', MIN(LOWER(CONVERT(nvarchar(36), TargetUUID)))) FROM app.DriverCommandReceipts WHERE CommandUUID = '${key}'`), 'one receipt').toBe(
-      `1:SendDriverMessageCommand:${seeded.uuids.work}`,
-    );
+    expect(
+      hostValue(
+        `SELECT CONCAT(COUNT(*), ':', MIN(CommandType), ':', MIN(LOWER(CONVERT(nvarchar(36), TargetUUID)))) FROM app.DriverCommandReceipts WHERE CommandUUID = '${key}'`,
+      ),
+      'one receipt',
+    ).toBe(`1:SendDriverMessageCommand:${seeded.uuids.work}`);
   });
 
   test('HSYNC-10 a key reused for another type or another target is 409 on the routes and conflict in the batch, and changes nothing', async () => {
@@ -374,7 +444,10 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
     const begin = await driver.apply([{ key: beginKey, type: 'begin-haul', targetId: seeded.ids.work, isOfflineSync: false }]);
     expect(begin.results[0], begin.results[0].error ?? '').toMatchObject({ key: beginKey, status: 'sent' });
     tripId = begin.results[0].targetId!;
-    expect(hostValue(`SELECT CONCAT(OrderAssignmentID_FK, ':', Status, ':', LOWER(CONVERT(nvarchar(36), TripUUID))) FROM app.Trips WHERE TripID = ${tripId}`), 'the result names the new host trip').toBe(`${seeded.ids.work}:20:${beginKey}`);
+    expect(
+      hostValue(`SELECT CONCAT(OrderAssignmentID_FK, ':', Status, ':', LOWER(CONVERT(nvarchar(36), TripUUID))) FROM app.Trips WHERE TripID = ${tripId}`),
+      'the result names the new host trip',
+    ).toBe(`${seeded.ids.work}:20:${beginKey}`);
     expect(begin.changes.trips.map((t) => t.tripId)).toContain(tripId);
 
     const endKey = randomUUID();
@@ -393,7 +466,10 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
     const upload = await driver.uploadTicket(tripId, file, { key: uploadKey, sha256: sha256(file.buffer) });
     if (upload.status() >= 500) {
       const reason = await upload.text();
-      test.info().annotations.push({ type: 'skip', description: `The host could not store the photo (${upload.status()}: ${reason.slice(0, 200)}); the upload replay was not verified.` });
+      test.info().annotations.push({
+        type: 'skip',
+        description: `The host could not store the photo (${upload.status()}: ${reason.slice(0, 200)}); the upload replay was not verified.`,
+      });
       test.skip(true, `The local host S3 bucket refused the upload (${upload.status()}).`);
     }
     expect(upload.status(), await upload.text()).toBe(200);
@@ -402,14 +478,22 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
     expect(hostNumber(`SELECT TicketID_FK FROM app.Trips WHERE TripID = ${tripId}`), 'the trip has a ticket').toBeGreaterThan(0);
     uploaded = file.buffer;
     expect(
-      hostValue(`SELECT CONCAT(COUNT(*), ':', MIN(CommandType), ':', MIN(RTRIM(ContentHash))) FROM app.DriverCommandReceipts WHERE CommandUUID = '${uploadKey}'`),
+      hostValue(
+        `SELECT CONCAT(COUNT(*), ':', MIN(CommandType), ':', MIN(RTRIM(ContentHash))) FROM app.DriverCommandReceipts WHERE CommandUUID = '${uploadKey}'`,
+      ),
       'the upload receipt keeps the photo hash',
     ).toBe(`1:TicketImageUploadedCommand:${sha256(file.buffer)}`);
 
     const delta = await driver.changes(beforeUpload);
-    expect(delta.trips.map((t) => t.tripId), 'the changed ticket comes back as its trip').toContain(tripId);
+    expect(
+      delta.trips.map((t) => t.tripId),
+      'the changed ticket comes back as its trip',
+    ).toContain(tripId);
     expect(delta.trips.find((t) => t.tripId === tripId)!.ticketId).toBeTruthy();
-    expect(delta.assignments.map((a) => a.orderAssignmentId), 'the changed trip brings its assignment').toContain(seeded.ids.work);
+    expect(
+      delta.assignments.map((a) => a.orderAssignmentId),
+      'the changed trip brings its assignment',
+    ).toContain(seeded.ids.work);
     settled = delta.cursor;
   });
 

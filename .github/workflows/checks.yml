@@ -1,0 +1,32 @@
+name: Checks
+
+# Static checks only. The specs need the QuarryConnect stack (Identity, Admin, host API, SQL), so they run
+# from a developer machine or a host that can reach dev, not on a hosted runner.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TEST_ENV: dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - name: Every spec loads
+        run: npx playwright test --list

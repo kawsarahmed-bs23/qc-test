@@ -1,0 +1,67 @@
+{
+  "root": true,
+  "parser": "@typescript-eslint/parser",
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module",
+    "project": "./tsconfig.json"
+  },
+  "env": {
+    "node": true,
+    "es2022": true
+  },
+  "plugins": ["@typescript-eslint"],
+  "extends": ["eslint:recommended", "plugin:@typescript-eslint/recommended", "plugin:playwright/recommended", "prettier"],
+  "ignorePatterns": ["node_modules/", "reports/", "test-results/", "playwright-report/", "blob-report/", "scripts/", "*.mjs", "*.js"],
+  "rules": {
+    "@typescript-eslint/no-floating-promises": "error",
+    "@typescript-eslint/await-thenable": "error",
+    "@typescript-eslint/no-explicit-any": "warn",
+    "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "playwright/no-wait-for-timeout": "warn",
+    "playwright/no-force-option": "warn",
+    "playwright/no-conditional-in-test": "off",
+    "playwright/no-conditional-expect": "off",
+    "playwright/no-skipped-test": "off",
+    "playwright/no-networkidle": "warn",
+    "playwright/expect-expect": [
+      "warn",
+      {
+        "assertFunctionNames": ["assert*", "expect*"]
+      }
+    ]
+  },
+  "overrides": [
+    {
+      "files": ["tests/**/*.ts"],
+      "rules": {
+        "no-restricted-syntax": [
+          "warn",
+          {
+            "selector": "NewExpression[callee.name=/(Page|View|Panel|Screen|Header|Sidebar|Card|Nav|Composer|Thread)$/]",
+            "message": "Do not instantiate page objects in specs. Request them as fixtures from @fixtures/pageFixtures instead."
+          }
+        ],
+        "no-restricted-imports": [
+          "error",
+          {
+            "paths": [
+              {
+                "name": "@playwright/test",
+                "importNames": ["test"],
+                "message": "Import `test` from @fixtures/pageFixtures so page objects are injected."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["tests/**/*.setup.ts"],
+      "rules": {
+        "no-restricted-imports": "off",
+        "playwright/no-standalone-expect": "off"
+      }
+    }
+  ]
+}

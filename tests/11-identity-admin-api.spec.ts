@@ -1,10 +1,10 @@
-import { test, expect, signedOut } from '../fixtures/test';
-import { canUseIdentityDb, queryIdentityDb, runIdentitySeedScript } from '../fixtures/localDb';
-import { canReadIdentityLog, identityLogSince, markIdentityLog } from '../fixtures/identityLog';
-import { HostSignInFlow } from '../pages/HostSignInFlow';
-import { ADMIN_API_SCOPE, authorizeRedirect, IdentityAdminApi, serviceToken } from '../pages/IdentityAdminApi';
-import { PasswordGrantApi } from '../pages/PasswordGrantApi';
-import { env } from '../config/environment';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
+import { canUseIdentityDb, queryIdentityDb, runIdentitySeedScript } from '@utils/localDb';
+import { canReadIdentityLog, identityLogSince, markIdentityLog } from '@utils/identityLog';
+import { HostSignInFlow } from '@pages/host-sign-in-flow.page';
+import { ADMIN_API_SCOPE, authorizeRedirect, IdentityAdminApi, serviceToken } from '@api/identity-admin.api';
+import { PasswordGrantApi } from '@api/password-grant.api';
+import { env } from '@config/env.config';
 
 const DEACTIVATION_USER = 'e2e.qc738.deactivate@quarryconnect.test';
 const QC739_MEMBER = 'e2e.qc739.member@quarryconnect.test';
@@ -16,7 +16,11 @@ function sqlText(value: string): string {
 }
 
 function storedGrants(email: string): number {
-  return Number(queryIdentityDb(`SELECT COUNT(*) FROM PersistedGrants g JOIN Users u ON u.Id = g.SubjectId WHERE u.Email = ${sqlText(email)}`));
+  return Number(
+    queryIdentityDb(
+      `SELECT COUNT(*) FROM auth.PersistedGrants g JOIN auth.Users u ON g.SubjectId = CONVERT(nvarchar(36), u.UserUUID) WHERE u.Email = ${sqlText(email)}`,
+    ),
+  );
 }
 
 test.describe('Identity administration API (QC-738)', () => {
@@ -67,7 +71,15 @@ test.describe('Identity administration API (QC-738)', () => {
     expect(users.status).toBe(200);
     expect(Array.isArray(users.body)).toBe(true);
 
-    for (const path of ['/hosts', '/hosts/1', '/hosts/1/clients', '/hosts/1/users', '/hosts/1/branding', '/hosts/1/features', `/clients/${env.adminApiClient!.clientId}`]) {
+    for (const path of [
+      '/hosts',
+      '/hosts/1',
+      '/hosts/1/clients',
+      '/hosts/1/users',
+      '/hosts/1/branding',
+      '/hosts/1/features',
+      `/clients/${env.adminApiClient!.clientId}`,
+    ]) {
       expect((await api.get(path)).status, path).toBe(404);
     }
     expect([404, 405]).toContain((await api.post('/hosts', { hostKey: 'e2e-qc775-refused' })).status);
@@ -76,7 +88,10 @@ test.describe('Identity administration API (QC-738)', () => {
   test.describe('users', { tag: '@write' }, () => {
     test.describe.configure({ mode: 'serial' });
     test.skip(!canUseIdentityDb(), "Needs Identity's local database (LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE) to seed the throwaway driver.");
-    test.skip(!env.driver || !env.mobileClientId, 'Needs the seeded test driver and the mobile client (MOBILE_CLIENT_ID): the throwaway driver copies the driver password and signs in on the mobile client.');
+    test.skip(
+      !env.driver || !env.mobileClientId,
+      'Needs the seeded test driver and the mobile client (MOBILE_CLIENT_ID): the throwaway driver copies the driver password and signs in on the mobile client.',
+    );
 
     test.beforeAll(() => {
       runIdentitySeedScript('identity-deactivation-user.apply.sql', { SourceEmail: env.driver!.email });
@@ -112,7 +127,7 @@ test.describe('Identity administration API (QC-738)', () => {
       const issued = await mobile.passwordGrant(DEACTIVATION_USER, env.driver!.password);
       expect(issued.status, JSON.stringify(issued.body)).toBe(200);
       expect(storedGrants(DEACTIVATION_USER)).toBeGreaterThan(0);
-      const userId = queryIdentityDb(`SELECT Id FROM Users WHERE Email = ${sqlText(DEACTIVATION_USER)}`);
+      const userId = queryIdentityDb(`SELECT Id FROM auth.Users WHERE Email = ${sqlText(DEACTIVATION_USER)}`);
 
       const deactivated = await api.post(`/users/${userId}/deactivate`);
       expect(deactivated.status).toBe(200);
@@ -137,7 +152,7 @@ test.describe('Identity administration API (QC-738)', () => {
     test.beforeAll(() => {
       runIdentitySeedScript('identity-qc739.remove.sql');
       runIdentitySeedScript('identity-qc739-member.apply.sql');
-      userId = queryIdentityDb(`SELECT Id FROM Users WHERE Email = ${sqlText(QC739_MEMBER)}`)!;
+      userId = queryIdentityDb(`SELECT Id FROM auth.Users WHERE Email = ${sqlText(QC739_MEMBER)}`)!;
     });
 
     test.afterAll(() => {
@@ -162,12 +177,12 @@ test.describe('Identity administration API (QC-738)', () => {
       const off = await api.post(`/users/${userId}/deactivate`);
       expect(off.status).toBe(200);
       expect(off.body).toMatchObject({ userId, isActive: false });
-      expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM Users WHERE Id = ${sqlText(userId)}`)).toBe('0');
+      expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM auth.Users WHERE Id = ${sqlText(userId)}`)).toBe('0');
 
       const on = await api.post(`/users/${userId}/reactivate`);
       expect(on.status).toBe(200);
       expect(on.body).toMatchObject({ userId, isActive: true });
-      expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM Users WHERE Id = ${sqlText(userId)}`)).toBe('1');
+      expect(queryIdentityDb(`SELECT CAST(IsActive AS int) FROM auth.Users WHERE Id = ${sqlText(userId)}`)).toBe('1');
       expect((await api.post('/users/no-such-user/reactivate')).status).toBe(404);
     });
   });
@@ -189,9 +204,9 @@ test.describe('Identity administration API (QC-738)', () => {
     };
 
     const seeded = (n: number) => `e2e.qc742.u${String(n).padStart(2, '0')}@quarryconnect.test`;
-    const countWhere = (where: string) => Number(queryIdentityDb(`SELECT COUNT(*) FROM Users u WHERE ${where}`));
+    const countWhere = (where: string) => Number(queryIdentityDb(`SELECT COUNT(*) FROM auth.Users u WHERE ${where}`));
     const emailsWhere = (where: string, orderBy = 'u.Email, u.Id') =>
-      (queryIdentityDb(`SELECT u.Email FROM Users u WHERE ${where} ORDER BY ${orderBy}`) ?? '')
+      (queryIdentityDb(`SELECT u.Email FROM auth.Users u WHERE ${where} ORDER BY ${orderBy}`) ?? '')
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean);
@@ -265,11 +280,18 @@ test.describe('Identity administration API (QC-738)', () => {
     test('IDADMIN-24 totalCount matches Identity for every status, the items match the page, and no password data comes back', async ({ request }) => {
       const api = await IdentityAdminApi.signIn(request);
 
-      for (const [status, where] of [['all', '1 = 1'], ['active', 'u.IsActive = 1'], ['deactivated', 'u.IsActive = 0']] as const) {
+      for (const [status, where] of [
+        ['all', '1 = 1'],
+        ['active', 'u.IsActive = 1'],
+        ['deactivated', 'u.IsActive = 0'],
+      ] as const) {
         const page = await list(api, { status, pageSize: 100 });
         expect(page.body.totalCount, status).toBe(countWhere(where));
         expect(page.body.items, status).toHaveLength(Math.min(100, page.body.totalCount));
-        expect(page.body.items.every((item: { isActive: boolean }) => (status === 'all' ? true : item.isActive === (status === 'active'))), status).toBe(true);
+        expect(
+          page.body.items.every((item: { isActive: boolean }) => (status === 'all' ? true : item.isActive === (status === 'active'))),
+          status,
+        ).toBe(true);
       }
 
       const seededPage = await list(api, { search: SEARCH, status: 'deactivated' });
@@ -278,10 +300,10 @@ test.describe('Identity administration API (QC-738)', () => {
       const admin = (await list(api, { search: seeded(5) })).body;
       expect(admin.totalCount).toBe(1);
       expect(admin.items[0]).toEqual({
-        userId: queryIdentityDb(`SELECT Id FROM Users WHERE Email = N'${seeded(5)}'`),
+        userId: queryIdentityDb(`SELECT Id FROM auth.Users WHERE Email = N'${seeded(5)}'`),
         email: seeded(5),
         firstName: 'E2E',
-        lastName: queryIdentityDb(`SELECT LastName FROM Users WHERE Email = N'${seeded(5)}'`),
+        lastName: queryIdentityDb(`SELECT LastName FROM auth.Users WHERE Email = N'${seeded(5)}'`),
         isActive: true,
         lastLoginDate: expect.any(String),
       });

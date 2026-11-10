@@ -1,8 +1,8 @@
-import { test, expect } from '../fixtures/test';
-import { canUseIdentityDb, queryIdentityDb, runIdentitySeedScript } from '../fixtures/localDb';
-import { canReadIdentityLog, identityLogSince, markIdentityLog, resetCodeSince } from '../fixtures/identityLog';
-import { decodeJwt, PasswordGrantApi, type TokenResponse, type TokenResult } from '../pages/PasswordGrantApi';
-import { env } from '../config/environment';
+import { test, expect } from '@fixtures/pageFixtures';
+import { canUseIdentityDb, queryIdentityDb, runIdentitySeedScript } from '@utils/localDb';
+import { canReadIdentityLog, identityLogSince, markIdentityLog, resetCodeSince } from '@utils/identityLog';
+import { decodeJwt, PasswordGrantApi, type TokenResponse, type TokenResult } from '@api/password-grant.api';
+import { env } from '@config/env.config';
 
 const RUN = Date.now();
 const RESET_USER = `e2e.qc709.reset.${RUN}@quarryconnect.test`;
@@ -21,22 +21,26 @@ function userWhere(email: string): string {
 }
 
 function userId(email: string): string {
-  return queryIdentityDb(`SELECT Id FROM Users WHERE ${userWhere(email)}`)!;
+  return queryIdentityDb(`SELECT Id FROM auth.Users WHERE ${userWhere(email)}`)!;
 }
 
 function passwordHash(email: string): string | null {
-  return queryIdentityDb(`SELECT CONVERT(char(64), HASHBYTES('SHA2_256', PasswordHash), 2) FROM Users WHERE ${userWhere(email)}`);
+  return queryIdentityDb(`SELECT CONVERT(char(64), HASHBYTES('SHA2_256', PasswordHash), 2) FROM auth.Users WHERE ${userWhere(email)}`);
 }
 
 function openCodeAttempts(email: string): number | null {
   const attempts = queryIdentityDb(
-    `SELECT TOP 1 c.Attempts FROM PasswordResetCodes c JOIN Users u ON u.Id = c.UserId WHERE u.${userWhere(email)} AND c.Consumed IS NULL ORDER BY c.Created DESC`,
+    `SELECT TOP 1 c.Attempts FROM auth.PasswordResetCodes c JOIN auth.Users u ON u.Id = c.UserId WHERE u.${userWhere(email)} AND c.Consumed IS NULL ORDER BY c.Created DESC`,
   );
   return attempts === null ? null : Number(attempts);
 }
 
 function storedGrants(email: string): number {
-  return Number(queryIdentityDb(`SELECT COUNT(*) FROM PersistedGrants g JOIN Users u ON u.Id = g.SubjectId WHERE u.${userWhere(email)}`));
+  return Number(
+    queryIdentityDb(
+      `SELECT COUNT(*) FROM auth.PersistedGrants g JOIN auth.Users u ON g.SubjectId = CONVERT(nvarchar(36), u.UserUUID) WHERE u.${userWhere(email)}`,
+    ),
+  );
 }
 
 function anotherCode(code: string): string {
@@ -125,7 +129,7 @@ test.describe('Mobile account API (QC-709)', () => {
       code = await requestCode(api, RESET_USER);
 
       const row = queryIdentityDb(
-        `SELECT CONCAT(c.Attempts, '|', c.ClientId, '|', DATEDIFF(second, c.Created, c.Expires)) FROM PasswordResetCodes c JOIN Users u ON u.Id = c.UserId WHERE u.${userWhere(RESET_USER)} AND c.Consumed IS NULL`,
+        `SELECT CONCAT(c.Attempts, '|', c.ClientId, '|', DATEDIFF(second, c.Created, c.Expires)) FROM auth.PasswordResetCodes c JOIN auth.Users u ON u.Id = c.UserId WHERE u.${userWhere(RESET_USER)} AND c.Consumed IS NULL`,
       );
       expect(row).toBe(`0|${env.mobileClientId}|900`);
 
@@ -196,7 +200,9 @@ test.describe('Mobile account API (QC-709)', () => {
       expect(passwordHash(RESET_USER)).toBe(hash);
     });
 
-    test('ACC-09 change password with a wrong current password is invalid_username_or_password, and no new password is invalid_request', async ({ request }) => {
+    test('ACC-09 change password with a wrong current password is invalid_username_or_password, and no new password is invalid_request', async ({
+      request,
+    }) => {
       test.skip(!resetDone, 'ACC-07 did not reset the password.');
       const api = new PasswordGrantApi(request);
       const hash = passwordHash(RESET_USER);
@@ -261,7 +267,7 @@ test.describe('Mobile account API (QC-709)', () => {
       const api = new PasswordGrantApi(request);
       const fresh = await requestCode(api, RESET_USER);
       queryIdentityDb(
-        `UPDATE c SET Expires = DATEADD(second, -1, SYSDATETIMEOFFSET()) FROM PasswordResetCodes c JOIN Users u ON u.Id = c.UserId WHERE u.${userWhere(RESET_USER)} AND c.Consumed IS NULL`,
+        `UPDATE c SET Expires = DATEADD(second, -1, SYSDATETIMEOFFSET()) FROM auth.PasswordResetCodes c JOIN auth.Users u ON u.Id = c.UserId WHERE u.${userWhere(RESET_USER)} AND c.Consumed IS NULL`,
       );
       const hash = passwordHash(RESET_USER);
 
@@ -293,7 +299,7 @@ test.describe('Mobile account API (QC-709)', () => {
       const mark = markIdentityLog();
 
       try {
-        queryIdentityDb(`UPDATE Users SET IsActive = 0 WHERE ${userWhere(LIMITS_USER)}`);
+        queryIdentityDb(`UPDATE auth.Users SET IsActive = 0 WHERE ${userWhere(LIMITS_USER)}`);
         const result = await new PasswordGrantApi(request).forgotPasswordCode(LIMITS_USER);
 
         expect(result.status).toBe(202);
@@ -302,7 +308,7 @@ test.describe('Mobile account API (QC-709)', () => {
         expect(resetCodeSince(mark, LIMITS_USER)).toBeNull();
         expect(openCodeAttempts(LIMITS_USER)).toBeNull();
       } finally {
-        queryIdentityDb(`UPDATE Users SET IsActive = 1 WHERE ${userWhere(LIMITS_USER)}`);
+        queryIdentityDb(`UPDATE auth.Users SET IsActive = 1 WHERE ${userWhere(LIMITS_USER)}`);
       }
     });
 
@@ -311,7 +317,13 @@ test.describe('Mobile account API (QC-709)', () => {
       retired = await requestCode(api, LIMITS_USER);
       current = await requestCode(api, LIMITS_USER);
       test.skip(retired === current, 'The two random codes happened to match, so the retired one cannot be told apart.');
-      expect(Number(queryIdentityDb(`SELECT COUNT(*) FROM PasswordResetCodes c JOIN Users u ON u.Id = c.UserId WHERE u.${userWhere(LIMITS_USER)} AND c.Consumed IS NULL`))).toBe(1);
+      expect(
+        Number(
+          queryIdentityDb(
+            `SELECT COUNT(*) FROM auth.PasswordResetCodes c JOIN auth.Users u ON u.Id = c.UserId WHERE u.${userWhere(LIMITS_USER)} AND c.Consumed IS NULL`,
+          ),
+        ),
+      ).toBe(1);
       const hash = passwordHash(LIMITS_USER);
 
       const result = await api.resetWithCode(LIMITS_USER, retired, 'Acc709-Retired-Pass!');

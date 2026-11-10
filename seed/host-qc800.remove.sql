@@ -19,7 +19,8 @@ DELETE auth.AuditChanges WHERE KeyId IN (SELECT Id FROM @Users);
 DELETE app.IdentitySessions WHERE UserID_FK IN (SELECT Id FROM @Users);
 DELETE auth.RefreshTokens WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.LoginHistories WHERE UserId IN (SELECT Id FROM @Users) OR UserName LIKE N'e2e.qc800.%@example.com';
-DELETE auth.PasswordHistories WHERE UserId IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'auth.PasswordHistories', N'U') IS NOT NULL
+    DELETE auth.PasswordHistories WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserSignedEULAs WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserToRoles WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.Users WHERE Id IN (SELECT Id FROM @Users);

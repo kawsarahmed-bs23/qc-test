@@ -1,9 +1,9 @@
-import { test, expect } from '../fixtures/test';
-import { canUseMasterDb, queryMasterDb } from '../fixtures/localDb';
-import { adminUrl, openAdmin } from '../pages/AdminShell';
-import { HostListPage } from '../pages/HostManagementPages';
-import { ActivityPage, DashboardPage, HOST_TABS, HostNav, KPIS } from '../pages/HostPages';
-import { adminAccount } from '../fixtures/throwawayUsers';
+import { test, expect } from '@fixtures/pageFixtures';
+import { canUseMasterDb, queryMasterDb } from '@utils/localDb';
+import { adminUrl, openAdmin } from '@pages/admin-shell.page';
+import { HostListPage } from '@pages/host-management.page';
+import { ActivityPage, DashboardPage, HOST_TABS, HostNav, KPIS } from '@pages/host.page';
+import { adminAccount } from '@utils/throwawayUsers';
 
 test.describe('Dashboard and navigation (QC-742)', () => {
   test('DASH-01 dashboard shows the four summary cards with numbers', { tag: '@smoke' }, async ({ page, shell }) => {
@@ -25,14 +25,29 @@ test.describe('Dashboard and navigation (QC-742)', () => {
     await expect(dashboard.signInState(targetHost.uuid)).toHaveText(/^(Sign-in ready|No return address)$/);
     await expect(card).not.toContainText('Identity linked');
     await expect(card.getByRole('link', { name: 'Users', exact: true })).toHaveCount(0);
-    for (const [link, path] of [['Features', 'features'], ['Environment', 'environment'], ['Sign-in', 'sign-in']]) {
+    for (const [link, path] of [
+      ['Features', 'features'],
+      ['Environment', 'environment'],
+      ['Sign-in', 'sign-in'],
+    ]) {
       await expect(card.getByRole('link', { name: link, exact: true })).toHaveAttribute('href', `#/hosts/${targetHost.uuid}/${path}`);
     }
   });
 
-  test('DASH-03 sidebar menu is Dashboard, Hosts, Settings template, Users, Activity, Admins, Settings and reaches each one (QC-745)', async ({ page, shell }) => {
+  test('DASH-03 sidebar menu is Dashboard, Hosts, Settings template, Users, Activity, Admins, Settings and reaches each one (QC-745)', async ({
+    page,
+    shell,
+  }) => {
     await new DashboardPage(page).open();
-    await expect(page.locator('#sidebar .sidebar-menu-link .title')).toHaveText(['Dashboard', 'Hosts', 'Settings template', 'Users', 'Activity', 'Admins', 'Settings']);
+    await expect(page.locator('#sidebar .sidebar-menu-link .title')).toHaveText([
+      'Dashboard',
+      'Hosts',
+      'Settings template',
+      'Users',
+      'Activity',
+      'Admins',
+      'Settings',
+    ]);
     await expect(shell.nav('dashboard')).toHaveClass(/active/);
 
     await shell.nav('hosts').click();
@@ -61,7 +76,11 @@ test.describe('Dashboard and navigation (QC-742)', () => {
     await expect(page.locator('#kpis')).toBeVisible();
   });
 
-  test('DASH-04 host list links to the host page with its five tabs: Details, Sign-in, Environment, Features, Activity (QC-775)', async ({ page, shell, targetHost }) => {
+  test('DASH-04 host list links to the host page with its five tabs: Details, Sign-in, Environment, Features, Activity (QC-775)', async ({
+    page,
+    shell,
+    targetHost,
+  }) => {
     const list = new HostListPage(page);
     await list.open();
     await list.link(targetHost.uuid).click();

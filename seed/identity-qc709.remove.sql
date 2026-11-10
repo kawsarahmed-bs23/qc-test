@@ -4,15 +4,15 @@
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
-DECLARE @Users TABLE (Id nvarchar(450) PRIMARY KEY);
+DECLARE @Users TABLE (Id nvarchar(450) PRIMARY KEY, Subject nvarchar(36) NOT NULL);
 
-INSERT @Users SELECT Id FROM Users WHERE NormalizedEmail LIKE N'E2E.QC709.%@QUARRYCONNECT.TEST';
+INSERT @Users SELECT Id, CONVERT(nvarchar(36), UserUUID) FROM auth.Users WHERE NormalizedEmail LIKE N'E2E.QC709.%@QUARRYCONNECT.TEST';
 
 BEGIN TRANSACTION;
 
-DELETE PasswordResetCodes WHERE UserId IN (SELECT Id FROM @Users);
-DELETE PersistedGrants WHERE SubjectId IN (SELECT Id FROM @Users);
-DELETE app.UserSessions WHERE SubjectID IN (SELECT Id FROM @Users);
-DELETE Users WHERE Id IN (SELECT Id FROM @Users);
+DELETE auth.PasswordResetCodes WHERE UserId IN (SELECT Id FROM @Users);
+DELETE auth.PersistedGrants WHERE SubjectId IN (SELECT Subject FROM @Users);
+DELETE app.UserSessions WHERE SubjectID IN (SELECT Subject FROM @Users);
+DELETE auth.Users WHERE Id IN (SELECT Id FROM @Users);
 
 COMMIT TRANSACTION;

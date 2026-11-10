@@ -10,7 +10,7 @@ DECLARE @Email nvarchar(256) = N'$(Email)';
 IF @Email NOT LIKE N'e2e.qc829.%@quarryconnect.test'
     THROW 50001, 'The throwaway driver email must start with e2e.qc829. and end with @quarryconnect.test.', 1;
 
-DECLARE @PasswordHash nvarchar(max) = (SELECT PasswordHash FROM [$(IdentityDb)].dbo.Users WHERE Id = @UserId AND NormalizedEmail = UPPER(@Email));
+DECLARE @PasswordHash nvarchar(max) = (SELECT PasswordHash FROM [$(IdentityDb)].auth.Users WHERE Id = @UserId AND NormalizedEmail = UPPER(@Email));
 IF @PasswordHash IS NULL
     THROW 50002, 'The throwaway Identity driver does not exist; run identity-qc829-user.apply.sql first.', 1;
 
@@ -26,14 +26,14 @@ DELETE auth.Users WHERE Id = @UserId;
 INSERT auth.Users
 (
     Id, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PasswordHash, SecurityStamp, ConcurrencyStamp,
-    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, Discriminator, FirstName, LastName,
+    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     CreateDate, LastLoginDate, LastPasswordChangedDate, OrganisationIdFk, OrganisationLocationIdFk, PasswordResetFlag, IsActive, RejectedEULA, Digest
 )
 VALUES
 (
     @UserId, @Email, UPPER(@Email), @Email, UPPER(@Email), 1, @PasswordHash,
     UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
-    0, 0, 1, 0, N'Users', N'E2E', N'QC-829 Second driver',
+    0, 0, 1, 0, N'E2E', N'QC-829 Second driver',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @OrganisationId, 0, 0, 1, 0, 0
 );
 

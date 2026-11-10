@@ -1,7 +1,7 @@
-import { test, expect } from '../../fixtures/test';
-import { APP_STATE, env } from '../../config/environment';
-import { canSeedLocalDb, querySingleValue, runSeedScript } from '../../fixtures/localDb';
-import { CompanySettingsPage, HostSettingsApi, HostSignInScreen, type HostSettingsModel } from '../../pages/LoginSubtitlePages';
+import { test, expect } from '@fixtures/pageFixtures';
+import { APP_STATE, env } from '@config/env.config';
+import { canSeedLocalDb, querySingleValue, runSeedScript } from '@utils/localDb';
+import { CompanySettingsPage, HostSettingsApi, HostSignInScreen, type HostSettingsModel } from '@pages/login-subtitle.page';
 import type { Browser } from '@playwright/test';
 
 const HOST_SETTING_ID = 1;

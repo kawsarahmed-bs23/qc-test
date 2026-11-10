@@ -1,10 +1,10 @@
-import { test, expect, signedOut } from '../fixtures/test';
-import { AdminShell, adminUrl } from '../pages/AdminShell';
-import { HostEnvironmentPage, HostFeaturesPage } from '../pages/HostManagementPages';
-import { ActivityPage, DashboardPage } from '../pages/HostPages';
-import { escape, IdentityLoginPage } from '../pages/IdentityLoginPage';
-import { adminAccount, adminAuthenticatorKey } from '../fixtures/throwawayUsers';
-import { env } from '../config/environment';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
+import { AdminShell, adminUrl } from '@pages/admin-shell.page';
+import { HostEnvironmentPage, HostFeaturesPage } from '@pages/host-management.page';
+import { ActivityPage, DashboardPage } from '@pages/host.page';
+import { escape, IdentityLoginPage } from '@pages/identity-login.page';
+import { adminAccount, adminAuthenticatorKey } from '@utils/throwawayUsers';
+import { env } from '@config/env.config';
 
 const SAFE_SETTING = 'DispatchSnapshot:RateLimitPermitsPerHour';
 

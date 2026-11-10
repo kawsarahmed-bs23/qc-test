@@ -1,12 +1,13 @@
 -- QC-777: reply links on order-notify and status-ping SMS.
 -- For $(DriverId) (an active driver with a phone, no live assignment from yesterday on, and a day-shift truck
 -- assignment whose truck is the driver's own truck under its vendor) it copies the order of that assignment into a
--- new order (yesterday to tomorrow, one truck needed) and gives the driver four assignments on it, all Fixed with
+-- new order (yesterday to tomorrow, one truck needed) and gives the driver five assignments on it, all Fixed with
 -- loads so the assignment save that sends the notify SMS validates:
 --   today     Accepted 22:00 (the Status Ping lands here: it is the driver's earliest live assignment from today on)
 --   accept    tomorrow Pending 06:30 (answered "accept" on its link)
 --   cant      tomorrow Pending 09:00 (answered "cant" on its link)
 --   withdraw  tomorrow Pending 11:00 (canceled by the spec to withdraw its link)
+--   decline   tomorrow Pending 13:00 (QC-894: answered "cant" with a comment on its link)
 -- No message is seeded: the spec sends every SMS through the API. Every row is marked E2E-QC777 (order and
 -- assignment Notes). Re-running first removes what an earlier run left.
 SET NOCOUNT ON;
@@ -91,7 +92,8 @@ OUTPUT CASE inserted.TimeWindowStart
             WHEN '22:00' THEN 'today'
             WHEN '06:30' THEN 'accept'
             WHEN '09:00' THEN 'cant'
-            ELSE 'withdraw' END,
+            WHEN '11:00' THEN 'withdraw'
+            ELSE 'decline' END,
        inserted.OrderAssignmentID
 INTO @Seeded (Slot, Id)
 SELECT
@@ -103,7 +105,8 @@ CROSS JOIN (VALUES
     (1, @Today, CAST('22:00' AS time), CAST('23:30' AS time), 2),
     (2, @Tomorrow, CAST('06:30' AS time), CAST('14:30' AS time), 1),
     (3, @Tomorrow, CAST('09:00' AS time), CAST('15:00' AS time), 1),
-    (4, @Tomorrow, CAST('11:00' AS time), CAST('16:00' AS time), 1)
+    (4, @Tomorrow, CAST('11:00' AS time), CAST('16:00' AS time), 1),
+    (5, @Tomorrow, CAST('13:00' AS time), CAST('17:00' AS time), 1)
 ) AS d (Seq, Day, StartAt, EndAt, Status)
 WHERE a.OrderAssignmentID = @TemplateAssignmentId
 ORDER BY d.Seq;
@@ -115,4 +118,5 @@ SELECT CONCAT('SEED order=', @OrderId,
     ';accept=', (SELECT Id FROM @Seeded WHERE Slot = 'accept'),
     ';cant=', (SELECT Id FROM @Seeded WHERE Slot = 'cant'),
     ';withdraw=', (SELECT Id FROM @Seeded WHERE Slot = 'withdraw'),
+    ';decline=', (SELECT Id FROM @Seeded WHERE Slot = 'decline'),
     ';watermark=', (SELECT ISNULL(MAX(MessageID), 0) FROM app.Messages));

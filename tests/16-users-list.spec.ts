@@ -1,8 +1,8 @@
-import { test, expect } from '../fixtures/test';
-import { canUseIdentityDb, queryIdentityDb, runIdentitySeedScript } from '../fixtures/localDb';
-import { PLATFORM_ADMIN_EMAIL } from '../fixtures/throwawayUsers';
-import { adminUrl } from '../pages/AdminShell';
-import { UserListPage, type UserSortColumn } from '../pages/UserListPage';
+import { test, expect } from '@fixtures/pageFixtures';
+import { canUseIdentityDb, queryIdentityDb, runIdentitySeedScript } from '@utils/localDb';
+import { PLATFORM_ADMIN_EMAIL } from '@utils/throwawayUsers';
+import { adminUrl } from '@pages/admin-shell.page';
+import { UserListPage, type UserSortColumn } from '@pages/user-list.page';
 
 const SEARCH = 'e2e.qc742';
 const SEEDED = `Email LIKE N'e2e.qc742.%'`;
@@ -13,11 +13,11 @@ function seeded(n: number): string {
 }
 
 function count(where: string): number {
-  return Number(queryIdentityDb(`SELECT COUNT(*) FROM Users u WHERE ${where}`));
+  return Number(queryIdentityDb(`SELECT COUNT(*) FROM auth.Users u WHERE ${where}`));
 }
 
 function emails(where: string, orderBy = 'u.Email, u.Id'): string[] {
-  return (queryIdentityDb(`SELECT u.Email FROM Users u WHERE ${where} ORDER BY ${orderBy}`) ?? '')
+  return (queryIdentityDb(`SELECT u.Email FROM auth.Users u WHERE ${where} ORDER BY ${orderBy}`) ?? '')
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -46,16 +46,20 @@ test.describe('Users list (QC-742)', () => {
     runIdentitySeedScript('identity-qc742.remove.sql');
   });
 
-  test('USRLIST-01 the list shows users on arrival, with every Identity account counted and no filters in the URL', { tag: '@smoke' }, async ({ page, shell }) => {
-    const list = new UserListPage(page);
-    await list.open();
-    await expect(shell.heading).toHaveText('Users');
-    await expect(page).toHaveURL(adminUrl('/users'));
-    await expect(list.rows).toHaveCount(25);
-    expect(await totalOf(list)).toBe(count('1 = 1'));
-    await expect(list.selected(list.status)).toHaveText('All accounts');
-    await expect(list.search).toHaveValue('');
-  });
+  test(
+    'USRLIST-01 the list shows users on arrival, with every Identity account counted and no filters in the URL',
+    { tag: '@smoke' },
+    async ({ page, shell }) => {
+      const list = new UserListPage(page);
+      await list.open();
+      await expect(shell.heading).toHaveText('Users');
+      await expect(page).toHaveURL(adminUrl('/users'));
+      await expect(list.rows).toHaveCount(25);
+      expect(await totalOf(list)).toBe(count('1 = 1'));
+      await expect(list.selected(list.status)).toHaveText('All accounts');
+      await expect(list.search).toHaveValue('');
+    },
+  );
 
   test('USRLIST-02 search narrows to matching users and is the only thing in the URL', async ({ page }) => {
     const list = new UserListPage(page);
@@ -68,7 +72,9 @@ test.describe('Users list (QC-742)', () => {
     }
   });
 
-  test('USRLIST-03 there is no host or role filter any more, and the columns are name, email, platform admin, last sign-in and account (QC-775)', async ({ page }) => {
+  test('USRLIST-03 there is no host or role filter any more, and the columns are name, email, platform admin, last sign-in and account (QC-775)', async ({
+    page,
+  }) => {
     const list = new UserListPage(page);
     await list.open();
     await expect(page.locator('#user-host')).toHaveCount(0);
@@ -140,7 +146,11 @@ test.describe('Users list (QC-742)', () => {
     expect(await totalOf(list)).toBe(count(`${SEEDED} AND u.IsActive = 1`));
   });
 
-  for (const [id, column] of [['08', 'name'], ['09', 'email'], ['10', 'lastLogin']] as const) {
+  for (const [id, column] of [
+    ['08', 'name'],
+    ['09', 'email'],
+    ['10', 'lastLogin'],
+  ] as const) {
     test(`USRLIST-${id} sorting by ${column} works both ways and keeps the filters`, async ({ page }) => {
       const list = new UserListPage(page);
       await list.open({ search: SEARCH, status: 'active', pageSize: 50 });

@@ -1,6 +1,6 @@
 -- QC-801: deletes the host role SuperAdmin again after superadmin-role-qc801.apply.sql, so the local database ends with
 -- no SuperAdmin row in auth.UserToRoles, auth.RolesToPermissions, auth.RoleClaims or auth.Roles (the state
--- remove_host_superadmin_role.sql leaves). Only the throwaway e2e users' SuperAdmin rows are deleted; if anyone else holds
+-- remove_host_superadmin_role.sql leaves; QC-899 drops auth.RoleClaims, so it is skipped when absent). Only the throwaway e2e users' SuperAdmin rows are deleted; if anyone else holds
 -- the role it stops without changes. Run against the host database after the user remove scripts.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
@@ -15,7 +15,8 @@ IF EXISTS (
 BEGIN TRANSACTION;
 
 DELETE auth.UserToRoles WHERE RoleName = @RoleName;
-DELETE rc FROM auth.RoleClaims rc JOIN auth.Roles r ON r.Id = rc.RoleId WHERE r.Name = @RoleName;
+IF OBJECT_ID(N'auth.RoleClaims', N'U') IS NOT NULL
+    DELETE rc FROM auth.RoleClaims rc JOIN auth.Roles r ON r.Id = rc.RoleId WHERE r.Name = @RoleName;
 DELETE auth.Roles WHERE Name = @RoleName;
 DELETE auth.RolesToPermissions WHERE RoleName = @RoleName;
 

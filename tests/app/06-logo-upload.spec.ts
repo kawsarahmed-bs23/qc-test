@@ -1,8 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { test, expect } from '../../fixtures/test';
-import { env } from '../../config/environment';
-import { canSeedLocalDb, canUseIdentityDb, querySingleValue } from '../../fixtures/localDb';
+import { test, expect } from '@fixtures/pageFixtures';
+import { env, TEST_DATA_DIR } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb, querySingleValue } from '@utils/localDb';
 import {
   HostLogoApi,
   JPEG_SIGNATURE,
@@ -15,10 +15,10 @@ import {
   pngColourType,
   sha256,
   type UploadFile,
-} from '../../pages/LogoUploadPages';
+} from '@pages/logo-upload.page';
 import type { Browser } from '@playwright/test';
 
-const FIXTURES = path.resolve(__dirname, '..', '..', 'fixtures', 'qc803');
+const FIXTURES = path.join(TEST_DATA_DIR, 'qc803');
 const LOGO_COLUMNS = ['LogoMainPath', 'LogoMenuPath', 'LogoSystemPath', 'LogoIconPath', 'LogoLargePath', 'LoginBackgroundPath'];
 
 function fixture(name: string, mimeType: string): UploadFile {

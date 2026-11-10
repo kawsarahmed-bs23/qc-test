@@ -23,14 +23,14 @@ INSERT auth.Users
 (
     Id, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PhoneNumberConfirmed,
     TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName, CreateDate, LastLoginDate, LastPasswordChangedDate,
-    RejectedEULA, PasswordResetFlag, Discriminator, OrganisationIdFk, OrganisationLocationIdFk, IsActive, Digest,
+    RejectedEULA, PasswordResetFlag, OrganisationIdFk, OrganisationLocationIdFk, IsActive, Digest,
     SecurityStamp, ConcurrencyStamp
 )
 VALUES
 (
     @UserId, @Email, UPPER(@Email), @Email, UPPER(@Email), 1, 0,
     0, 1, 0, N'E2E', N'QC-775 Host admin', SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(),
-    0, 0, N'Users', @OrganisationId,
+    0, 0, @OrganisationId,
     (SELECT TOP 1 OrganisationLocationIdFk FROM auth.Users WHERE OrganisationIdFk = @OrganisationId AND OrganisationLocationIdFk IS NOT NULL), 1, 0,
     UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID())
 );

@@ -43,11 +43,13 @@ DELETE app.IdentitySessions WHERE UserID_FK IN (SELECT Id FROM @Users);
 DELETE app.ThemeSettings WHERE UserID_FK IN (SELECT Id FROM @Users);
 DELETE auth.AccessLogs WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.LoginHistories WHERE UserId IN (SELECT Id FROM @Users) OR UserName LIKE N'e2e.qc774.%@quarryconnect.test';
-DELETE auth.PasswordHistories WHERE UserId IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'auth.PasswordHistories', N'U') IS NOT NULL
+    DELETE auth.PasswordHistories WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.RefreshTokens WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserSignedEULAs WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserClaims WHERE UserId IN (SELECT Id FROM @Users);
-DELETE auth.UserLogins WHERE UserId IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'auth.UserLogins', N'U') IS NOT NULL
+    DELETE auth.UserLogins WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserTokens WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.UserToRoles WHERE UserId IN (SELECT Id FROM @Users);
 DELETE auth.Users WHERE Id IN (SELECT Id FROM @Users);

@@ -1,10 +1,19 @@
-import { test, expect } from '../fixtures/test';
-import { canSeedLocalDb, canUseMasterDb, markChangeLogs, queryMasterDb, removeChangeLogsSince, runMasterSeedScript, runSeedScript, type ChangeLogMark } from '../fixtures/localDb';
-import { hostIdByKey, hostUuidByKey, restoreEnvironmentSync, snapshotEnvironmentSync, type EnvironmentSyncSnapshot } from '../fixtures/environmentRecord';
-import { featureCatalog, hostDbFeatureFlags, hostOrganisationId, masterFeatureFlags, masterHostId } from '../fixtures/featureSnapshot';
-import { adminAccount } from '../fixtures/throwawayUsers';
-import { AdminApi, canUseAdminApi } from '../pages/AdminApi';
-import { HostEnvironmentPage, HostListPage } from '../pages/HostManagementPages';
+import { test, expect } from '@fixtures/pageFixtures';
+import {
+  canSeedLocalDb,
+  canUseMasterDb,
+  markChangeLogs,
+  queryMasterDb,
+  removeChangeLogsSince,
+  runMasterSeedScript,
+  runSeedScript,
+  type ChangeLogMark,
+} from '@utils/localDb';
+import { hostIdByKey, hostUuidByKey, restoreEnvironmentSync, snapshotEnvironmentSync, type EnvironmentSyncSnapshot } from '@utils/environmentRecord';
+import { featureCatalog, hostDbFeatureFlags, hostOrganisationId, masterFeatureFlags, masterHostId } from '@utils/featureSnapshot';
+import { adminAccount } from '@utils/throwawayUsers';
+import { AdminApi, canUseAdminApi } from '@api/admin.api';
+import { HostEnvironmentPage, HostListPage } from '@pages/host-management.page';
 import {
   HostReadinessCard,
   QC745_HOST_KEY_PREFIX,
@@ -32,7 +41,7 @@ import {
   templateKey,
   templateSettings,
   type FeatureDefaultsSnapshot,
-} from '../pages/SettingTemplatePages';
+} from '@pages/setting-template.page';
 
 const SHARED = 'Shared';
 const HOST_ONLY = 'HostOnly';
@@ -109,11 +118,22 @@ test.describe('Settings template on the ready target host (QC-745)', { tag: '@wr
     }
     expect(settings.find((s) => s.configurationKey === templateKey(SECRET))).toMatchObject({ isSensitive: true, isHostSpecific: true, value: null });
 
-    expect(view.features.map((f) => f.key).sort()).toEqual(featureCatalog().map((f) => f.key).sort());
-    expect(view.features.filter((f) => f.defaultEnabled).map((f) => f.key).sort()).toEqual(defaultEnabledKeys());
+    expect(view.features.map((f) => f.key).sort()).toEqual(
+      featureCatalog()
+        .map((f) => f.key)
+        .sort(),
+    );
+    expect(
+      view.features
+        .filter((f) => f.defaultEnabled)
+        .map((f) => f.key)
+        .sort(),
+    ).toEqual(defaultEnabledKeys());
   });
 
-  test('TPL-02 a host-specific key cannot get a default, a sensitive key cannot be made shared, and a duplicate key is refused; nothing changes', async ({ request }) => {
+  test('TPL-02 a host-specific key cannot get a default, a sensitive key cannot be made shared, and a duplicate key is refused; nothing changes', async ({
+    request,
+  }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
 
     const withValue = await tpl.addKey({ groupName: TEMPLATE_GROUP, propertyName: HOST_ONLY, isHostSpecific: true, value: 'not-allowed' });
@@ -121,7 +141,13 @@ test.describe('Settings template on the ready target host (QC-745)', { tag: '@wr
     expect(Object.keys(withValue.body.errors ?? {})).toContain('value');
     expect(templateDbValue(HOST_ONLY), 'nothing was added').toBeNull();
 
-    const added = await tpl.addKey({ groupName: TEMPLATE_GROUP, propertyName: HOST_ONLY, isHostSpecific: true, isRequired: false, description: 'E2E QC-745 probe' });
+    const added = await tpl.addKey({
+      groupName: TEMPLATE_GROUP,
+      propertyName: HOST_ONLY,
+      isHostSpecific: true,
+      isRequired: false,
+      description: 'E2E QC-745 probe',
+    });
     expect(added.status, added.text).toBe(200);
     expect(added.body.pushes, 'a host-specific key is sent to nobody').toEqual([]);
     const hostOnly = (await tpl.setting(templateKey(HOST_ONLY)))!;
@@ -135,20 +161,27 @@ test.describe('Settings template on the ready target host (QC-745)', { tag: '@wr
     const secret = (await tpl.setting(templateKey(SECRET)))!;
     const shared = await tpl.setScope(secret.settingUuid, false, false);
     expect(shared.status, shared.text).toBe(400);
-    expect(masterCount(`SELECT COUNT(*) FROM app.SettingTemplates WHERE SettingTemplateUUID = '${secret.settingUuid}' AND IsHostSpecific = 1 AND IsSensitive = 1`)).toBe(1);
+    expect(
+      masterCount(`SELECT COUNT(*) FROM app.SettingTemplates WHERE SettingTemplateUUID = '${secret.settingUuid}' AND IsHostSpecific = 1 AND IsSensitive = 1`),
+    ).toBe(1);
 
     const duplicate = await tpl.addKey({ groupName: TEMPLATE_GROUP, propertyName: HOST_ONLY, isHostSpecific: true });
     expect(duplicate.status, duplicate.text).toBe(400);
     expect(masterCount(`SELECT COUNT(*) FROM app.SettingTemplates WHERE GroupName = N'${TEMPLATE_GROUP}' AND PropertyName = N'${HOST_ONLY}'`)).toBe(1);
   });
 
-  test('TPL-03 a shared key added to the template shows on the target host as its default, and the host API creates the row in the host database', async ({ request, targetHost }) => {
+  test('TPL-03 a shared key added to the template shows on the target host as its default, and the host API creates the row in the host database', async ({
+    request,
+    targetHost,
+  }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
     const hostDbBefore = hostDbSettingCount();
 
     const added = await tpl.addKey({ groupName: TEMPLATE_GROUP, propertyName: SHARED, value: 'tpl-a', description: 'E2E QC-745 probe' });
     expect(added.status, added.text).toBe(200);
-    expect(added.body.pushes).toEqual([expect.objectContaining({ hostUuid: expect.stringMatching(new RegExp(targetHost.uuid, 'i')), succeeded: true, settingCount: 1 })]);
+    expect(added.body.pushes).toEqual([
+      expect.objectContaining({ hostUuid: expect.stringMatching(new RegExp(targetHost.uuid, 'i')), succeeded: true, settingCount: 1 }),
+    ]);
 
     expect(hostDbValue(SHARED), 'the host database got the new row').toBe('tpl-a');
     expect(hostDbSettingCount()).toBe(hostDbBefore + 1);
@@ -156,7 +189,15 @@ test.describe('Settings template on the ready target host (QC-745)', { tag: '@wr
 
     const template = (await tpl.setting(templateKey(SHARED)))!;
     const onHost = await tpl.environmentSetting(targetHost.uuid, templateKey(SHARED));
-    expect(onHost).toMatchObject({ settingUuid: template.settingUuid, source: 'default', value: 'tpl-a', defaultValue: 'tpl-a', isHostSpecific: false, missingOnHost: false, differsOnHost: false });
+    expect(onHost).toMatchObject({
+      settingUuid: template.settingUuid,
+      source: 'default',
+      value: 'tpl-a',
+      defaultValue: 'tpl-a',
+      isHostSpecific: false,
+      missingOnHost: false,
+      differsOnHost: false,
+    });
   });
 
   test('TPL-04 changing a shared default reaches the target host when it inherits the key', async ({ request, targetHost }) => {
@@ -171,11 +212,19 @@ test.describe('Settings template on the ready target host (QC-745)', { tag: '@wr
     expect(await tpl.environmentSetting(targetHost.uuid, templateKey(SHARED))).toMatchObject({ source: 'default', value: 'tpl-b' });
   });
 
-  test("TPL-05 a host's own value for a shared key survives a default change, and the template counts and names the overriding host", async ({ request, targetHost }) => {
+  test("TPL-05 a host's own value for a shared key survives a default change, and the template counts and names the overriding host", async ({
+    request,
+    targetHost,
+  }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
     seedThrowawayOverride(target!.targetId, SHARED, 'host-own');
     expect(hostDbValue(SHARED)).toBe('host-own');
-    expect(await tpl.environmentSetting(targetHost.uuid, templateKey(SHARED))).toMatchObject({ source: 'override', value: 'host-own', defaultValue: 'tpl-b', differsOnHost: false });
+    expect(await tpl.environmentSetting(targetHost.uuid, templateKey(SHARED))).toMatchObject({
+      source: 'override',
+      value: 'host-own',
+      defaultValue: 'tpl-b',
+      differsOnHost: false,
+    });
 
     const template = (await tpl.setting(templateKey(SHARED)))!;
     expect(template.overrideCount).toBeGreaterThanOrEqual(1);
@@ -183,7 +232,10 @@ test.describe('Settings template on the ready target host (QC-745)', { tag: '@wr
 
     const changed = await tpl.saveDefaults({ [template.settingUuid]: 'tpl-c' });
     expect(changed.status, changed.text).toBe(200);
-    expect(changed.body.pushes.filter((p) => p.hostName === targetHost.name), 'nothing is sent to a host that overrides the key').toEqual([]);
+    expect(
+      changed.body.pushes.filter((p) => p.hostName === targetHost.name),
+      'nothing is sent to a host that overrides the key',
+    ).toEqual([]);
     expect(templateDbValue(SHARED)).toBe('tpl-c');
     expect(hostDbValue(SHARED), 'the override survives on the host').toBe('host-own');
     expect(masterHostValue(target!.targetId, SHARED)).toBe('host-own');
@@ -210,7 +262,12 @@ test.describe('Settings template on the ready target host (QC-745)', { tag: '@wr
     expect((await tpl.setting(templateKey(SHARED)))!.overridingHosts).not.toContain(targetHost.name);
   });
 
-  test('TPL-06 the Settings template page lists the keys and saves a changed default that reaches the target host', async ({ page, request, targetHost, shell }) => {
+  test('TPL-06 the Settings template page lists the keys and saves a changed default that reaches the target host', async ({
+    page,
+    request,
+    targetHost,
+    shell,
+  }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
     const added = await tpl.addKey({ groupName: TEMPLATE_GROUP, propertyName: UI_PROBE, value: 'ui-a', description: 'E2E QC-745 probe' });
     expect(added.status, added.text).toBe(200);
@@ -251,7 +308,9 @@ test.describe('Settings template on the ready target host (QC-745)', { tag: '@wr
     await expect(settingSource(page, templateKey(UI_PROBE))).toHaveAttribute('data-source', 'default');
     await expect(settingResetDefault(page, templateKey(UI_PROBE)), 'an inherited key offers no reset').toHaveCount(0);
     const shared = view.find((s) => s.configurationKey === templateKey(SHARED))!;
-    await expect(settingResetDefault(page, templateKey(SHARED)), 'only an override offers Use template default').toHaveCount(shared.source === 'override' ? 1 : 0);
+    await expect(settingResetDefault(page, templateKey(SHARED)), 'only an override offers Use template default').toHaveCount(
+      shared.source === 'override' ? 1 : 0,
+    );
     for (const setting of view) {
       expect(['default', 'override', 'host-specific', 'not-in-template'], setting.configurationKey).toContain(setting.source);
     }
@@ -291,7 +350,9 @@ test.describe('Admin creates a host from the template (QC-745)', { tag: '@create
     restoreTarget(target);
   });
 
-  test('TPL-10 a host created through the Admin API starts not ready, with the feature defaults and its organisation id, and is sent nothing', async ({ request }) => {
+  test('TPL-10 a host created through the Admin API starts not ready, with the feature defaults and its organisation id, and is sent nothing', async ({
+    request,
+  }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
     const stamp = Date.now().toString(36);
 
@@ -309,8 +370,17 @@ test.describe('Admin creates a host from the template (QC-745)', { tag: '@create
     const id = masterHostId(String(created.body.hostUuid));
 
     const flags = masterFeatureFlags(id);
-    expect(Object.keys(flags).sort()).toEqual(featureCatalog().map((f) => f.key).sort());
-    expect(Object.entries(flags).filter(([, on]) => on).map(([key]) => key).sort()).toEqual(defaultEnabledKeys());
+    expect(Object.keys(flags).sort()).toEqual(
+      featureCatalog()
+        .map((f) => f.key)
+        .sort(),
+    );
+    expect(
+      Object.entries(flags)
+        .filter(([, on]) => on)
+        .map(([key]) => key)
+        .sort(),
+    ).toEqual(defaultEnabledKeys());
     expect(activeHostRows(id), 'only the organisation id is stored').toBe(1);
     expect(masterHostValue(id, ORGANISATION_KEY, '(root)')).toBe('99');
     expect(queryMasterDb(`SELECT ReadyAt FROM app.Hosts WHERE HostID = ${id}`)).toBeNull();
@@ -342,7 +412,9 @@ test.describe('A new host that is not ready yet (QC-745)', { tag: '@write' }, ()
     restoreTarget(target);
   });
 
-  test('TPL-11 a host that is not ready inherits every shared default, inherits no host-specific value but its organisation id, and is sent nothing', async ({ request }) => {
+  test('TPL-11 a host that is not ready inherits every shared default, inherits no host-specific value but its organisation id, and is sent nothing', async ({
+    request,
+  }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
     const template = templateSettings(await tpl.view());
     const view = await tpl.environment(withApi.uuid);
@@ -368,7 +440,9 @@ test.describe('A new host that is not ready yet (QC-745)', { tag: '@write' }, ()
     expect(syncCount(withApi.id), 'nothing was sent to the host').toBe(0);
   });
 
-  test('TPL-12 readiness lists the required host-specific keys, and Mark ready is refused while any is blank or the host has no API address', async ({ request }) => {
+  test('TPL-12 readiness lists the required host-specific keys, and Mark ready is refused while any is blank or the host has no API address', async ({
+    request,
+  }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
     const required = templateSettings(await tpl.view())
       .filter((s) => s.isHostSpecific && s.isRequired && s.configurationKey !== ORGANISATION_KEY)
@@ -407,7 +481,10 @@ test.describe('A new host that is not ready yet (QC-745)', { tag: '@write' }, ()
     expect(syncCount(withApi.id)).toBe(0);
   });
 
-  test("TPL-14 a feature switched off on a host stays off when that feature's default changes, no existing host changes, and rule-breaking defaults are refused", async ({ request, targetHost }) => {
+  test("TPL-14 a feature switched off on a host stays off when that feature's default changes, no existing host changes, and rule-breaking defaults are refused", async ({
+    request,
+    targetHost,
+  }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
     const original = defaultEnabledKeys();
     expect(original).not.toContain('reports');
@@ -440,7 +517,9 @@ test.describe('A new host that is not ready yet (QC-745)', { tag: '@write' }, ()
     }
   });
 
-  test('TPL-15 a host that is not ready keeps an environment save and a reset in HOST_MASTER, drops an override equal to the default, and sends nothing', async ({ request }) => {
+  test('TPL-15 a host that is not ready keeps an environment save and a reset in HOST_MASTER, drops an override equal to the default, and sends nothing', async ({
+    request,
+  }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
     const shared = (await tpl.setting(templateKey(NEW_HOST_SHARED)))!;
 
@@ -448,7 +527,11 @@ test.describe('A new host that is not ready yet (QC-745)', { tag: '@write' }, ()
     expect(saved.status, saved.text).toBe(200);
     expect(saved.text).toContain('not marked ready');
     expect(masterHostValue(withApi.id, NEW_HOST_SHARED)).toBe('new-own');
-    expect(await tpl.environmentSetting(withApi.uuid, templateKey(NEW_HOST_SHARED))).toMatchObject({ source: 'override', value: 'new-own', defaultValue: 'nh-a' });
+    expect(await tpl.environmentSetting(withApi.uuid, templateKey(NEW_HOST_SHARED))).toMatchObject({
+      source: 'override',
+      value: 'new-own',
+      defaultValue: 'nh-a',
+    });
     expect((await tpl.setting(templateKey(NEW_HOST_SHARED)))!.overrideCount).toBe(1);
 
     const reset = await tpl.resetToDefault(withApi.uuid, shared.settingUuid);
@@ -463,7 +546,11 @@ test.describe('A new host that is not ready yet (QC-745)', { tag: '@write' }, ()
     expect(syncCount(withApi.id), 'no environment send was tried').toBe(0);
   });
 
-  test('TPL-18 the not-ready host shows Not ready with its missing keys and a disabled Mark ready, the list says Setting up, and Environment marks missing values', async ({ page, request, targetHost }) => {
+  test('TPL-18 the not-ready host shows Not ready with its missing keys and a disabled Mark ready, the list says Setting up, and Environment marks missing values', async ({
+    page,
+    request,
+    targetHost,
+  }) => {
     const readiness = await new TemplateApi(AdminApi.asAdmin(request)).readiness(withApi.uuid);
 
     const card = new HostReadinessCard(page);
@@ -492,7 +579,9 @@ test.describe('A new host that is not ready yet (QC-745)', { tag: '@write' }, ()
 
   test('TPL-16 a host that is not ready but has an API address keeps a feature save in HOST_MASTER and calls nothing', async ({ request }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
-    const enabled = Object.entries(masterFeatureFlags(withApi.id)).filter(([, on]) => on).map(([key]) => key);
+    const enabled = Object.entries(masterFeatureFlags(withApi.id))
+      .filter(([, on]) => on)
+      .map(([key]) => key);
 
     const saved = await tpl.saveHostFeatures(withApi.uuid, [...enabled, 'reports']);
     expect(saved.status, `feature save on a host that is not ready: ${saved.text}`).toBe(200);

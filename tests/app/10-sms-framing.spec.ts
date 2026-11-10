@@ -1,9 +1,9 @@
 import type { Page } from '@playwright/test';
-import { test, expect } from '../../fixtures/test';
-import { env } from '../../config/environment';
-import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '../../fixtures/localDb';
-import { CommsPage } from '../../pages/AppPages';
-import { API_CHANNEL, CommsApi, CommsComposer, CommsHostAdmin, MESSAGE_CHANNEL } from '../../pages/CommsSendGate';
+import { test, expect } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '@utils/localDb';
+import { CommsPage } from '@pages/app.page';
+import { API_CHANNEL, CommsApi, CommsComposer, CommsHostAdmin, MESSAGE_CHANNEL } from '@pages/comms-send-gate.page';
 import {
   SMS_OPT_OUT_LINE,
   SMS_SINGLE_SEGMENT,
@@ -19,8 +19,8 @@ import {
   storedMessageById,
   storedMessageContaining,
   toE164,
-} from '../../pages/SmsFraming';
-import { REPLY_LINK_CODE_LENGTH, REPLY_LINK_TOKEN, codeIn, replyLinkOf, replyLinkUrl, replyLinksOf, sha256Hex } from '../../pages/ReplyLinks';
+} from '@pages/sms-framing.page';
+import { REPLY_LINK_CODE_LENGTH, REPLY_LINK_TOKEN, codeIn, replyLinkOf, replyLinkUrl, replyLinksOf, sha256Hex } from '@pages/reply-links.page';
 import * as path from 'path';
 
 const MARKER = 'E2E-QC780';
@@ -40,9 +40,14 @@ interface FramingDrivers {
 }
 
 function pickDrivers(): FramingDrivers {
-  const rows = querySingleValue(`SELECT STRING_AGG(CONCAT(u.Id, '|', u.PhoneNumber), ';') WITHIN GROUP (ORDER BY u.Id)
+  const rows =
+    querySingleValue(`SELECT STRING_AGG(CONCAT(u.Id, '|', u.PhoneNumber), ';') WITHIN GROUP (ORDER BY u.Id)
     FROM auth.Users u WHERE ${DRIVER_ROLE} AND u.IsActive = 1 AND ISNULL(u.PhoneNumber, '') <> '' AND ${LIVE_ASSIGNMENT}`) ?? '';
-  const fresh = rows.split(';').filter(Boolean).map((row) => row.split('|')).filter(([, phone]) => noSmsEverSentTo(phone));
+  const fresh = rows
+    .split(';')
+    .filter(Boolean)
+    .map((row) => row.split('|'))
+    .filter(([, phone]) => noSmsEverSentTo(phone));
   if (fresh.length < 2) {
     throw new Error(`QC-780 needs two active drivers with a live assignment and no SMS ever sent to their phone (found ${fresh.length}).`);
   }
@@ -50,14 +55,18 @@ function pickDrivers(): FramingDrivers {
 }
 
 function noSmsEverSentTo(phone: string): boolean {
-  return querySingleValue(`SELECT COUNT(*) FROM app.Messages
-    WHERE PhoneNumber = N'${toE164(phone)}' AND Direction = 20 AND Channel = 10 AND SentAt IS NOT NULL`) === '0';
+  return (
+    querySingleValue(`SELECT COUNT(*) FROM app.Messages
+    WHERE PhoneNumber = N'${toE164(phone)}' AND Direction = 20 AND Channel = 10 AND SentAt IS NOT NULL`) === '0'
+  );
 }
 
 function smsGoesToLogOnly(): boolean {
-  return querySingleValue(
-    `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
-  ) === '0';
+  return (
+    querySingleValue(
+      `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
+    ) === '0'
+  );
 }
 
 test.describe('Dispatch SMS framing: host name and opt-out line on a first text (QC-780)', { tag: '@write' }, () => {
@@ -98,8 +107,9 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
   });
 
   async function openThread(page: Page, driverUserId: string): Promise<{ composer: CommsComposer; api: CommsApi }> {
-    const thread = page.waitForResponse((r) => r.request().method() === 'GET'
-      && new URL(r.url()).pathname.endsWith(`/messages/threads/${driverUserId}`), { timeout: 30_000 });
+    const thread = page.waitForResponse((r) => r.request().method() === 'GET' && new URL(r.url()).pathname.endsWith(`/messages/threads/${driverUserId}`), {
+      timeout: 30_000,
+    });
     await new CommsPage(page).open(driverUserId);
     expect((await thread).ok(), 'GET thread').toBe(true);
     const api = new CommsApi(page, env.appApiUrl!);
@@ -188,7 +198,9 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     }
   });
 
-  test('SMSFMT-06 an in-app Status Ping reads "Status check <order>. How many loads done?" with no Reply line; an SMS ping after a recent text is unframed and ends with its reply link (QC-777)', async ({ page }) => {
+  test('SMSFMT-06 an in-app Status Ping reads "Status check <order>. How many loads done?" with no Reply line; an SMS ping after a recent text is unframed and ends with its reply link (QC-777)', async ({
+    page,
+  }) => {
     const { api } = await openThread(page, drivers.inApp);
 
     const inApp = await api.ping(drivers.inApp, API_CHANNEL.InApp);
@@ -213,11 +225,15 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     expectStub(smsRow.sid);
   });
 
-  test('SMSFMT-07 the order-notify SMS preview joins origin and destination with " > ", shows the literal {ReplyLink} line and, with the real link in, fits a framed first text', async ({ page }) => {
-    const orderId = Number(querySingleValue(`SELECT TOP 1 o.OrderID FROM app.Orders o WHERE o.Active = 1
+  test('SMSFMT-07 the order-notify SMS preview joins origin and destination with " > ", shows the literal {ReplyLink} line and, with the real link in, fits a framed first text', async ({
+    page,
+  }) => {
+    const orderId = Number(
+      querySingleValue(`SELECT TOP 1 o.OrderID FROM app.Orders o WHERE o.Active = 1
       AND EXISTS (SELECT 1 FROM app.JobAddresses ja WHERE ja.JobID_FK = o.JobID_FK AND ja.Active = 1 AND ja.IsFrom = 1)
       AND EXISTS (SELECT 1 FROM app.JobAddresses ja WHERE ja.JobID_FK = o.JobID_FK AND ja.Active = 1 AND ja.IsTo = 1)
-      ORDER BY o.OrderID DESC`));
+      ORDER BY o.OrderID DESC`),
+    );
     test.skip(!(orderId > 0), 'No active order has a job with both an origin and a destination address.');
     const jobId = Number(querySingleValue(`SELECT JobID_FK FROM app.Orders WHERE OrderID = ${orderId}`));
     await openThread(page, drivers.sms);
@@ -241,7 +257,9 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     expect(body.startsWith(`${host}:`)).toBe(false);
     expect(body).not.toContain(SMS_OPT_OUT_LINE);
     const withLink = body.replace(REPLY_LINK_TOKEN, replyLinkUrl('X'.repeat(REPLY_LINK_CODE_LENGTH)));
-    expect(withLink.length, `the preview with the real link, plus "${host}: " and the opt-out line, fits in ${SMS_SINGLE_SEGMENT}`).toBeLessThanOrEqual(framingBudget(host));
+    expect(withLink.length, `the preview with the real link, plus "${host}: " and the opt-out line, fits in ${SMS_SINGLE_SEGMENT}`).toBeLessThanOrEqual(
+      framingBudget(host),
+    );
   });
 
   test('SMSFMT-08 a typed SMS longer than one segment is still sent and stored in full', async ({ page }) => {
@@ -254,6 +272,9 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     expect(row.body).toBe(expected);
     expect(row.channel).toBe(MESSAGE_CHANNEL.Sms);
     expectStub(row.sid);
-    test.info().annotations.push({ type: 'api-log', description: `The API should log "A dispatch SMS for driver ${drivers.sms} needs N segments" for message ${row.id}.` });
+    test.info().annotations.push({
+      type: 'api-log',
+      description: `The API should log "A dispatch SMS for driver ${drivers.sms} needs N segments" for message ${row.id}.`,
+    });
   });
 });

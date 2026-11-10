@@ -1,10 +1,10 @@
 import type { Page } from '@playwright/test';
-import { test, expect } from '../../fixtures/test';
-import { env } from '../../config/environment';
-import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '../../fixtures/localDb';
-import { CommsPage } from '../../pages/AppPages';
-import { API_CHANNEL, CommsApi, CommsComposer, CommsHostAdmin, MESSAGE_CHANNEL, QC804_ADMIN_STATE } from '../../pages/CommsSendGate';
-import { expectedSmsBody, storedMessageContaining } from '../../pages/SmsFraming';
+import { test, expect } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '@utils/localDb';
+import { CommsPage } from '@pages/app.page';
+import { API_CHANNEL, CommsApi, CommsComposer, CommsHostAdmin, MESSAGE_CHANNEL, QC804_ADMIN_STATE } from '@pages/comms-send-gate.page';
+import { expectedSmsBody, storedMessageContaining } from '@pages/sms-framing.page';
 
 const MARKER = 'E2E-QC804';
 const NO_ASSIGNMENT_IN_APP = "That driver has no assignments, so an in-app message can't reach the app. Send it by SMS instead.";
@@ -40,7 +40,9 @@ function pickDrivers(): GateDrivers {
     AND NOT EXISTS (SELECT 1 FROM app.OrderAssignments a WHERE a.DriverUserID_FK = u.Id)
     AND u.Id <> '${noAssignment ?? ''}' ORDER BY u.Id`);
   if (!planned || !noAssignment || !inactive) {
-    throw new Error(`QC-804 needs an active driver with only past assignments and two active drivers with none (got ${planned}, ${noAssignment}, ${inactive}).`);
+    throw new Error(
+      `QC-804 needs an active driver with only past assignments and two active drivers with none (got ${planned}, ${noAssignment}, ${inactive}).`,
+    );
   }
   return {
     planned,
@@ -61,9 +63,11 @@ function removeVariables(drivers: GateDrivers): Record<string, string> {
 }
 
 function smsGoesToLogOnly(): boolean {
-  return querySingleValue(
-    `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
-  ) === '0';
+  return (
+    querySingleValue(
+      `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
+    ) === '0'
+  );
 }
 
 function storedMessage(body: string): { id: number; channel: number; assignment: number | null; sid: string | null } {
@@ -115,8 +119,9 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
   });
 
   async function openThread(page: Page, driverUserId: string): Promise<{ composer: CommsComposer; api: CommsApi }> {
-    const thread = page.waitForResponse((r) => r.request().method() === 'GET'
-      && new URL(r.url()).pathname.endsWith(`/messages/threads/${driverUserId}`), { timeout: 30_000 });
+    const thread = page.waitForResponse((r) => r.request().method() === 'GET' && new URL(r.url()).pathname.endsWith(`/messages/threads/${driverUserId}`), {
+      timeout: 30_000,
+    });
     await new CommsPage(page).open(driverUserId);
     expect((await thread).ok(), 'GET thread').toBe(true);
     const api = new CommsApi(page, env.appApiUrl!);
@@ -145,7 +150,7 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
     await snapshot(page, 'tomorrow-driver-composer');
   });
 
-  test('GATE-02 an in-app send to that driver is stored on tomorrow\'s assignment', async ({ page }) => {
+  test("GATE-02 an in-app send to that driver is stored on tomorrow's assignment", async ({ page }) => {
     const { composer } = await openThread(page, drivers.planned);
     const body = `${MARKER}-INAPP-${Date.now()}`;
 
@@ -158,7 +163,7 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
     expect(row.sid).toBeNull();
   });
 
-  test('GATE-03 an SMS send to that driver is stored as SMS on tomorrow\'s assignment', async ({ page }) => {
+  test("GATE-03 an SMS send to that driver is stored as SMS on tomorrow's assignment", async ({ page }) => {
     test.skip(!smsGoesToLogOnly(), 'Twilio FromPhoneNumber is set in app.EnvironmentSetting, so an SMS would really go out.');
     const { composer } = await openThread(page, drivers.planned);
     const body = `${MARKER}-SMS-${Date.now()}`;
@@ -224,7 +229,9 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
     const ping = await api.ping(drivers.noAssignment, API_CHANNEL.InApp);
     expect(ping.status).toBe(400);
     expect(ping.text).toContain(PING_REFUSED);
-    expect(Number(querySingleValue(`SELECT COUNT(*) FROM app.Messages WHERE DriverUserID_FK = '${drivers.noAssignment}' AND MessageType = ${STATUS_CHECK}`))).toBe(0);
+    expect(
+      Number(querySingleValue(`SELECT COUNT(*) FROM app.Messages WHERE DriverUserID_FK = '${drivers.noAssignment}' AND MessageType = ${STATUS_CHECK}`)),
+    ).toBe(0);
   });
 
   test('GATE-06 an inactive driver cannot be messaged or pinged', async ({ page }) => {
@@ -284,16 +291,17 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
       const sms = await api.send(drivers.noAssignment, `${MARKER}-UNREACHABLE-SMS-${Date.now()}`, API_CHANNEL.Sms);
       expect(sms.status).toBe(400);
     } finally {
-      querySingleValue(`UPDATE auth.Users SET PhoneNumber = NULLIF(N'${drivers.noAssignmentPhone.replace(/'/g, "''")}', N'') WHERE Id = '${drivers.noAssignment}'`);
+      querySingleValue(
+        `UPDATE auth.Users SET PhoneNumber = NULLIF(N'${drivers.noAssignmentPhone.replace(/'/g, "''")}', N'') WHERE Id = '${drivers.noAssignment}'`,
+      );
     }
     expect(querySingleValue(`SELECT PhoneNumber FROM auth.Users WHERE Id = '${drivers.noAssignment}'`)).toBe(drivers.noAssignmentPhone);
   });
 
-  test('GATE-08 a Status Ping to the driver planned for tomorrow is posted in-app on tomorrow\'s assignment', async ({ page }) => {
+  test("GATE-08 a Status Ping to the driver planned for tomorrow is posted in-app on tomorrow's assignment", async ({ page }) => {
     const { composer } = await openThread(page, drivers.planned);
-    const count = () => Number(querySingleValue(
-      `SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${assignmentId} AND MessageType = ${STATUS_CHECK}`,
-    ));
+    const count = () =>
+      Number(querySingleValue(`SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${assignmentId} AND MessageType = ${STATUS_CHECK}`));
     const before = count();
 
     await composer.pingCaret().click();
@@ -301,9 +309,11 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
     await composer.pingMenuItem('Post in-app only').click();
 
     await expect.poll(count, { timeout: 15_000 }).toBe(before + 1);
-    const pingId = Number(querySingleValue(
-      `SELECT TOP 1 MessageID FROM app.Messages WHERE OrderAssignmentID_FK = ${assignmentId} AND MessageType = ${STATUS_CHECK} ORDER BY MessageID DESC`,
-    ));
+    const pingId = Number(
+      querySingleValue(
+        `SELECT TOP 1 MessageID FROM app.Messages WHERE OrderAssignmentID_FK = ${assignmentId} AND MessageType = ${STATUS_CHECK} ORDER BY MessageID DESC`,
+      ),
+    );
     expect(Number(querySingleValue(`SELECT Channel FROM app.Messages WHERE MessageID = ${pingId}`))).toBe(MESSAGE_CHANNEL.InApp);
     expect(querySingleValue(`SELECT TwilioMessageSid FROM app.Messages WHERE MessageID = ${pingId}`)).toBeNull();
   });

@@ -2,24 +2,46 @@
   "name": "quarryconnect-e2e",
   "version": "1.0.0",
   "private": true,
-  "description": "End-to-end browser tests for QuarryConnect Admin and Identity, runnable against local, dev and prod.",
+  "description": "End-to-end browser tests for QuarryConnect Admin, Identity and the host app: Playwright + TypeScript with fixture-driven page objects, runnable against local, dev and prod.",
   "scripts": {
     "test": "playwright test",
     "test:local": "cross-env TEST_ENV=local playwright test",
+    "test:local:headed": "cross-env TEST_ENV=local playwright test --headed --workers=1",
     "test:dev": "cross-env TEST_ENV=dev playwright test",
     "test:prod": "cross-env TEST_ENV=prod playwright test",
+    "test:prod:smoke": "cross-env TEST_ENV=prod playwright test --grep @smoke",
     "test:smoke": "playwright test --grep @smoke",
+    "test:admin": "playwright test --project=chromium",
+    "test:app": "playwright test --project=app",
     "test:headed": "playwright test --headed",
     "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug",
+    "test:list": "playwright test --list",
     "report": "node scripts/open-latest-report.mjs",
+    "codegen": "playwright codegen",
     "install:browsers": "playwright install chromium",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run typecheck && npm run lint && npm run format:check"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0",
     "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.72.1",
+    "@typescript-eslint/parser": "^8.72.1",
     "cross-env": "^7.0.3",
     "dotenv": "^16.4.5",
-    "typescript": "^5.6.0"
+    "eslint": "^8.57.1",
+    "eslint-config-prettier": "^9.1.2",
+    "eslint-plugin-playwright": "^1.8.3",
+    "prettier": "^3.9.10",
+    "typescript": "^5.6.0",
+    "zod": "^3.25.76"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

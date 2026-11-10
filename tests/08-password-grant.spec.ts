@@ -1,14 +1,26 @@
-import { test, expect, signedOut } from '../fixtures/test';
-import { canUseIdentityDb, queryIdentityDb, restoreIdentityPassword, snapshotIdentityPassword } from '../fixtures/localDb';
-import { decodeJwt, PasswordGrantApi, type TokenResponse } from '../pages/PasswordGrantApi';
-import { IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage } from '../pages/IdentityLoginPage';
-import { canReadIdentityLog } from '../fixtures/identityLog';
-import { canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '../fixtures/throwawayUsers';
-import { env } from '../config/environment';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
+import { canUseIdentityDb, queryIdentityDb, restoreIdentityPassword, snapshotIdentityPassword } from '@utils/localDb';
+import { decodeJwt, PasswordGrantApi, type TokenResponse } from '@api/password-grant.api';
+import { IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage } from '@pages/identity-login.page';
+import { canReadIdentityLog } from '@utils/identityLog';
+import { canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '@utils/throwawayUsers';
+import { env } from '@config/env.config';
 
 const ACCESS_TOKEN_SECONDS = 1800;
 const INVALID_CREDENTIALS = { error: 'invalid_grant', error_description: 'invalid_username_or_password' };
 const MFA_REQUIRED = { error: 'invalid_grant', error_description: 'mfa_required' };
+const LOCKOUT_THRESHOLD = 5;
+const ACCOUNT_LOCKED = {
+  error: 'invalid_grant',
+  error_description: 'account_locked',
+  lockout_minutes: 15,
+  message: 'Your account is locked for 15 minutes after 5 failed sign-in attempts. Try again later or contact your administrator.',
+};
+const ACCOUNT_INACTIVE = {
+  error: 'invalid_grant',
+  error_description: 'account_inactive',
+  message: 'Your account is deactivated. Contact your administrator.',
+};
 
 function driverWhere(): string {
   return `Email = '${env.driver!.email.replace(/'/g, "''")}'`;
@@ -97,88 +109,123 @@ test.describe('Mobile password grant (QC-706)', () => {
     expect(result.body).toMatchObject(INVALID_CREDENTIALS);
   });
 
-  test('PWD-05 any active account without two-step verification gets a token, since the drivers API decides which hosts it may use (QC-775)', { tag: '@write' }, async ({ request }) => {
-    test.skip(!canSeedThrowawayUsers(), "Needs Identity's local database for a throwaway account that is no driver anywhere.");
-    const user = seedIdentityUser('e2e.qc775.t.pwd05@quarryconnect.test', 'QC-775 Not a driver', false);
+  test(
+    'PWD-05 any active account without two-step verification gets a token, since the drivers API decides which hosts it may use (QC-775)',
+    { tag: '@write' },
+    async ({ request }) => {
+      test.skip(!canSeedThrowawayUsers(), "Needs Identity's local database for a throwaway account that is no driver anywhere.");
+      const user = seedIdentityUser('e2e.qc775.t.pwd05@quarryconnect.test', 'QC-775 Not a driver', false);
 
-    try {
-      const api = new PasswordGrantApi(request);
-      const result = await api.passwordGrant(user.email, user.password);
-      expect(result.status, JSON.stringify(result.body)).toBe(200);
-      expect(decodeJwt(result.body.access_token!).claims).not.toHaveProperty('role');
+      try {
+        const api = new PasswordGrantApi(request);
+        const result = await api.passwordGrant(user.email, user.password);
+        expect(result.status, JSON.stringify(result.body)).toBe(200);
+        expect(decodeJwt(result.body.access_token!).claims).not.toHaveProperty('role');
 
-      if (env.driversApiUrl) {
-        const hosts = await api.driversMeHosts(result.body.access_token!);
-        expect(hosts.status()).toBe(200);
-        expect((await hosts.json()).data.hosts).toEqual([]);
+        if (env.driversApiUrl) {
+          const hosts = await api.driversMeHosts(result.body.access_token!);
+          expect(hosts.status()).toBe(200);
+          expect((await hosts.json()).data.hosts).toEqual([]);
+        }
+      } finally {
+        removeIdentityUsers(user.email);
       }
-    } finally {
-      removeIdentityUsers(user.email);
-    }
-  });
+    },
+  );
 
   test.describe('driver account states', { tag: '@write' }, () => {
     test.skip(!canUseIdentityDb(), "Needs Identity's local database (LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE) to change and restore the test driver.");
 
-    test('PWD-06 a deactivated driver is refused', async ({ request }) => {
-      const original = queryIdentityDb(`SELECT CAST(IsActive AS int) FROM Users WHERE ${driverWhere()}`);
+    test('PWD-06 a deactivated driver with the right password is refused with account_inactive and a message (QC-876)', async ({ request }) => {
+      const original = queryIdentityDb(`SELECT CAST(IsActive AS int) FROM auth.Users WHERE ${driverWhere()}`);
       expect(original, 'the test driver exists in Identity').not.toBeNull();
 
       try {
-        queryIdentityDb(`UPDATE Users SET IsActive = 0 WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET IsActive = 0 WHERE ${driverWhere()}`);
         const result = await new PasswordGrantApi(request).passwordGrant(env.driver!.email, env.driver!.password);
         expect(result.status).toBe(400);
-        expect(result.body).toMatchObject(INVALID_CREDENTIALS);
+        expect(result.body).toMatchObject(ACCOUNT_INACTIVE);
+        expect(result.body).not.toHaveProperty('access_token');
       } finally {
-        queryIdentityDb(`UPDATE Users SET IsActive = ${Number(original)} WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET IsActive = ${Number(original)} WHERE ${driverWhere()}`);
       }
     });
 
     test('PWD-07 a driver who needs two-step verification is refused with mfa_required', async ({ request }) => {
-      const original = queryIdentityDb(`SELECT CAST(TwoFactorEnabled AS int) FROM Users WHERE ${driverWhere()}`);
+      const original = queryIdentityDb(`SELECT CAST(TwoFactorEnabled AS int) FROM auth.Users WHERE ${driverWhere()}`);
       expect(original, 'the test driver exists in Identity').not.toBeNull();
 
       try {
-        queryIdentityDb(`UPDATE Users SET TwoFactorEnabled = 1 WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET TwoFactorEnabled = 1 WHERE ${driverWhere()}`);
         const result = await new PasswordGrantApi(request).passwordGrant(env.driver!.email, env.driver!.password);
         expect(result.status).toBe(400);
         expect(result.body).toMatchObject(MFA_REQUIRED);
       } finally {
-        queryIdentityDb(`UPDATE Users SET TwoFactorEnabled = ${Number(original)} WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET TwoFactorEnabled = ${Number(original)} WHERE ${driverWhere()}`);
       }
     });
 
-    test('PWD-08 a wrong password counts towards the account lockout and a locked driver is refused', async ({ request }) => {
-      const failedCount = queryIdentityDb(`SELECT AccessFailedCount FROM Users WHERE ${driverWhere()}`);
-      const lockoutEnd = queryIdentityDb(`SELECT CONVERT(nvarchar(40), LockoutEnd, 127) FROM Users WHERE ${driverWhere()}`);
+    test('PWD-08 wrong passwords 1-4 are refused as invalid, the 5th locks the account with account_locked, and the right password is then refused the same way (QC-876)', async ({
+      request,
+    }) => {
+      const failedCount = queryIdentityDb(`SELECT AccessFailedCount FROM auth.Users WHERE ${driverWhere()}`);
+      const lockoutEnd = queryIdentityDb(`SELECT CONVERT(nvarchar(40), LockoutEnd, 127) FROM auth.Users WHERE ${driverWhere()}`);
       expect(failedCount, 'the test driver exists in Identity').not.toBeNull();
       const api = new PasswordGrantApi(request);
 
       try {
-        queryIdentityDb(`UPDATE Users SET AccessFailedCount = 4, LockoutEnd = NULL WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET AccessFailedCount = 0, LockoutEnd = NULL WHERE ${driverWhere()}`);
 
-        const wrong = await api.passwordGrant(env.driver!.email, 'Wrong-password-pwd08');
-        expect(wrong.status).toBe(400);
-        expect(wrong.body).toMatchObject(INVALID_CREDENTIALS);
+        for (let attempt = 1; attempt < LOCKOUT_THRESHOLD; attempt++) {
+          const wrong = await api.passwordGrant(env.driver!.email, `Wrong-password-pwd08-${attempt}`);
+          expect(wrong.status, `attempt ${attempt}`).toBe(400);
+          expect(wrong.body, `attempt ${attempt}`).toEqual(INVALID_CREDENTIALS);
+          expect(queryIdentityDb(`SELECT AccessFailedCount FROM auth.Users WHERE ${driverWhere()}`), `attempt ${attempt}`).toBe(String(attempt));
+        }
+
+        const locking = await api.passwordGrant(env.driver!.email, 'Wrong-password-pwd08-5');
+        expect(locking.status).toBe(400);
+        expect(locking.body).toMatchObject(ACCOUNT_LOCKED);
 
         const lockedUntil = queryIdentityDb(
-          `SELECT CASE WHEN LockoutEnd > SYSDATETIMEOFFSET() THEN 'locked' ELSE 'open' END FROM Users WHERE ${driverWhere()}`,
+          `SELECT CASE WHEN LockoutEnd > SYSDATETIMEOFFSET() THEN 'locked' ELSE 'open' END FROM auth.Users WHERE ${driverWhere()}`,
         );
         expect(lockedUntil).toBe('locked');
 
         const right = await api.passwordGrant(env.driver!.email, env.driver!.password);
         expect(right.status).toBe(400);
-        expect(right.body).toMatchObject(INVALID_CREDENTIALS);
+        expect(right.body).toMatchObject(ACCOUNT_LOCKED);
+        expect(right.body).not.toHaveProperty('access_token');
+      } finally {
+        queryIdentityDb(`UPDATE auth.Users SET AccessFailedCount = ${Number(failedCount)}, LockoutEnd = ${sqlValue(lockoutEnd)} WHERE ${driverWhere()}`);
+      }
+    });
+
+    test('PWD-15 a deactivated driver with a wrong password gets the generic refusal and no failed attempt is counted (QC-876)', async ({ request }) => {
+      const original = queryIdentityDb(`SELECT CAST(IsActive AS int) FROM auth.Users WHERE ${driverWhere()}`);
+      const failedCount = queryIdentityDb(`SELECT AccessFailedCount FROM auth.Users WHERE ${driverWhere()}`);
+      const lockoutEnd = queryIdentityDb(`SELECT CONVERT(nvarchar(40), LockoutEnd, 127) FROM auth.Users WHERE ${driverWhere()}`);
+      expect(original, 'the test driver exists in Identity').not.toBeNull();
+
+      try {
+        queryIdentityDb(`UPDATE auth.Users SET IsActive = 0, AccessFailedCount = 0, LockoutEnd = NULL WHERE ${driverWhere()}`);
+        const result = await new PasswordGrantApi(request).passwordGrant(env.driver!.email, 'Wrong-password-pwd15');
+        expect(result.status).toBe(400);
+        expect(result.body).toEqual(INVALID_CREDENTIALS);
+        expect(queryIdentityDb(`SELECT AccessFailedCount FROM auth.Users WHERE ${driverWhere()}`)).toBe('0');
       } finally {
         queryIdentityDb(
-          `UPDATE Users SET AccessFailedCount = ${Number(failedCount)}, LockoutEnd = ${sqlValue(lockoutEnd)} WHERE ${driverWhere()}`,
+          `UPDATE auth.Users SET IsActive = ${Number(original)}, AccessFailedCount = ${Number(failedCount)}, LockoutEnd = ${sqlValue(lockoutEnd)} WHERE ${driverWhere()}`,
         );
       }
     });
   });
 
   test('PWD-09 more than 20 attempts from one IP in 15 minutes are refused', async () => {
-    test.skip(true, 'Tripping the per-IP throttle blocks every password grant from this machine for 15 minutes, so the other PWD cases and later runs would fail. Checked by hand on 2026-10-14: the 21st attempt returned invalid_grant and logged "too many attempts".');
+    test.skip(
+      true,
+      'Tripping the per-IP throttle blocks every password grant from this machine for 15 minutes, so the other PWD cases and later runs would fail. Checked by hand on 2026-10-14: the 21st attempt returned invalid_grant and logged "too many attempts".',
+    );
   });
 });
 
@@ -212,10 +259,7 @@ test.describe('Refresh token revocation (QC-708)', () => {
       const page = await context.newPage();
       await page.goto(`${env.identityUrl}/Account/Login`);
       const login = new IdentityLoginPage(page);
-      await Promise.all([
-        page.waitForResponse((r) => r.request().method() === 'POST' && r.url().includes('/Account/Login')),
-        login.signIn(env.driver!),
-      ]);
+      await Promise.all([page.waitForResponse((r) => r.request().method() === 'POST' && r.url().includes('/Account/Login')), login.signIn(env.driver!)]);
       await new IdentityLogoutPage(page).signOutHere();
     } finally {
       await context.close();
@@ -229,47 +273,54 @@ test.describe('Refresh token revocation (QC-708)', () => {
     test.skip(!canUseIdentityDb(), "Needs Identity's local database (LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE) to change and restore the test driver.");
 
     function storedGrants(): number {
-      return Number(queryIdentityDb(`SELECT COUNT(*) FROM PersistedGrants g JOIN Users u ON u.Id = g.SubjectId WHERE u.${driverWhere()}`));
+      return Number(
+        queryIdentityDb(
+          `SELECT COUNT(*) FROM auth.PersistedGrants g JOIN auth.Users u ON g.SubjectId = CONVERT(nvarchar(36), u.UserUUID) WHERE u.${driverWhere()}`,
+        ),
+      );
     }
 
     test('PWD-10 a password change stops the refresh token and clears the stored grants', async ({ request }) => {
       const api = new PasswordGrantApi(request);
       const issued = await signInDriver(api);
-      const originalStamp = queryIdentityDb(`SELECT SecurityStamp FROM Users WHERE ${driverWhere()}`);
+      const originalStamp = queryIdentityDb(`SELECT SecurityStamp FROM auth.Users WHERE ${driverWhere()}`);
       expect(storedGrants()).toBeGreaterThan(0);
 
       try {
-        queryIdentityDb(`UPDATE Users SET SecurityStamp = CONVERT(nvarchar(36), NEWID()) WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET SecurityStamp = CONVERT(nvarchar(36), NEWID()) WHERE ${driverWhere()}`);
 
         const refreshed = await api.refresh(issued.refresh_token!);
         expect(refreshed.status).toBe(400);
         expect(refreshed.body.error).toBe('invalid_grant');
         expect(storedGrants()).toBe(0);
       } finally {
-        queryIdentityDb(`UPDATE Users SET SecurityStamp = ${sqlValue(originalStamp)} WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET SecurityStamp = ${sqlValue(originalStamp)} WHERE ${driverWhere()}`);
       }
     });
 
     test('PWD-11 a deactivated driver cannot refresh and the stored grants are cleared', async ({ request }) => {
       const api = new PasswordGrantApi(request);
       const issued = await signInDriver(api);
-      const original = queryIdentityDb(`SELECT CAST(IsActive AS int) FROM Users WHERE ${driverWhere()}`);
+      const original = queryIdentityDb(`SELECT CAST(IsActive AS int) FROM auth.Users WHERE ${driverWhere()}`);
       expect(storedGrants()).toBeGreaterThan(0);
 
       try {
-        queryIdentityDb(`UPDATE Users SET IsActive = 0 WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET IsActive = 0 WHERE ${driverWhere()}`);
 
         const refreshed = await api.refresh(issued.refresh_token!);
         expect(refreshed.status).toBe(400);
         expect(refreshed.body.error).toBe('invalid_grant');
         expect(storedGrants()).toBe(0);
       } finally {
-        queryIdentityDb(`UPDATE Users SET IsActive = ${Number(original)} WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET IsActive = ${Number(original)} WHERE ${driverWhere()}`);
       }
     });
 
     test('PWD-14 resetting the password on the Identity pages stops the mobile refresh token', async ({ browser, request }) => {
-      test.skip(!canReadIdentityLog(), "Needs Identity's local log folder (IDENTITY_LOG_DIR), where Development writes the reset link when no mail server is set.");
+      test.skip(
+        !canReadIdentityLog(),
+        "Needs Identity's local log folder (IDENTITY_LOG_DIR), where Development writes the reset link when no mail server is set.",
+      );
       const api = new PasswordGrantApi(request);
       const issued = await signInDriver(api);
       const password = snapshotIdentityPassword(driverWhere());

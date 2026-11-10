@@ -9,15 +9,15 @@ DECLARE @EmailLike nvarchar(256) = N'$(EmailLike)';
 IF @EmailLike NOT LIKE N'e2e.qc726.%'
     THROW 50001, 'Only e2e.qc726.* users can be removed by this script.', 1;
 
-DECLARE @Users TABLE (Id nvarchar(450) PRIMARY KEY);
-INSERT @Users SELECT Id FROM Users WHERE Email LIKE @EmailLike AND NormalizedEmail LIKE N'E2E.QC726.%@QUARRYCONNECT.TEST';
+DECLARE @Users TABLE (Id nvarchar(450) PRIMARY KEY, Subject nvarchar(36) NOT NULL);
+INSERT @Users SELECT Id, CONVERT(nvarchar(36), UserUUID) FROM auth.Users WHERE Email LIKE @EmailLike AND NormalizedEmail LIKE N'E2E.QC726.%@QUARRYCONNECT.TEST';
 
 BEGIN TRANSACTION;
 
-DELETE PasswordResetCodes WHERE UserId IN (SELECT Id FROM @Users);
-DELETE PasswordResetLinks WHERE UserId IN (SELECT Id FROM @Users);
-DELETE PersistedGrants WHERE SubjectId IN (SELECT Id FROM @Users);
-DELETE app.UserSessions WHERE SubjectID IN (SELECT Id FROM @Users);
-DELETE Users WHERE Id IN (SELECT Id FROM @Users);
+DELETE auth.PasswordResetCodes WHERE UserId IN (SELECT Id FROM @Users);
+DELETE auth.PasswordResetLinks WHERE UserId IN (SELECT Id FROM @Users);
+DELETE auth.PersistedGrants WHERE SubjectId IN (SELECT Subject FROM @Users);
+DELETE app.UserSessions WHERE SubjectID IN (SELECT Subject FROM @Users);
+DELETE auth.Users WHERE Id IN (SELECT Id FROM @Users);
 
 COMMIT TRANSACTION;

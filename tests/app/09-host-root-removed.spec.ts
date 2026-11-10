@@ -1,7 +1,7 @@
-import { test, expect } from '../../fixtures/test';
-import { env } from '../../config/environment';
-import { canSeedLocalDb, canUseIdentityDb } from '../../fixtures/localDb';
-import type { ThrowawayUser } from '../../fixtures/throwawayUsers';
+import { test, expect } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb } from '@utils/localDb';
+import type { ThrowawayUser } from '@utils/throwawayUsers';
 import {
   HostNotFoundPage,
   HostRootApi,
@@ -14,7 +14,7 @@ import {
   removeSuperAdminRole,
   seedSuperAdminRole,
   superAdminRowCounts,
-} from '../../pages/HostRootRemoved';
+} from '@pages/host-root-removed.page';
 
 const REMOVED_ROUTES = ['/environment-settings', '/feature-toggles'];
 const REMOVED_LABELS = ['Environment Settings', 'Feature Settings'];
@@ -22,8 +22,11 @@ const NO_SUPERADMIN = { roles: 0, userToRoles: 0, rolesToPermissions: 0, roleCla
 
 test.describe('The host app has no root super admin: settings and features belong to Admin (QC-801)', { tag: '@write' }, () => {
   test.describe.configure({ mode: 'serial' });
-  test.skip(!canSeedLocalDb() || !canUseIdentityDb(), "Needs the host and Identity local databases for the throwaway host users.");
-  test.skip(!env.appUrl || !env.appApiUrl || !env.admin, 'Needs APP_URL, APP_API_URL and ADMIN_EMAIL / ADMIN_PASSWORD (the throwaway users copy that password).');
+  test.skip(!canSeedLocalDb() || !canUseIdentityDb(), 'Needs the host and Identity local databases for the throwaway host users.');
+  test.skip(
+    !env.appUrl || !env.appApiUrl || !env.admin,
+    'Needs APP_URL, APP_API_URL and ADMIN_EMAIL / ADMIN_PASSWORD (the throwaway users copy that password).',
+  );
   test.use({ storageState: QC801_ADMIN_STATE });
 
   let admin: ThrowawayUser;

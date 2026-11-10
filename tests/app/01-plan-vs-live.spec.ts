@@ -1,6 +1,6 @@
-import { test, expect } from '../../fixtures/test';
-import { canSeedLocalDb, runSeedScript } from '../../fixtures/localDb';
-import { PlanVsLivePage } from '../../pages/AppPages';
+import { test, expect } from '@fixtures/pageFixtures';
+import { canSeedLocalDb, runSeedScript } from '@utils/localDb';
+import { PlanVsLivePage } from '@pages/app.page';
 
 const SEEDED_DAY = new Date(2026, 9, 5);
 

@@ -25,7 +25,7 @@ DECLARE @TruckType varchar(50) = (SELECT TOP 1 LOWER(CONVERT(varchar(50), RoleTy
 IF @VendorType IS NULL OR @TruckType IS NULL
     THROW 50003, 'auth.RoleTypes has no Vendor or Truck row.', 1;
 
-DECLARE @PasswordHash nvarchar(max) = (SELECT PasswordHash FROM [$(IdentityDb)].dbo.Users WHERE Id = @UserId AND NormalizedEmail = UPPER(@Email));
+DECLARE @PasswordHash nvarchar(max) = (SELECT PasswordHash FROM [$(IdentityDb)].auth.Users WHERE Id = @UserId AND NormalizedEmail = UPPER(@Email));
 IF @PasswordHash IS NULL
     THROW 50004, 'The throwaway Identity vendor does not exist; run identity-qc774-user.apply.sql first.', 1;
 
@@ -43,34 +43,30 @@ DELETE auth.Organisations WHERE ParentOrganisationIdFk IN (SELECT OrganisationID
     AND OrganisationName LIKE N'E2E QC-774 Truck%';
 DELETE auth.Organisations WHERE OrganisationName = @VendorName AND ParentOrganisationIdFk = @HostOrganisationId;
 
-INSERT auth.Organisations
-(
-    ParentOrganisationIdFk, OrganisationName, OrganisationShortName, CountryClassIdFk, IsInvestmentFirm, RejectedEULA,
-    RoleTypeIdFk, ReadOnly, UseClientIDInFileNames, UpdatedOn, UpdatedBy, IsActive
-)
-VALUES (@HostOrganisationId, @VendorName, 'E2E774V', 0, 0, 0, @VendorType, 0, 0, GETUTCDATE(), 'e2e-qc774', 1);
-DECLARE @VendorId int = SCOPE_IDENTITY();
+DECLARE @OrgLegacy bit = CASE WHEN COL_LENGTH(N'auth.Organisations', N'IsInvestmentFirm') IS NOT NULL THEN 1 ELSE 0 END;
+DECLARE @OrgInsert nvarchar(max) = N'INSERT auth.Organisations (ParentOrganisationIdFk, OrganisationName, OrganisationShortName, CountryClassIdFk, RejectedEULA, RoleTypeIdFk, ReadOnly, UpdatedOn, UpdatedBy, IsActive'
+    + CASE WHEN @OrgLegacy = 1 THEN N', IsInvestmentFirm' ELSE N'' END
+    + N') VALUES (@Parent, @Name, @Short, 0, 0, @Type, 0, GETUTCDATE(), N''e2e-qc774'', 1'
+    + CASE WHEN @OrgLegacy = 1 THEN N', 0' ELSE N'' END + N');';
+DECLARE @OrgParams nvarchar(200) = N'@Parent int, @Name nvarchar(100), @Short varchar(20), @Type nvarchar(450)';
 
-INSERT auth.Organisations
-(
-    ParentOrganisationIdFk, OrganisationName, OrganisationShortName, CountryClassIdFk, IsInvestmentFirm, RejectedEULA,
-    RoleTypeIdFk, ReadOnly, UseClientIDInFileNames, UpdatedOn, UpdatedBy, IsActive
-)
-VALUES
-    (@VendorId, N'E2E QC-774 Truck 1', 'E2E774T1', 0, 0, 0, @TruckType, 0, 0, GETUTCDATE(), 'e2e-qc774', 1),
-    (@VendorId, N'E2E QC-774 Truck 2', 'E2E774T2', 0, 0, 0, @TruckType, 0, 0, GETUTCDATE(), 'e2e-qc774', 1);
+EXEC sp_executesql @OrgInsert, @OrgParams, @HostOrganisationId, @VendorName, 'E2E774V', @VendorType;
+DECLARE @VendorId int = (SELECT MAX(OrganisationID) FROM auth.Organisations WHERE ParentOrganisationIdFk = @HostOrganisationId AND OrganisationName = @VendorName);
+
+EXEC sp_executesql @OrgInsert, @OrgParams, @VendorId, N'E2E QC-774 Truck 1', 'E2E774T1', @TruckType;
+EXEC sp_executesql @OrgInsert, @OrgParams, @VendorId, N'E2E QC-774 Truck 2', 'E2E774T2', @TruckType;
 
 INSERT auth.Users
 (
     Id, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PasswordHash, SecurityStamp, ConcurrencyStamp,
-    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, Discriminator, FirstName, LastName,
+    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     CreateDate, LastLoginDate, LastPasswordChangedDate, OrganisationIdFk, OrganisationLocationIdFk, PasswordResetFlag, IsActive, RejectedEULA, Digest
 )
 VALUES
 (
     @UserId, @Email, UPPER(@Email), @Email, UPPER(@Email), 1, @PasswordHash,
     UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
-    0, 0, 1, 0, N'Users', N'E2E', N'QC-774 Vendor',
+    0, 0, 1, 0, N'E2E', N'QC-774 Vendor',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), @VendorId, 0, 0, 1, 0, 0
 );
 

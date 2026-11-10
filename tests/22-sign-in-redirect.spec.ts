@@ -1,10 +1,10 @@
 import type { Browser, BrowserContext, Page } from '@playwright/test';
-import { test, expect, signedOut } from '../fixtures/test';
-import { env } from '../config/environment';
-import { canSeedLocalDb, canUseIdentityDb } from '../fixtures/localDb';
-import { adminAccount, adminAuthenticatorKey, type ThrowawayUser } from '../fixtures/throwawayUsers';
-import { adminUrl } from '../pages/AdminShell';
-import { escape, IdentityLoginPage } from '../pages/IdentityLoginPage';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb } from '@utils/localDb';
+import { adminAccount, adminAuthenticatorKey, type ThrowawayUser } from '@utils/throwawayUsers';
+import { adminUrl } from '@pages/admin-shell.page';
+import { escape, IdentityLoginPage } from '@pages/identity-login.page';
 import {
   APP_DEEP_LINK,
   AppSignInErrorView,
@@ -15,7 +15,7 @@ import {
   removeQc826Users,
   seedQc826User,
   SignInWatch,
-} from '../pages/SignInRedirectPages';
+} from '@pages/sign-in-redirect.page';
 
 const identityLogin = new RegExp(`^${escape(env.identityUrl)}/Account/Login`, 'i');
 
@@ -35,7 +35,9 @@ async function signedOutPage(browser: Browser): Promise<{ context: BrowserContex
 
 async function appIsUp(): Promise<boolean> {
   if (!env.appUrl) return false;
-  return fetch(env.appUrl).then((r) => r.ok).catch(() => false);
+  return fetch(env.appUrl)
+    .then((r) => r.ok)
+    .catch(() => false);
 }
 
 function firstLocationAway(watch: SignInWatch, origin: string): string | undefined {
@@ -75,7 +77,10 @@ test.describe('Sign-in opens Identity directly (QC-826)', () => {
       await expect(new AppTermsPage(page).heading).toBeVisible({ timeout: 30_000 });
       await expect(page).toHaveURL(appUrl('/legal/terms'));
       expect(watch.identityAuthorizes(), 'no authorize request').toEqual([]);
-      expect(watch.locations.filter((url) => url.startsWith(env.identityUrl)), 'no Identity navigation').toEqual([]);
+      expect(
+        watch.locations.filter((url) => url.startsWith(env.identityUrl)),
+        'no Identity navigation',
+      ).toEqual([]);
     });
 
     for (const route of Object.keys(PUBLIC_PAGES)) {
@@ -92,7 +97,10 @@ test.describe('Sign-in opens Identity directly (QC-826)', () => {
 
   test.describe('host app, a host admin signs in', { tag: '@write' }, () => {
     test.describe.configure({ mode: 'serial' });
-    test.skip(!canSeedLocalDb() || !canUseIdentityDb() || !env.admin, "Needs Identity's and the host's local databases and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway host admin.");
+    test.skip(
+      !canSeedLocalDb() || !canUseIdentityDb() || !env.admin,
+      "Needs Identity's and the host's local databases and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway host admin.",
+    );
 
     let user: ThrowawayUser;
     let context: BrowserContext;
@@ -131,7 +139,10 @@ test.describe('Sign-in opens Identity directly (QC-826)', () => {
       expect(watch.locationsWithRoute('/authentication'), 'no #/authentication URL').toEqual([]);
       expect(watch.locationsWithRoute('/legal/sign-user-agreement'), 'no EULA page for a user who signed it').toEqual([]);
       expect(watch.sawSignInPage, 'app-sign-in never attaches').toBe(false);
-      expect(watch.identityAuthorizes().filter((u) => u.searchParams.get('acr_values') === 'mfa'), 'no step-up for a two-step sign-in').toEqual([]);
+      expect(
+        watch.identityAuthorizes().filter((u) => u.searchParams.get('acr_values') === 'mfa'),
+        'no step-up for a two-step sign-in',
+      ).toEqual([]);
     });
 
     test('SIR-03 reloading while signed in stays in the app without asking Identity', async () => {
@@ -155,8 +166,14 @@ test.describe('Sign-in opens Identity directly (QC-826)', () => {
 
       await expect(page).toHaveURL(identityLogin, { timeout: 30_000 });
       const afterIdentitySignOut = watch.locationsAfterRequest(`${env.identityUrl}/Account/Logout`);
-      expect(afterIdentitySignOut.filter((url) => url.startsWith(env.appUrl!)).length, 'Identity sent the browser back to the app after its sign-out').toBeGreaterThan(0);
-      expect(afterIdentitySignOut.filter((url) => /#\/authentication(\?|$)/.test(url)), 'no #/authentication once back from Identity').toEqual([]);
+      expect(
+        afterIdentitySignOut.filter((url) => url.startsWith(env.appUrl!)).length,
+        'Identity sent the browser back to the app after its sign-out',
+      ).toBeGreaterThan(0);
+      expect(
+        afterIdentitySignOut.filter((url) => /#\/authentication(\?|$)/.test(url)),
+        'no #/authentication once back from Identity',
+      ).toEqual([]);
 
       watch.reset();
       await page.goto(appUrl());
@@ -171,7 +188,10 @@ test.describe('Sign-in opens Identity directly (QC-826)', () => {
 
   test.describe('host app, an Identity user with no account on this host', { tag: '@write' }, () => {
     test.use(signedOut);
-    test.skip(!canSeedLocalDb() || !canUseIdentityDb() || !env.admin, "Needs Identity's and the host's local databases and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway user.");
+    test.skip(
+      !canSeedLocalDb() || !canUseIdentityDb() || !env.admin,
+      "Needs Identity's and the host's local databases and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway user.",
+    );
 
     let stranger: ThrowawayUser;
 

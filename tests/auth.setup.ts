@@ -1,9 +1,9 @@
 import { test as setup, expect } from '@playwright/test';
-import { ADMIN_STATE } from '../config/environment';
-import { adminAccount, adminAuthenticatorKey } from '../fixtures/throwawayUsers';
-import { accessTokenFromPage } from '../pages/AdminApi';
-import { adminUrl } from '../pages/AdminShell';
-import { IdentityLoginPage } from '../pages/IdentityLoginPage';
+import { ADMIN_STATE } from '@config/env.config';
+import { adminAccount, adminAuthenticatorKey } from '@utils/throwawayUsers';
+import { accessTokenFromPage } from '@api/admin.api';
+import { adminUrl } from '@pages/admin-shell.page';
+import { IdentityLoginPage } from '@pages/identity-login.page';
 
 setup('sign in as the test admin through the Admin app and keep the session', async ({ page }) => {
   const admin = adminAccount();

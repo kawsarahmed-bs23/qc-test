@@ -1,9 +1,9 @@
-import { test, expect, signedOut } from '../fixtures/test';
-import { canUseIdentityDb, queryIdentityDb } from '../fixtures/localDb';
-import { canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '../fixtures/throwawayUsers';
-import { canReadIdentityLog, identityLogSince, markIdentityLog } from '../fixtures/identityLog';
-import { IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage } from '../pages/IdentityLoginPage';
-import { env } from '../config/environment';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
+import { canUseIdentityDb, queryIdentityDb } from '@utils/localDb';
+import { canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '@utils/throwawayUsers';
+import { canReadIdentityLog, identityLogSince, markIdentityLog } from '@utils/identityLog';
+import { IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage } from '@pages/identity-login.page';
+import { env } from '@config/env.config';
 
 function driverWhere(): string {
   return `Email = '${env.driver!.email.replace(/'/g, "''")}'`;
@@ -20,7 +20,7 @@ test.describe('Forgot password (QC-709)', () => {
     await new IdentityPasswordResetPage(page).requestReset(email);
 
     await expect.poll(() => identityLogSince(mark)).toContain(`unknown email ${email}`);
-    expect(identityLogSince(mark)).not.toMatch(new RegExp(`${email.replace(/[.]/g, '\.')}.*was not sent`));
+    expect(identityLogSince(mark)).not.toMatch(new RegExp(`${email.replace(/[.]/g, '\\.')}.*was not sent`));
   });
 
   test('RESET-02 a fourth request for the same address within 15 minutes is throttled but looks the same', async ({ page }) => {
@@ -41,21 +41,24 @@ test.describe('Forgot password (QC-709)', () => {
     test.skip(!canUseIdentityDb(), "Needs Identity's local database (LOCAL_SQL_SERVER / IDENTITY_SQL_DATABASE) to change and restore the test driver.");
 
     test('RESET-03 a deactivated driver gets the normal confirmation and no email is sent', async ({ page }) => {
-      const original = queryIdentityDb(`SELECT CAST(IsActive AS int) FROM Users WHERE ${driverWhere()}`);
+      const original = queryIdentityDb(`SELECT CAST(IsActive AS int) FROM auth.Users WHERE ${driverWhere()}`);
       const mark = markIdentityLog();
 
       try {
-        queryIdentityDb(`UPDATE Users SET IsActive = 0 WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET IsActive = 0 WHERE ${driverWhere()}`);
         await new IdentityPasswordResetPage(page).requestReset(env.driver!.email);
 
         await expect.poll(() => identityLogSince(mark)).toMatch(/Password reset requested for deactivated user/);
         expect(identityLogSince(mark)).not.toContain('was not sent');
       } finally {
-        queryIdentityDb(`UPDATE Users SET IsActive = ${Number(original)} WHERE ${driverWhere()}`);
+        queryIdentityDb(`UPDATE auth.Users SET IsActive = ${Number(original)} WHERE ${driverWhere()}`);
       }
     });
 
-    test('RESET-04 a reset link carries only ?t=, signs the account out everywhere, and the used or an altered link is refused before any form is shown', async ({ browser, page }) => {
+    test('RESET-04 a reset link carries only ?t=, signs the account out everywhere, and the used or an altered link is refused before any form is shown', async ({
+      browser,
+      page,
+    }) => {
       test.skip(!canSeedThrowawayUsers(), 'Needs ADMIN_EMAIL / ADMIN_PASSWORD, whose password the throwaway account copies.');
       const user = seedIdentityUser(`e2e.qc775.t.reset04.${Date.now()}@quarryconnect.test`, 'QC-775 Reset', false);
       const where = `Email = '${user.email}'`;
@@ -78,7 +81,11 @@ test.describe('Forgot password (QC-709)', () => {
 
         await otherSession.expectSignedOut();
         expect(
-          Number(queryIdentityDb(`SELECT COUNT(*) FROM app.UserSessions s JOIN Users u ON u.Id = s.SubjectId WHERE u.${where} AND s.EndReason = 'password-reset' AND s.Ended > DATEADD(minute, -5, SYSUTCDATETIME())`)),
+          Number(
+            queryIdentityDb(
+              `SELECT COUNT(*) FROM app.UserSessions s JOIN auth.Users u ON s.SubjectId = CONVERT(nvarchar(36), u.UserUUID) WHERE u.${where} AND s.EndReason = 'password-reset' AND s.Ended > DATEADD(minute, -5, SYSUTCDATETIME())`,
+            ),
+          ),
         ).toBeGreaterThan(0);
 
         await reset.expectInvalidLink(link);
@@ -95,6 +102,9 @@ test.describe('Forgot password (QC-709)', () => {
   });
 
   test('RESET-05 a link older than 2 hours is refused', async () => {
-    test.skip(true, 'The 2-hour link lifetime cannot be waited out in a test run. Since QC-775 the link is a row in PasswordResetLinks with its own Expires (PasswordResetDefaults.LinkLifetime), checked by Identity when the link is used.');
+    test.skip(
+      true,
+      'The 2-hour link lifetime cannot be waited out in a test run. Since QC-775 the link is a row in PasswordResetLinks with its own Expires (PasswordResetDefaults.LinkLifetime), checked by Identity when the link is used.',
+    );
   });
 });

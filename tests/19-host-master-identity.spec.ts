@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { APIRequestContext, Browser, Page } from '@playwright/test';
-import { test, expect, signedOut } from '../fixtures/test';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
 import {
   canSeedLocalDb,
   canUseDriversDb,
@@ -10,7 +10,7 @@ import {
   runDriversSeedScript,
   runMasterSeedScript,
   runSeedScript,
-} from '../fixtures/localDb';
+} from '@utils/localDb';
 import {
   canSeedThrowawayUsers,
   makePlatformAdmin,
@@ -18,16 +18,23 @@ import {
   removePlatformAdmins,
   seedIdentityUser,
   type ThrowawayUser,
-} from '../fixtures/throwawayUsers';
-import { AdminApi, accessTokenFromPage, adminTokenFromState, canUseAdminApi } from '../pages/AdminApi';
-import { adminUrl, openAdmin } from '../pages/AdminShell';
-import { BRANDING_IMAGE_TYPES, HostFeaturesPage, HostSignInSettingsPage, type BrandingImageType, type HostAllowedUrls, type HostBranding } from '../pages/HostManagementPages';
-import { HostBrandingApi, oversizedPng, publicImageUrl, solidPng } from '../pages/HostBrandingApi';
-import { DashboardPage, HostNav } from '../pages/HostPages';
-import { authorizeUrl, HostSignInFlow, identityLanding } from '../pages/HostSignInFlow';
-import { escape, IdentityBrandingView, IdentityLoginPage, IdentityTwoStepPage } from '../pages/IdentityLoginPage';
-import { decodeJwt, isDriversApiReachable, PasswordGrantApi, type TokenResponse } from '../pages/PasswordGrantApi';
-import { env, type OidcClient } from '../config/environment';
+} from '@utils/throwawayUsers';
+import { AdminApi, accessTokenFromPage, adminTokenFromState, canUseAdminApi } from '@api/admin.api';
+import { adminUrl, openAdmin } from '@pages/admin-shell.page';
+import {
+  BRANDING_IMAGE_TYPES,
+  HostFeaturesPage,
+  HostSignInSettingsPage,
+  type BrandingImageType,
+  type HostAllowedUrls,
+  type HostBranding,
+} from '@pages/host-management.page';
+import { HostBrandingApi, oversizedPng, publicImageUrl, solidPng } from '@api/host-branding.api';
+import { DashboardPage, HostNav } from '@pages/host.page';
+import { authorizeUrl, HostSignInFlow, identityLanding } from '@pages/host-sign-in-flow.page';
+import { escape, IdentityBrandingView, IdentityLoginPage, IdentityTwoStepPage } from '@pages/identity-login.page';
+import { decodeJwt, isDriversApiReachable, PasswordGrantApi, type TokenResponse } from '@api/password-grant.api';
+import { env, type OidcClient } from '@config/env.config';
 
 const THROWAWAY_HOST = {
   key: 'e2e-qc775',
@@ -84,7 +91,9 @@ test.describe('Identity holds no host information (QC-775)', () => {
 
       expect(await identityLanding(authorizeUrl({ client_id: 'e2e-qc775.no-such-client', redirect_uri: env.hostClient!.redirectUri }))).toBe(landingUrl());
       expect(await identityLanding(authorizeUrl({ client_id: env.hostClient!.clientId, redirect_uri: 'http://evil.example/' }))).toBe(landingUrl());
-      expect(await identityLanding(authorizeUrl({ client_id: env.hostClient!.clientId, redirect_uri: `${env.hostClient!.redirectUri}not-allowed` }))).toBe(landingUrl());
+      expect(await identityLanding(authorizeUrl({ client_id: env.hostClient!.clientId, redirect_uri: `${env.hostClient!.redirectUri}not-allowed` }))).toBe(
+        landingUrl(),
+      );
 
       const allowed = await identityLanding(authorizeUrl({ client_id: env.hostClient!.clientId, redirect_uri: env.hostClient!.redirectUri }));
       expect(allowed).toMatch(new RegExp(`^${env.identityUrl}/Account/Login\\?ReturnUrl=`, 'i'));
@@ -106,7 +115,10 @@ test.describe('Identity holds no host information (QC-775)', () => {
       runMasterSeedScript('master-qc775-host.remove.sql');
     });
 
-    test('HMI-03 a new HOST_MASTER host is signed into through Identity with its own branding, and its dashboard card says sign-in is ready', async ({ browser, page }) => {
+    test('HMI-03 a new HOST_MASTER host is signed into through Identity with its own branding, and its dashboard card says sign-in is ready', async ({
+      browser,
+      page,
+    }) => {
       test.setTimeout(cacheWindow() + 60_000);
       const flow = authorizeUrl({ client_id: THROWAWAY_HOST.client.clientId, redirect_uri: THROWAWAY_HOST.client.redirectUri });
       await expectLanding(flow, `${env.identityUrl}/Account/Login`, 'Identity reads the new host from the HOST_MASTER feed');
@@ -124,7 +136,11 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await expect(dashboard.hostCard(hostUuid).getByRole('link', { name: 'Sign-in', exact: true })).toHaveAttribute('href', `#/hosts/${hostUuid}/sign-in`);
     });
 
-    test('HMI-04 branding saved on the Admin Sign-in page shows on the host sign-in page once Identity reads the feed again', async ({ browser, page, shell }) => {
+    test('HMI-04 branding saved on the Admin Sign-in page shows on the host sign-in page once Identity reads the feed again', async ({
+      browser,
+      page,
+      shell,
+    }) => {
       test.setTimeout(2 * cacheWindow() + 90_000);
       const settings = new HostSignInSettingsPage(page);
       await settings.open(hostUuid);
@@ -139,7 +155,11 @@ test.describe('Identity holds no host information (QC-775)', () => {
         await settings.fillBranding(changed);
         await settings.brandingSave.click();
         await shell.expectStatus('Branding saved.');
-        expect(queryMasterDb(`SELECT b.DisplayName FROM app.HostBrandings b JOIN app.Hosts h ON h.HostID = b.HostID_FK WHERE h.HostKey = N'${THROWAWAY_HOST.key}' AND b.Active = 1`)).toBe(changed.displayName);
+        expect(
+          queryMasterDb(
+            `SELECT b.DisplayName FROM app.HostBrandings b JOIN app.Hosts h ON h.HostID = b.HostID_FK WHERE h.HostKey = N'${THROWAWAY_HOST.key}' AND b.Active = 1`,
+          ),
+        ).toBe(changed.displayName);
 
         await settings.open(hostUuid);
         await expect(settings.branding('displayName')).toHaveValue(changed.displayName!);
@@ -156,7 +176,10 @@ test.describe('Identity holds no host information (QC-775)', () => {
         expect(await primaryColour()).toBe(changed.primaryColor);
       } finally {
         await settings.open(hostUuid);
-        if ((await settings.branding('displayName').inputValue()) !== original.displayName || (await settings.branding('primaryColor').inputValue()) !== original.primaryColor) {
+        if (
+          (await settings.branding('displayName').inputValue()) !== original.displayName ||
+          (await settings.branding('primaryColor').inputValue()) !== original.primaryColor
+        ) {
           await settings.fillBranding(original);
           await settings.brandingSave.click();
           await shell.expectStatus('Branding saved.');
@@ -175,7 +198,10 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await identity.context().close();
     });
 
-    test('HMI-05 the Sign-in page refuses an empty display name, bad colours, a relative return address and an empty return list, and saves nothing', async ({ page, shell }) => {
+    test('HMI-05 the Sign-in page refuses an empty display name, bad colours, a relative return address and an empty return list, and saves nothing', async ({
+      page,
+      shell,
+    }) => {
       const settings = new HostSignInSettingsPage(page);
       await settings.open(hostUuid);
       const branding = await settings.readBranding();
@@ -217,7 +243,10 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await expect(page.locator('#branding-logoUrl, #branding-faviconUrl')).toHaveCount(0);
     });
 
-    test('HMI-06 a return address added on the Sign-in page is accepted by Identity, and once removed sends people to the public site', async ({ page, shell }) => {
+    test('HMI-06 a return address added on the Sign-in page is accepted by Identity, and once removed sends people to the public site', async ({
+      page,
+      shell,
+    }) => {
       test.setTimeout(2 * cacheWindow() + 90_000);
       const settings = new HostSignInSettingsPage(page);
       await settings.open(hostUuid);
@@ -265,13 +294,19 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await expectLanding(flow, `${env.identityUrl}/Account/Login`, 'Identity accepts the host again');
     });
 
-    test('HMI-19 the MFA switch saves straight to HOST_MASTER, and Identity then sends every user of that host to two-step set-up', async ({ browser, page, shell }) => {
+    test('HMI-19 the MFA switch saves straight to HOST_MASTER, and Identity then sends every user of that host to two-step set-up', async ({
+      browser,
+      page,
+      shell,
+    }) => {
       test.skip(!canSeedThrowawayUsers(), "Needs Identity's local database and ADMIN_EMAIL / ADMIN_PASSWORD for a throwaway user.");
       test.setTimeout(cacheWindow() + 120_000);
       const user = seedIdentityUser(throwawayEmail('mfahost'), 'QC-775 MFA host', false);
       const features = new HostFeaturesPage(page);
       const mfaRow = () =>
-        queryMasterDb(`SELECT CAST(f.IsEnabled AS int) FROM app.HostFeatures f JOIN app.Hosts h ON h.HostID = f.HostID_FK WHERE h.HostKey = N'${THROWAWAY_HOST.key}' AND f.Active = 1 AND f.FeatureKey = 'mfa'`);
+        queryMasterDb(
+          `SELECT CAST(f.IsEnabled AS int) FROM app.HostFeatures f JOIN app.Hosts h ON h.HostID = f.HostID_FK WHERE h.HostKey = N'${THROWAWAY_HOST.key}' AND f.Active = 1 AND f.FeatureKey = 'mfa'`,
+        );
       const openFeatures = async () => {
         await openAdmin(page, `/hosts/${hostUuid}/features`);
         await expect(features.mfaForm).toBeVisible();
@@ -386,10 +421,15 @@ test.describe('Identity holds no host information (QC-775)', () => {
       if (hostColumn(PATH_COLUMNS[SAFE_IMAGE]) === null) {
         queryMasterDb(`UPDATE app.HostBrandings SET LoginBackgroundPath = NULL WHERE HostID_FK = ${hostId} AND Active = 1 AND LoginBackgroundPath IS NOT NULL`);
       }
-      queryMasterDb(`DELETE app.ChangeLogs WHERE ChangeLogID > ${lastChangeLog} AND HostID_FK = ${hostId} AND Summary <> N'Copied branding from the host' AND (Summary LIKE N'%branding%' OR Summary LIKE N'%login background%')`);
+      queryMasterDb(
+        `DELETE app.ChangeLogs WHERE ChangeLogID > ${lastChangeLog} AND HostID_FK = ${hostId} AND Summary <> N'Copied branding from the host' AND (Summary LIKE N'%branding%' OR Summary LIKE N'%login background%')`,
+      );
     });
 
-    test('HMI-21 Copy from host fills the HOST_MASTER image paths and display name from the host database, and the Sign-in tab shows four previews and two empty slots', async ({ page, shell }) => {
+    test('HMI-21 Copy from host fills the HOST_MASTER image paths and display name from the host database, and the Sign-in tab shows four previews and two empty slots', async ({
+      page,
+      shell,
+    }) => {
       const settings = new HostSignInSettingsPage(page);
       await settings.open(hostUuid);
       await expect(settings.noApi).toHaveCount(0);
@@ -428,8 +468,14 @@ test.describe('Identity holds no host information (QC-775)', () => {
       }
     });
 
-    test("HMI-22 Identity's sign-in page for the host shows the main logo from the host's public route and uses the host icon as favicon", async ({ browser, request }) => {
-      test.skip(masterColumn(PATH_COLUMNS['logo-main']) === null || masterColumn(PATH_COLUMNS['logo-icon']) === null, 'HOST_MASTER has no main logo or icon for the target host (HMI-21 copies them).');
+    test("HMI-22 Identity's sign-in page for the host shows the main logo from the host's public route and uses the host icon as favicon", async ({
+      browser,
+      request,
+    }) => {
+      test.skip(
+        masterColumn(PATH_COLUMNS['logo-main']) === null || masterColumn(PATH_COLUMNS['logo-icon']) === null,
+        'HOST_MASTER has no main logo or icon for the target host (HMI-21 copies them).',
+      );
       test.setTimeout(cacheWindow() + 90_000);
       const { identity, view, reload } = await hostSignInPage(browser);
 
@@ -450,7 +496,11 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await identity.context().close();
     });
 
-    test("HMI-23 a login subtitle saved on the Sign-in tab reaches the host database and Identity's Login page, and clearing it empties both", async ({ browser, page, shell }) => {
+    test("HMI-23 a login subtitle saved on the Sign-in tab reaches the host database and Identity's Login page, and clearing it empties both", async ({
+      browser,
+      page,
+      shell,
+    }) => {
       test.setTimeout(cacheWindow() + 120_000);
       const settings = new HostSignInSettingsPage(page);
       await settings.open(hostUuid);
@@ -492,7 +542,12 @@ test.describe('Identity holds no host information (QC-775)', () => {
       expect(hostColumn('LoginSubtitle')).toBeNull();
     });
 
-    test('HMI-24 a login background uploaded on the Sign-in tab is stored by the host and HOST_MASTER and shows on Identity, and Remove clears both and the public route', async ({ browser, page, request, shell }) => {
+    test('HMI-24 a login background uploaded on the Sign-in tab is stored by the host and HOST_MASTER and shows on Identity, and Remove clears both and the public route', async ({
+      browser,
+      page,
+      request,
+      shell,
+    }) => {
       test.skip(!slotsFree, 'The target host already has a login background or large logo; the run only uploads to empty slots.');
       test.setTimeout(cacheWindow() + 150_000);
       const api = new HostBrandingApi(request);
@@ -564,7 +619,9 @@ test.describe('Identity holds no host information (QC-775)', () => {
       expect((await api.publicImage(SAFE_IMAGE)).status).toBe(404);
     });
 
-    test("HMI-26 the host's public image route answers anyone with a redirect or 404, and the branding endpoints of the host API and Admin API refuse a caller without a token", async ({ request }) => {
+    test("HMI-26 the host's public image route answers anyone with a redirect or 404, and the branding endpoints of the host API and Admin API refuse a caller without a token", async ({
+      request,
+    }) => {
       const api = new HostBrandingApi(request);
       const main = await api.publicImage('logo-main');
       if (hostColumn(PATH_COLUMNS['logo-main']) !== null) {
@@ -669,7 +726,10 @@ test.describe('Identity holds no host information (QC-775)', () => {
       expect((await request.get(`${env.driversApiUrl}/me/hosts`)).status()).toBe(401);
     });
 
-    test('HMI-11 host-scoped drivers endpoints need the X-Host-Uuid of a linked host: 200 for it, 403 for none, another host or an unlinked driver', async ({ request, targetHost }) => {
+    test('HMI-11 host-scoped drivers endpoints need the X-Host-Uuid of a linked host: 200 for it, 403 for none, another host or an unlinked driver', async ({
+      request,
+      targetHost,
+    }) => {
       test.skip(!(await isDriversApiReachable(request)), 'The drivers API (DRIVERS_API_URL) is not running.');
       const api = new PasswordGrantApi(request);
       const header = (uuid: string) => ({ headers: { 'X-Host-Uuid': uuid } });
@@ -692,11 +752,21 @@ test.describe('Identity holds no host information (QC-775)', () => {
       expect((await elsewhere.json()).data.hostUuid, 'an unlinked host is ignored on /me').toBeNull();
     });
 
-    test('HMI-12 the Driver UI picks the only linked host by itself and sends the no-host driver to the No host page', async ({ browser, request, targetHost }) => {
+    test('HMI-12 the Driver UI picks the only linked host by itself and sends the no-host driver to the No host page', async ({
+      browser,
+      request,
+      targetHost,
+    }) => {
       test.skip(!env.driverUiClient, 'Needs the Driver UI client (DRIVER_UI_CLIENT_ID / DRIVER_UI_REDIRECT_URI).');
       test.skip(!(await isDriversApiReachable(request)), 'The drivers API (DRIVERS_API_URL) is not running.');
       const driverUi = new URL(env.driverUiClient!.redirectUri).origin;
-      test.skip(!(await request.get(driverUi).then((r) => r.ok()).catch(() => false)), `The Driver UI is not running on ${driverUi}.`);
+      test.skip(
+        !(await request
+          .get(driverUi)
+          .then((r) => r.ok())
+          .catch(() => false)),
+        `The Driver UI is not running on ${driverUi}.`,
+      );
 
       for (const [user, expectation] of [
         [driver, 'home'],
@@ -727,7 +797,10 @@ test.describe('Identity holds no host information (QC-775)', () => {
 
   test.describe('two-step verification', { tag: '@write' }, () => {
     test.describe.configure({ mode: 'serial' });
-    test.skip(!canSeedThrowawayUsers() || !canUseMasterDb(), "Needs Identity's local database, HOST_MASTER and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway users.");
+    test.skip(
+      !canSeedThrowawayUsers() || !canUseMasterDb(),
+      "Needs Identity's local database, HOST_MASTER and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway users.",
+    );
 
     let noTwoStepAdmin: ThrowawayUser;
     let member: ThrowawayUser;
@@ -753,7 +826,10 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await page.context().close();
     });
 
-    test('HMI-14 the Admin token carries mfa and the Admin API counts it; an admin session without it is shown the two-step message', async ({ page, request }) => {
+    test('HMI-14 the Admin token carries mfa and the Admin API counts it; an admin session without it is shown the two-step message', async ({
+      page,
+      request,
+    }) => {
       test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
       const token = adminTokenFromState();
       expect([decodeJwt(token).claims.amr].flat()).toContain('mfa');
@@ -771,7 +847,10 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await expect(page.locator('#permission-denied-sign-out')).toBeVisible();
     });
 
-    test('HMI-15 an account that is not a platform admin is refused by Admin even after two-step verification, and its token gets 403', async ({ browser, request }) => {
+    test('HMI-15 an account that is not a platform admin is refused by Admin even after two-step verification, and its token gets 403', async ({
+      browser,
+      request,
+    }) => {
       test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
       const page = await signedOutPage(browser);
       await page.goto(adminUrl('/hosts'));
@@ -802,7 +881,10 @@ test.describe('Identity holds no host information (QC-775)', () => {
   test.describe('host administrators at the host app', { tag: '@write' }, () => {
     test.describe.configure({ mode: 'serial' });
     test.use(signedOut);
-    test.skip(!canSeedThrowawayUsers() || !canSeedLocalDb(), "Needs Identity's and the host's local databases and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway host admins.");
+    test.skip(
+      !canSeedThrowawayUsers() || !canSeedLocalDb(),
+      "Needs Identity's and the host's local databases and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway host admins.",
+    );
     test.skip(!env.hostClient || !env.appApiUrl, 'Needs the target host client (HOST_CLIENT_ID) and the host API (APP_API_URL).');
 
     let withoutTwoStep: ThrowawayUser;
@@ -826,7 +908,11 @@ test.describe('Identity holds no host information (QC-775)', () => {
       return response.status();
     }
 
-    test("HMI-17 the host API refuses a host admin's Identity token without two-step verification and accepts one with it", async ({ browser, page, request }) => {
+    test("HMI-17 the host API refuses a host admin's Identity token without two-step verification and accepts one with it", async ({
+      browser,
+      page,
+      request,
+    }) => {
       const plain = new HostSignInFlow(page, env.hostClient!);
       await plain.signIn(withoutTwoStep);
       const plainTokens = await plain.tokens(request);
@@ -843,9 +929,18 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await otherPage.context().close();
     });
 
-    test('HMI-18 the host app asks Identity again with acr_values=mfa when its API refuses a host admin, and Identity asks for two-step set-up', async ({ page, request }) => {
+    test('HMI-18 the host app asks Identity again with acr_values=mfa when its API refuses a host admin, and Identity asks for two-step set-up', async ({
+      page,
+      request,
+    }) => {
       test.skip(!env.appUrl, 'APP_URL is not set.');
-      test.skip(!(await request.get(env.appUrl!).then((r) => r.ok()).catch(() => false)), `The host app is not running on ${env.appUrl}.`);
+      test.skip(
+        !(await request
+          .get(env.appUrl!)
+          .then((r) => r.ok())
+          .catch(() => false)),
+        `The host app is not running on ${env.appUrl}.`,
+      );
       const authorizes: URL[] = [];
       page.on('request', (r) => {
         if (r.url().startsWith(`${env.identityUrl}/connect/authorize?`)) authorizes.push(new URL(r.url()));
@@ -854,11 +949,18 @@ test.describe('Identity holds no host information (QC-775)', () => {
       await page.goto(`${env.appUrl}/#/authentication`);
       await new IdentityLoginPage(page).signIn(withoutTwoStep);
 
-      await expect.poll(() => authorizes.filter((u) => u.searchParams.get('acr_values') === 'mfa').length, { message: 'a second authorize asks for mfa', timeout: 30_000 }).toBe(1);
+      await expect
+        .poll(() => authorizes.filter((u) => u.searchParams.get('acr_values') === 'mfa').length, {
+          message: 'a second authorize asks for mfa',
+          timeout: 30_000,
+        })
+        .toBe(1);
       expect(authorizes[0].searchParams.get('client_id')).toBe(env.hostClient!.clientId);
       expect(authorizes[0].searchParams.get('acr_values')).toBeNull();
 
-      await expect(page, 'the step-up authorize is not overtaken by a plain one, so Identity asks again').toHaveURL(new RegExp(`^${env.identityUrl}/Account/Login`, 'i'));
+      await expect(page, 'the step-up authorize is not overtaken by a plain one, so Identity asks again').toHaveURL(
+        new RegExp(`^${env.identityUrl}/Account/Login`, 'i'),
+      );
       expect(authorizes.filter((u) => u.searchParams.get('acr_values') === null).length, 'only the first authorize goes without acr_values').toBe(1);
       const login = new IdentityLoginPage(page);
       await login.signIn(withoutTwoStep);

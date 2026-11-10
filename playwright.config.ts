@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 import * as path from 'path';
-import { ADMIN_STATE, APP_STATE, env } from './config/environment';
+import { ADMIN_STATE, APP_STATE, env } from '@config/env.config';
 
 process.env.RUN_ID ??= new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
 
@@ -20,8 +20,8 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   forbidOnly: !!process.env.CI,
-  globalSetup: './fixtures/globalSetup.ts',
-  globalTeardown: './fixtures/globalTeardown.ts',
+  globalSetup: './src/setup/globalSetup.ts',
+  globalTeardown: './src/setup/globalTeardown.ts',
   grepInvert: blockedTags.length ? new RegExp(blockedTags.join('|')) : undefined,
   reporter: [
     ['list'],

@@ -1,6 +1,6 @@
 import { test as setup, expect } from '@playwright/test';
-import { APP_STATE, env } from '../../config/environment';
-import { AppSignInPage } from '../../pages/AppPages';
+import { APP_STATE, env } from '@config/env.config';
+import { AppSignInPage } from '@pages/app.page';
 
 setup('sign in to the host app as the test admin and keep the session', async ({ page }) => {
   setup.skip(!env.appUrl, 'APP_URL is not set for this environment.');

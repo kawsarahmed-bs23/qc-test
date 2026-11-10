@@ -8,10 +8,10 @@
 // seed/host-qc800.remove.sql. forgotpassword and resetpassword share 5 requests a minute per IP, so calls are paced and
 // HPWD-08 runs last.
 import * as crypto from 'crypto';
-import { test, expect, signedOut } from '../../fixtures/test';
-import { env } from '../../config/environment';
-import { canSeedLocalDb, canUseIdentityDb, querySingleValue } from '../../fixtures/localDb';
-import { CommsHostAdmin, QC804_ADMIN_EMAIL } from '../../pages/CommsSendGate';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb, querySingleValue } from '@utils/localDb';
+import { CommsHostAdmin, QC804_ADMIN_EMAIL } from '@pages/comms-send-gate.page';
 import {
   FORGOT_TOAST,
   ForgotPasswordPage,
@@ -31,7 +31,7 @@ import {
   tamper,
   type Email,
   type PasswordLinkUrl,
-} from '../../pages/HostPasswordLink';
+} from '@pages/host-password-link.page';
 
 const ACTIVE = qc800Email('hpwd-active');
 const INACTIVE = qc800Email('hpwd-inactive');
@@ -43,15 +43,19 @@ function newPassword(): string {
 }
 
 function sinkIsConfigured(): boolean {
-  return querySingleValue(
-    `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = N'EmailSettings'
+  return (
+    querySingleValue(
+      `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = N'EmailSettings'
        AND ((PropertyName = N'MailServer' AND PropertyValue = N'127.0.0.1') OR (PropertyName = N'MailPort' AND PropertyValue = N'2525'))`,
-  ) === '2';
+    ) === '2'
+  );
 }
 
 async function appIsUp(): Promise<boolean> {
   if (!env.appUrl) return false;
-  return fetch(env.appUrl).then((r) => r.ok).catch(() => false);
+  return fetch(env.appUrl)
+    .then((r) => r.ok)
+    .catch(() => false);
 }
 
 function expectNoPassword(mail: Email, ...passwords: string[]): void {
@@ -92,7 +96,10 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: '@
     expect((await api.forgot(UNKNOWN)).status, 'a paced request goes through once any earlier window has passed').toBe(200);
 
     const since = MailSink.mark();
-    for (const [email, isActive] of [[ACTIVE, true], [INACTIVE, false]] as const) {
+    for (const [email, isActive] of [
+      [ACTIVE, true],
+      [INACTIVE, false],
+    ] as const) {
       const created = await admin.create({ userName: email, firstName: 'E2E', lastName: 'QC-800', password: newPassword(), isActive });
       expect(created.status, `user-create ${email}: ${created.text}`).toBeLessThan(300);
     }
@@ -171,7 +178,7 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: '@
     expect(await api.login(ACTIVE, passwords.current)).toBe(200);
   });
 
-  test('HPWD-04 a tampered code and a valid code sent with another user\'s email are refused and change nothing', async () => {
+  test("HPWD-04 a tampered code and a valid code sent with another user's email are refused and change nothing", async () => {
     needsDeliveredMail();
     const since = MailSink.mark();
     const forgot = await api.forgot(ACTIVE);
@@ -241,7 +248,10 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: '@
   });
 
   test('HPWD-09 the auth.SystemNotifications rows of both password emails keep no body and no Bcc', async () => {
-    test.info().annotations.push({ type: 'host bcc', description: Qc800HostUsers.hostBccIsSet() ? 'EmailSettings:bcc is set, so other emails are copied' : 'EmailSettings:bcc is empty' });
+    test.info().annotations.push({
+      type: 'host bcc',
+      description: Qc800HostUsers.hostBccIsSet() ? 'EmailSettings:bcc is set, so other emails are copied' : 'EmailSettings:bcc is empty',
+    });
     expect(Qc800HostUsers.latestNotification(CREATED, 'EmailCreateUser')).toEqual({ messageBody: 'EMPTY', bcc: null });
     expect(Qc800HostUsers.latestNotification(ACTIVE, 'EmailCreateUser')).toEqual({ messageBody: 'EMPTY', bcc: null });
     const forgot = await api.forgot(ACTIVE);
@@ -274,7 +284,9 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: '@
     }
   });
 
-  test('HPWD-12 the app pages read Send Reset Link and Set Your Password, and a bad link is shown as expired or used with Request a new link', async ({ page }) => {
+  test('HPWD-12 the app pages read Send Reset Link and Set Your Password, and a bad link is shown as expired or used with Request a new link', async ({
+    page,
+  }) => {
     const forgot = new ForgotPasswordPage(page);
     await forgot.open();
     await expect(forgot.send).toHaveText('Send Reset Link');
@@ -283,7 +295,11 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: '@
     await expect(page, 'the forgot page moves on to sign-in after its toast').not.toHaveURL(/forgot-password/, { timeout: 15_000 });
 
     const reset = new ResetPasswordPage(page);
-    await reset.open({ raw: `http://localhost/authentication/reset-password?email=${encodeURIComponent(ACTIVE)}&code=bm90LWEtdG9rZW4`, email: ACTIVE, code: 'bm90LWEtdG9rZW4' });
+    await reset.open({
+      raw: `http://localhost/authentication/reset-password?email=${encodeURIComponent(ACTIVE)}&code=bm90LWEtdG9rZW4`,
+      email: ACTIVE,
+      code: 'bm90LWEtdG9rZW4',
+    });
     await expect(reset.title).toHaveText('Set Your Password');
     await expect(reset.submit).toHaveText('Set Password');
     await reset.setPassword(newPassword());

@@ -9,10 +9,10 @@ SET XACT_ABORT ON;
 
 BEGIN TRANSACTION;
 
-DELETE g FROM PersistedGrants g JOIN Users u ON u.Id = g.SubjectId WHERE u.NormalizedEmail LIKE N'E2E.QC742.%';
-DELETE s FROM app.UserSessions s JOIN Users u ON u.Id = s.SubjectID WHERE u.NormalizedEmail LIKE N'E2E.QC742.%';
-DELETE r FROM UserRoles r JOIN Users u ON u.Id = r.UserId WHERE u.NormalizedEmail LIKE N'E2E.QC742.%';
-DELETE Users WHERE NormalizedEmail LIKE N'E2E.QC742.%';
+DELETE g FROM auth.PersistedGrants g JOIN auth.Users u ON g.SubjectId = CONVERT(nvarchar(36), u.UserUUID) WHERE u.NormalizedEmail LIKE N'E2E.QC742.%';
+DELETE s FROM app.UserSessions s JOIN auth.Users u ON s.SubjectID = CONVERT(nvarchar(36), u.UserUUID) WHERE u.NormalizedEmail LIKE N'E2E.QC742.%';
+DELETE r FROM auth.UserRoles r JOIN auth.Users u ON u.Id = r.UserId WHERE u.NormalizedEmail LIKE N'E2E.QC742.%';
+DELETE auth.Users WHERE NormalizedEmail LIKE N'E2E.QC742.%';
 
 DECLARE @i int = 1;
 WHILE @i <= 40
@@ -21,15 +21,15 @@ BEGIN
     DECLARE @Email nvarchar(256) = N'e2e.qc742.u' + @Number + N'@quarryconnect.test';
     DECLARE @UserId nvarchar(450) = LOWER(CONVERT(nvarchar(36), NEWID()));
 
-    INSERT Users
+    INSERT auth.Users
     (
-        Id, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, SecurityStamp, ConcurrencyStamp,
+        Id, UserUUID, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, SecurityStamp, ConcurrencyStamp,
         PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
         LastLoginDate, LastPasswordChangedDate, PasswordResetFlag, IsActive
     )
     VALUES
     (
-        @UserId, @Email, UPPER(@Email), @Email, UPPER(@Email), 1,
+        @UserId, CONVERT(uniqueidentifier, @UserId), @Email, UPPER(@Email), @Email, UPPER(@Email), 1,
         UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
         0, 0, 1, 0, N'E2E', N'QC742 L' + RIGHT(N'0' + CAST((@i * 17) % 41 AS nvarchar(2)), 2),
         DATEADD(minute, -((@i * 13) % 41), CAST('2026-01-01T12:00:00+00:00' AS datetimeoffset)), SYSDATETIMEOFFSET(), 0,

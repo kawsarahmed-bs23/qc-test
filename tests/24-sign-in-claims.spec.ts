@@ -1,8 +1,8 @@
 import type { APIRequestContext, Browser, BrowserContext } from '@playwright/test';
-import { test, expect, signedOut } from '../fixtures/test';
-import { env } from '../config/environment';
-import { canSeedLocalDb, canUseIdentityDb, querySingleValue } from '../fixtures/localDb';
-import type { ThrowawayUser } from '../fixtures/throwawayUsers';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
+import { env } from '@config/env.config';
+import { canSeedLocalDb, canUseIdentityDb, querySingleValue } from '@utils/localDb';
+import type { ThrowawayUser } from '@utils/throwawayUsers';
 import {
   DEVICE_ID_CLAIM,
   deviceIdClaimValue,
@@ -13,7 +13,7 @@ import {
   removeQc726HostUsers,
   seedQc726HostUser,
   type HostTokens,
-} from '../pages/HostAccountApi';
+} from '@api/host-account.api';
 
 const SIGN_INS = 10;
 const DEVICE_A = 'qc726-device-a';
@@ -24,9 +24,7 @@ function claimRows(userId: string): number {
 }
 
 function deviceClaimValues(userId: string): string[] {
-  const values = querySingleValue(
-    `SELECT STRING_AGG(ClaimValue, ',') FROM auth.UserClaims WHERE UserId = N'${userId}' AND ClaimType = N'${DEVICE_ID_CLAIM}'`,
-  );
+  const values = querySingleValue(`SELECT STRING_AGG(ClaimValue, ',') FROM auth.UserClaims WHERE UserId = N'${userId}' AND ClaimType = N'${DEVICE_ID_CLAIM}'`);
   return values === null ? [] : values.split(',');
 }
 
@@ -55,7 +53,10 @@ async function hostSignIn(browser: Browser, request: APIRequestContext, user: Th
 test.describe('Host API sign-in stores only the device claim (QC-726)', { tag: '@write' }, () => {
   test.describe.configure({ mode: 'serial' });
   test.use(signedOut);
-  test.skip(!canSeedLocalDb() || !canUseIdentityDb() || !env.admin, "Needs Identity's and the host's local databases and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway users.");
+  test.skip(
+    !canSeedLocalDb() || !canUseIdentityDb() || !env.admin,
+    "Needs Identity's and the host's local databases and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway users.",
+  );
   test.skip(!env.appApiUrl, 'APP_API_URL (the host API) is not set for this environment.');
   test.skip(!env.hostClient, 'Needs the host client (HOST_CLIENT_ID / HOST_REDIRECT_URI) to get an Identity token for the identity exchange.');
 

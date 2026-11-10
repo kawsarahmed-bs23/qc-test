@@ -1,18 +1,19 @@
 import { randomUUID } from 'crypto';
 import * as fs from 'fs';
-import { test, expect } from '../fixtures/test';
+import { test, expect } from '@fixtures/pageFixtures';
 import {
   canSeedLocalDb,
   canUseDriversDb,
   canUseIdentityDb,
+  driversColumns,
   queryDriversDb,
   queryIdentityDb,
   querySingleValue,
   runDriversSeedScript,
   runIdentitySeedScript,
   runSeedScript,
-} from '../fixtures/localDb';
-import { newAuthenticatorKey } from '../fixtures/totp';
+} from '@utils/localDb';
+import { newAuthenticatorKey } from '@utils/totp';
 import {
   DriverInvitesApi,
   DriverInvitesPage,
@@ -23,10 +24,10 @@ import {
   inviteCode,
   inviteTokenHash,
   waitForInviteEmail,
-} from '../pages/DriverInvitesApi';
-import { MailSink } from '../pages/HostPasswordLink';
-import { isDriversApiReachable, PasswordGrantApi } from '../pages/PasswordGrantApi';
-import { env } from '../config/environment';
+} from '@api/driver-invites.api';
+import { MailSink } from '@pages/host-password-link.page';
+import { isDriversApiReachable, PasswordGrantApi } from '@api/password-grant.api';
+import { env } from '@config/env.config';
 
 const VENDOR_EMAIL = 'e2e.qc774.vendor@quarryconnect.test';
 const DRIVER_EMAILS = {
@@ -61,7 +62,7 @@ function driversValue(query: string): string | null {
 }
 
 function existingThrowawayUsers(): string {
-  return (queryIdentityDb(`SELECT STRING_AGG(Id, ',') FROM Users WHERE NormalizedEmail LIKE N'E2E.QC774.%@QUARRYCONNECT.TEST'`) ?? 'none') || 'none';
+  return (queryIdentityDb(`SELECT STRING_AGG(Id, ',') FROM auth.Users WHERE NormalizedEmail LIKE N'E2E.QC774.%@QUARRYCONNECT.TEST'`) ?? 'none') || 'none';
 }
 
 function removeAll(userIds: string): void {
@@ -72,13 +73,13 @@ function removeAll(userIds: string): void {
 
 function linkState(sub: string, hostUuid: string): string {
   return driversValue(
-    `SELECT CONCAT(COUNT(*), ':', ISNULL(SUM(CAST(l.Active AS int)), 0)) FROM app.DriverHostLinks l JOIN app.Hosts h ON h.HostID = l.HostID_FK WHERE l.UserID_FK = ${sqlText(sub)} AND h.HostUUID = '${hostUuid}'`,
+    `SELECT CONCAT(COUNT(*), ':', ISNULL(SUM(CAST(l.Active AS int)), 0)) FROM app.DriverHostLinks l JOIN app.Hosts h ON h.${driversColumns().hostKey} = l.${driversColumns().host} WHERE l.${driversColumns().user} = ${sqlText(sub)} AND h.HostUUID = '${hostUuid}'`,
   )!;
 }
 
 function otherDriversLinks(hostUuid: string, subs: string[]): string {
   return driversValue(
-    `SELECT CONCAT(COUNT(*), ':', ISNULL(SUM(CAST(l.Active AS int)), 0)) FROM app.DriverHostLinks l JOIN app.Hosts h ON h.HostID = l.HostID_FK WHERE h.HostUUID = '${hostUuid}' AND l.UserID_FK NOT IN (${subs.map(sqlText).join(', ')})`,
+    `SELECT CONCAT(COUNT(*), ':', ISNULL(SUM(CAST(l.Active AS int)), 0)) FROM app.DriverHostLinks l JOIN app.Hosts h ON h.${driversColumns().hostKey} = l.${driversColumns().host} WHERE h.HostUUID = '${hostUuid}' AND l.${driversColumns().user} NOT IN (${subs.map(sqlText).join(', ')})`,
   )!;
 }
 
@@ -95,7 +96,7 @@ function hostUser(sub: string): { active: string; organisationId: string; roles:
   return { active, organisationId, roles, hasPassword };
 }
 
-test.describe('Driver invites link a host and a driver only with the driver\'s approval (QC-774)', { tag: '@write' }, () => {
+test.describe("Driver invites link a host and a driver only with the driver's approval (QC-774)", { tag: '@write' }, () => {
   test.describe.configure({ mode: 'serial' });
   test.skip(!canSeedLocalDb() || !canUseDriversDb() || !canUseIdentityDb(), 'Needs the host, DRIVERS and Identity local databases (local only).');
   test.skip(!env.admin, 'Needs ADMIN_EMAIL / ADMIN_PASSWORD; the throwaway users copy that password.');
@@ -126,28 +127,42 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
 
     vendorKey = newAuthenticatorKey();
     runIdentitySeedScript('identity-qc774-user.apply.sql', {
-      Email: VENDOR_EMAIL, SourceEmail: env.admin!.email, LastName: 'QC-774 Vendor', TwoFactor: '1', AuthenticatorKey: vendorKey,
+      Email: VENDOR_EMAIL,
+      SourceEmail: env.admin!.email,
+      LastName: 'QC-774 Vendor',
+      TwoFactor: '1',
+      AuthenticatorKey: vendorKey,
     });
-    const vendorId = queryIdentityDb(`SELECT Id FROM Users WHERE NormalizedEmail = UPPER(${sqlText(VENDOR_EMAIL)})`);
+    const vendorId = queryIdentityDb(`SELECT Id FROM auth.Users WHERE NormalizedEmail = UPPER(${sqlText(VENDOR_EMAIL)})`);
     expect(vendorId, 'the throwaway Identity vendor exists').not.toBeNull();
     runSeedScript('host-qc774-vendor.apply.sql', { UserId: vendorId!, Email: VENDOR_EMAIL, IdentityDb: env.identitySql!.database });
 
     const vendorOrg = hostValue(`SELECT OrganisationIdFk FROM auth.Users WHERE Id = ${sqlText(vendorId!)}`)!;
     trucks = {
-      first: Number(hostValue(`SELECT OrganisationID FROM auth.Organisations WHERE ParentOrganisationIdFk = ${vendorOrg} AND OrganisationName = N'E2E QC-774 Truck 1'`)),
-      second: Number(hostValue(`SELECT OrganisationID FROM auth.Organisations WHERE ParentOrganisationIdFk = ${vendorOrg} AND OrganisationName = N'E2E QC-774 Truck 2'`)),
-      foreign: Number(hostValue(
-        `SELECT TOP 1 t.OrganisationID FROM auth.Organisations t JOIN auth.RoleTypes rt ON rt.RoleTypeId = t.RoleTypeIdFk WHERE rt.RoleType = N'Truck' AND t.ParentOrganisationIdFk <> ${vendorOrg} ORDER BY t.OrganisationID`,
-      ) ?? '0'),
+      first: Number(
+        hostValue(`SELECT OrganisationID FROM auth.Organisations WHERE ParentOrganisationIdFk = ${vendorOrg} AND OrganisationName = N'E2E QC-774 Truck 1'`),
+      ),
+      second: Number(
+        hostValue(`SELECT OrganisationID FROM auth.Organisations WHERE ParentOrganisationIdFk = ${vendorOrg} AND OrganisationName = N'E2E QC-774 Truck 2'`),
+      ),
+      foreign: Number(
+        hostValue(
+          `SELECT TOP 1 t.OrganisationID FROM auth.Organisations t JOIN auth.RoleTypes rt ON rt.RoleTypeId = t.RoleTypeIdFk WHERE rt.RoleType = N'Truck' AND t.ParentOrganisationIdFk <> ${vendorOrg} ORDER BY t.OrganisationID`,
+        ) ?? '0',
+      ),
     };
     expect(trucks.first).toBeGreaterThan(0);
     expect(trucks.second).toBeGreaterThan(0);
 
     for (const key of Object.keys(DRIVER_EMAILS) as DriverKey[]) {
       runIdentitySeedScript('identity-qc774-user.apply.sql', {
-        Email: DRIVER_EMAILS[key], SourceEmail: env.admin!.email, LastName: `QC-774 Driver ${key}`, TwoFactor: '0', AuthenticatorKey: 'none',
+        Email: DRIVER_EMAILS[key],
+        SourceEmail: env.admin!.email,
+        LastName: `QC-774 Driver ${key}`,
+        TwoFactor: '0',
+        AuthenticatorKey: 'none',
       });
-      const sub = queryIdentityDb(`SELECT Id FROM Users WHERE NormalizedEmail = UPPER(${sqlText(DRIVER_EMAILS[key])})`);
+      const sub = queryIdentityDb(`SELECT CONVERT(nvarchar(36), UserUUID) FROM auth.Users WHERE NormalizedEmail = UPPER(${sqlText(DRIVER_EMAILS[key])})`);
       expect(sub, `the throwaway Identity driver ${key} exists`).not.toBeNull();
       const grantContext = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
       try {
@@ -165,14 +180,20 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
 
     secondHostUuid = randomUUID();
     runDriversSeedScript('drivers-qc774.apply.sql', { UserId: drivers.first.sub, SecondHostUuid: secondHostUuid });
-    otherHostLinks = otherDriversLinks(hostUuid, Object.values(drivers).map((d) => d.sub));
+    otherHostLinks = otherDriversLinks(
+      hostUuid,
+      Object.values(drivers).map((d) => d.sub),
+    );
 
     host = new HostDriverInvitesApi(await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors }));
     expect(await host.signIn(VENDOR_EMAIL, env.admin!.password), 'the throwaway vendor signs in to the host API').toBe(200);
   });
 
   test.afterAll(async () => {
-    const subs = Object.values(drivers).map((d) => d.sub).join(',') || 'none';
+    const subs =
+      Object.values(drivers)
+        .map((d) => d.sub)
+        .join(',') || 'none';
     await new Promise((resolve) => setTimeout(resolve, 5_000));
     removeAll(subs);
     await new Promise((resolve) => setTimeout(resolve, 5_000));
@@ -196,7 +217,9 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
     const mail = await waitForInviteEmail(driver.email, since);
     const code = inviteCode(mail);
     expect(code).toMatch(/^i-[A-Za-z0-9_-]{40,}$/);
-    expect(driversValue(`SELECT TokenHash FROM app.DriverInvites WHERE DriverInviteUUID = '${inviteUuid}'`), 'only the SHA-256 of the token is stored').toBe(inviteTokenHash(code));
+    expect(driversValue(`SELECT TokenHash FROM app.DriverInvites WHERE DriverInviteUUID = '${inviteUuid}'`), 'only the SHA-256 of the token is stored').toBe(
+      inviteTokenHash(code),
+    );
     expect(driversValue(`SELECT COUNT(*) FROM app.DriverInvites WHERE TokenHash = ${sqlText(code.slice(2))} OR InvitedEmail = ${sqlText(code)}`)).toBe('0');
 
     const listed = (await driver.api.list()).data?.invites.find((invite) => invite.inviteUuid.toLowerCase() === inviteUuid);
@@ -211,7 +234,9 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
     expect(await driver.api.listedUuids()).not.toContain(inviteUuid);
     expect((await driver.api.acceptCode(code)).status, 'the link works once').toBe(404);
 
-    await expect.poll(async () => (await host.find(inviteUuid))?.status, { message: 'the host marks the invite accepted', timeout: MESSAGE_WINDOW, ...POLL }).toBe('accepted');
+    await expect
+      .poll(async () => (await host.find(inviteUuid))?.status, { message: 'the host marks the invite accepted', timeout: MESSAGE_WINDOW, ...POLL })
+      .toBe('accepted');
     expect((await host.find(inviteUuid))?.driverUuid?.toLowerCase()).toBe(driver.sub);
     expect(hostUser(driver.sub)).toEqual({ active: '1', organisationId: String(trucks.first), roles: 'Driver', hasPassword: '0' });
   });
@@ -226,8 +251,14 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
     const inviteUuid = sent.data!.inviteUuid.toLowerCase();
     invites.second = inviteUuid;
 
-    await expect.poll(() => driver.api.listedUuids(), { message: 'the UUID invite reaches GET /invites', timeout: MESSAGE_WINDOW, ...POLL }).toContain(inviteUuid);
-    expect(driversValue(`SELECT CONCAT(CASE WHEN InvitedEmail IS NULL THEN 'null' ELSE InvitedEmail END, '|', CASE WHEN TokenHash IS NULL THEN 'null' ELSE 'hash' END, '|', InvitedUserID) FROM app.DriverInvites WHERE DriverInviteUUID = '${inviteUuid}'`)).toBe(`null|null|${driver.sub}`);
+    await expect
+      .poll(() => driver.api.listedUuids(), { message: 'the UUID invite reaches GET /invites', timeout: MESSAGE_WINDOW, ...POLL })
+      .toContain(inviteUuid);
+    expect(
+      driversValue(
+        `SELECT CONCAT(CASE WHEN InvitedEmail IS NULL THEN 'null' ELSE InvitedEmail END, '|', CASE WHEN TokenHash IS NULL THEN 'null' ELSE 'hash' END, '|', InvitedUserID) FROM app.DriverInvites WHERE DriverInviteUUID = '${inviteUuid}'`,
+      ),
+    ).toBe(`null|null|${driver.sub}`);
     expect(MailSink.newTo(driver.email, since), 'no email for a UUID invite').toHaveLength(0);
 
     const accepted = await driver.api.accept(inviteUuid);
@@ -323,7 +354,7 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
     expect(hostUser(driver.sub)?.organisationId).toBe(String(trucks.second));
   });
 
-  test('DINV-06 a host revoke ends the link on both sides and leaves the driver\'s other host links alone', async () => {
+  test("DINV-06 a host revoke ends the link on both sides and leaves the driver's other host links alone", async () => {
     test.skip(!invites.first, 'DINV-01 did not link the first driver.');
     const driver = drivers.first;
     const inviteUuid = invites.first!;
@@ -337,7 +368,13 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
 
     await expect.poll(() => linkState(driver.sub, hostUuid), { message: 'DRIVERS ends the link to this host', timeout: MESSAGE_WINDOW, ...POLL }).toBe('1:0');
     expect(linkState(driver.sub, secondHostUuid), 'the link to the other host is untouched').toBe('1:1');
-    expect(otherDriversLinks(hostUuid, Object.values(drivers).map((d) => d.sub)), 'other drivers\' links to this host are unchanged').toBe(otherHostLinks);
+    expect(
+      otherDriversLinks(
+        hostUuid,
+        Object.values(drivers).map((d) => d.sub),
+      ),
+      "other drivers' links to this host are unchanged",
+    ).toBe(otherHostLinks);
     expect((await host.revoke(inviteUuid)).status, 'a revoked invite has no link to revoke').toBe(400);
   });
 
@@ -350,12 +387,14 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
     expect(left.status, left.text).toBe(200);
     expect(linkState(driver.sub, hostUuid)).toBe('1:0');
 
-    await expect.poll(async () => (await host.find(inviteUuid))?.status, { message: 'the host hears LinkRevoked', timeout: MESSAGE_WINDOW, ...POLL }).toBe('revoked');
+    await expect
+      .poll(async () => (await host.find(inviteUuid))?.status, { message: 'the host hears LinkRevoked', timeout: MESSAGE_WINDOW, ...POLL })
+      .toBe('revoked');
     await expect.poll(() => hostUser(driver.sub)?.active, { timeout: MESSAGE_WINDOW, ...POLL }).toBe('0');
     expect((await driver.api.leaveHost(hostUuid)).status, 'leaving twice is a 404').toBe(404);
   });
 
-  test('DINV-08 the host answers an unknown email exactly like an existing driver\'s email', async () => {
+  test("DINV-08 the host answers an unknown email exactly like an existing driver's email", async () => {
     const unknown = await host.send({ invitedEmail: UNKNOWN_EMAIL, truckId: trucks.first });
     const known = await host.send({ invitedEmail: drivers.other.email, truckId: trucks.first });
 
@@ -390,7 +429,9 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
     const accepted = await driver.api.accept(inviteUuid);
     expect(accepted.status, accepted.text).toBe(200);
 
-    await expect.poll(() => linkState(driver.sub, hostUuid), { message: 'the host answers LinkRevoked and DRIVERS ends the link', timeout: MESSAGE_WINDOW, ...POLL }).toBe('1:0');
+    await expect
+      .poll(() => linkState(driver.sub, hostUuid), { message: 'the host answers LinkRevoked and DRIVERS ends the link', timeout: MESSAGE_WINDOW, ...POLL })
+      .toBe('1:0');
     expect((await host.find(inviteUuid))?.status).toBe('cancelled');
     expect(hostUser(driver.sub), 'no host driver user for a cancelled invite').toBeNull();
   });
@@ -432,4 +473,3 @@ test.describe('Driver invites link a host and a driver only with the driver\'s a
     }
   });
 });
-

@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
-import { env } from '../config/environment';
-import { test, expect, signedOut } from '../fixtures/test';
+import { env } from '@config/env.config';
+import { test, expect, signedOut } from '@fixtures/pageFixtures';
 import {
   canSeedThrowawayUsers,
   clearQc876Lockout,
@@ -9,16 +9,17 @@ import {
   removeQc876Users,
   seedQc876User,
   type ThrowawayUser,
-} from '../fixtures/throwawayUsers';
-import { currentStep, totp } from '../fixtures/totp';
-import { IdentityLoginPage, IdentityLogoutPage, IdentityTwoStepPage } from '../pages/IdentityLoginPage';
+} from '@utils/throwawayUsers';
+import { currentStep, totp } from '@utils/totp';
+import { IdentityLoginPage, IdentityLogoutPage, IdentityTwoStepPage } from '@pages/identity-login.page';
 
 const INVALID = 'Invalid email or password';
 const LOCKED = 'Your account is locked for 15 minutes after 5 failed sign-in attempts. Try again later or contact your administrator.';
 const DEACTIVATED = 'Your account is deactivated. Contact your administrator.';
 const INVALID_CODE = 'The code is not valid. Try again.';
 const INVALID_ES = 'Correo electrónico o contraseña no válidos';
-const LOCKED_ES = 'Su cuenta está bloqueada durante 15 minutos tras 5 intentos fallidos de inicio de sesión. Inténtelo más tarde o contacte con su administrador.';
+const LOCKED_ES =
+  'Su cuenta está bloqueada durante 15 minutos tras 5 intentos fallidos de inicio de sesión. Inténtelo más tarde o contacte con su administrador.';
 const LOCKOUT_THRESHOLD = 5;
 
 function email(name: string): string {
@@ -112,17 +113,21 @@ test.describe('Sign-in lockout and deactivated accounts say so (QC-876)', () => 
     expect(qc876LockoutState(user)).toEqual({ accessFailedCount: 0, lockedOut: false });
   });
 
-  test('LOCK-05 a deactivated account with the right password is told it is deactivated, and the failed count does not move', { tag: '@write' }, async ({ page }) => {
-    const user = seedQc876User(email('lock05'), 'QC-876 Lock 05', { active: false });
-    const login = new IdentityLoginPage(page);
-    await login.open();
-    for (let attempt = 1; attempt <= LOCKOUT_THRESHOLD + 1; attempt++) {
-      await login.submitOnce(user);
-      await expect(login.error, `right password ${attempt}`).toHaveText(DEACTIVATED);
-    }
-    expect(qc876LockoutState(user)).toEqual({ accessFailedCount: 0, lockedOut: false });
-    await new IdentityLogoutPage(page).expectSignedOut();
-  });
+  test(
+    'LOCK-05 a deactivated account with the right password is told it is deactivated, and the failed count does not move',
+    { tag: '@write' },
+    async ({ page }) => {
+      const user = seedQc876User(email('lock05'), 'QC-876 Lock 05', { active: false });
+      const login = new IdentityLoginPage(page);
+      await login.open();
+      for (let attempt = 1; attempt <= LOCKOUT_THRESHOLD + 1; attempt++) {
+        await login.submitOnce(user);
+        await expect(login.error, `right password ${attempt}`).toHaveText(DEACTIVATED);
+      }
+      expect(qc876LockoutState(user)).toEqual({ accessFailedCount: 0, lockedOut: false });
+      await new IdentityLogoutPage(page).expectSignedOut();
+    },
+  );
 
   test('LOCK-06 five wrong two-step codes after the right password lock the account and the last one says so', { tag: '@write' }, async ({ page }) => {
     const user = seedQc876User(email('lock06'), 'QC-876 Lock 06', { twoFactor: true });

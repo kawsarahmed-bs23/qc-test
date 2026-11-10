@@ -1,6 +1,15 @@
-import { test, expect } from '../fixtures/test';
-import { canSeedLocalDb, canUseIdentityDb, canUseMasterDb, markChangeLogs, queryMasterDb, removeChangeLogsSince, runMasterSeedScript, type ChangeLogMark } from '../fixtures/localDb';
-import { featuresSync, masterFeatureFlags, masterHostId } from '../fixtures/featureSnapshot';
+import { test, expect } from '@fixtures/pageFixtures';
+import {
+  canSeedLocalDb,
+  canUseIdentityDb,
+  canUseMasterDb,
+  markChangeLogs,
+  queryMasterDb,
+  removeChangeLogsSince,
+  runMasterSeedScript,
+  type ChangeLogMark,
+} from '@utils/localDb';
+import { featuresSync, masterFeatureFlags, masterHostId } from '@utils/featureSnapshot';
 import {
   NO_API_HOST_KEY,
   UNREACHABLE_HOST_KEY,
@@ -28,14 +37,14 @@ import {
   templateUuid,
   type EnvironmentSyncSnapshot,
   type SettingRowSnapshot,
-} from '../fixtures/environmentRecord';
-import { adminAccount } from '../fixtures/throwawayUsers';
+} from '@utils/environmentRecord';
+import { adminAccount } from '@utils/throwawayUsers';
 import type { APIRequestContext } from '@playwright/test';
-import { AdminApi, canUseAdminApi } from '../pages/AdminApi';
-import { hostAppAccessToken, hostEnvironmentSettings, removeHostSuperAdmins, seedHostSuperAdmin } from '../pages/HostEnvironmentApi';
-import { HostEnvironmentPage, HostFeaturesPage } from '../pages/HostManagementPages';
-import { removeSuperAdminRole, seedSuperAdminRole } from '../pages/HostRootRemoved';
-import { env } from '../config/environment';
+import { AdminApi, canUseAdminApi } from '@api/admin.api';
+import { hostAppAccessToken, hostEnvironmentSettings, removeHostSuperAdmins, seedHostSuperAdmin } from '@api/host-environment.api';
+import { HostEnvironmentPage, HostFeaturesPage } from '@pages/host-management.page';
+import { removeSuperAdminRole, seedSuperAdminRole } from '@pages/host-root-removed.page';
+import { env } from '@config/env.config';
 
 const SAFE_SETTING = 'DispatchSnapshot:RateLimitPermitsPerHour';
 const PUSH_SETTING = 'DriverLocation:IdleIntervalSeconds';
@@ -79,12 +88,20 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
   test.afterAll(() => {
     runMasterSeedScript('master-qc744-host.remove.sql');
     if (started) removeRowsCreatedSince(targetId, [SAFE_SETTING, PUSH_SETTING, TAKE_SETTING], started);
-    if (rows) restoreSettingRows(targetId, rows.filter((row) => row.master !== null));
+    if (rows)
+      restoreSettingRows(
+        targetId,
+        rows.filter((row) => row.master !== null),
+      );
     if (sync) restoreEnvironmentSync(sync);
     if (mark) removeChangeLogsSince(mark, adminAccount()!.email);
   });
 
-  test('REC-01 opening Environment takes host-only rows and missing secrets into HOST_MASTER, and neither the page nor the Admin API shows a secret (QC-745: template keys need no host row)', async ({ page, request, targetHost }) => {
+  test('REC-01 opening Environment takes host-only rows and missing secrets into HOST_MASTER, and neither the page nor the Admin API shows a secret (QC-745: template keys need no host row)', async ({
+    page,
+    request,
+    targetHost,
+  }) => {
     const before = templateRecordCounts(targetId);
     test.info().annotations.push({
       type: 'before-open',
@@ -105,7 +122,13 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     expect(after.hostSecretsUncovered, 'every host secret with a value is stored in HOST_MASTER').toBe(0);
     expect(secretsDifferingFromHost(targetId) === 0, 'each stored secret equals the host value').toBe(true);
     expect(after.notInTemplate - before.notInTemplate, 'the host-only rows the template lacks were taken by this open').toBe(before.hostRowsUncovered);
-    expect(Number(queryMasterDb(`SELECT COUNT(*) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${targetId} AND Active = 1 AND GroupName = N'Messaging' AND CreatedBy <> N'admin.sync'`))).toBe(0);
+    expect(
+      Number(
+        queryMasterDb(
+          `SELECT COUNT(*) FROM app.HostEnvironmentSettings WHERE HostID_FK = ${targetId} AND Active = 1 AND GroupName = N'Messaging' AND CreatedBy <> N'admin.sync'`,
+        ),
+      ),
+    ).toBe(0);
 
     const expectedRows = after.templateKeys + after.notInTemplate;
     const sensitive = settingsOf(pageView).filter((s) => s.isSensitive).length;
@@ -149,10 +172,18 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     }
   });
 
-  test('REC-02 a changed value is saved to HOST_MASTER and the host database, the same value in both; saving the template default again drops the override (QC-745)', async ({ page, request, targetHost, shell }) => {
+  test('REC-02 a changed value is saved to HOST_MASTER and the host database, the same value in both; saving the template default again drops the override (QC-745)', async ({
+    page,
+    request,
+    targetHost,
+    shell,
+  }) => {
     test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
     const resent = await resentBySave(request, targetHost.uuid, SAFE_SETTING);
-    test.skip(resent.length > 0, `A save also sends HOST_MASTER's value for every setting that differs on the host (${resent.join(', ')}); not run so those settings stay as they are.`);
+    test.skip(
+      resent.length > 0,
+      `A save also sends HOST_MASTER's value for every setting that differs on the host (${resent.join(', ')}); not run so those settings stay as they are.`,
+    );
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
     const original = await environment.input(SAFE_SETTING).inputValue();
@@ -216,7 +247,12 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     await expect(environment.input(SAFE_SETTING)).toHaveValue(original);
   });
 
-  test('REC-04 a value changed in the host database is flagged, and Send to host puts HOST_MASTER\'s value back on the host', async ({ page, request, targetHost, shell }) => {
+  test("REC-04 a value changed in the host database is flagged, and Send to host puts HOST_MASTER's value back on the host", async ({
+    page,
+    request,
+    targetHost,
+    shell,
+  }) => {
     test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
     const resent = await resentBySave(request, targetHost.uuid, PUSH_SETTING);
     test.skip(resent.length > 0, `The host already differs from HOST_MASTER on ${resent.join(', ')}; Send to host would overwrite them.`);
@@ -262,7 +298,12 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     expect(hostValue(PUSH_SETTING)).toBe(original);
   });
 
-  test("REC-05 Take the host's values copies a host-side change into HOST_MASTER after confirming, and leaves the host as it is", async ({ page, request, targetHost, shell }) => {
+  test("REC-05 Take the host's values copies a host-side change into HOST_MASTER after confirming, and leaves the host as it is", async ({
+    page,
+    request,
+    targetHost,
+    shell,
+  }) => {
     test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
     const resent = await resentBySave(request, targetHost.uuid, TAKE_SETTING);
     test.skip(resent.length > 0, `The host already differs from HOST_MASTER on ${resent.join(', ')}; taking the host's values would copy them all.`);
@@ -303,7 +344,10 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
       await expect(environment.input(TAKE_SETTING)).toHaveValue(probe);
     } finally {
       removeRowsCreatedSince(targetId, [TAKE_SETTING], started);
-      restoreSettingRows(targetId, rows.filter((row) => row.key === TAKE_SETTING));
+      restoreSettingRows(
+        targetId,
+        rows.filter((row) => row.key === TAKE_SETTING),
+      );
     }
     expect(masterValue(targetId, TAKE_SETTING)).toBe(masterBefore);
     expect(effectiveValue(targetId, TAKE_SETTING)).toBe(original);
@@ -341,11 +385,17 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     expect(stamps()).toBe(stampBefore);
   });
 
-  test('REC-07 an environment save for a ready host whose API cannot be reached returns 502 and changes nothing; the page shows the HOST_MASTER values with Save off (QC-745: keyed by the template uuid)', async ({ page, request }) => {
+  test('REC-07 an environment save for a ready host whose API cannot be reached returns 502 and changes nothing; the page shows the HOST_MASTER values with Save off (QC-745: keyed by the template uuid)', async ({
+    page,
+    request,
+  }) => {
     test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
     const uuid = hostUuidByKey(UNREACHABLE_HOST_KEY);
     const id = hostIdByKey(UNREACHABLE_HOST_KEY);
-    expect(queryMasterDb(`SELECT CASE WHEN ReadyAt IS NULL THEN 0 ELSE 1 END FROM app.Hosts WHERE HostID = ${id}`), 'the unreachable host is marked ready, so Admin calls it').toBe('1');
+    expect(
+      queryMasterDb(`SELECT CASE WHEN ReadyAt IS NULL THEN 0 ELSE 1 END FROM app.Hosts WHERE HostID = ${id}`),
+      'the unreachable host is marked ready, so Admin calls it',
+    ).toBe('1');
     const settingUuid = templateUuid(SAFE_SETTING);
     const before = masterStamp(id, SAFE_SETTING);
     const since = markChangeLogs();
@@ -366,9 +416,18 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     await expect(environment.field(SAFE_SETTING)).toHaveAttribute('data-setting-id', settingUuid);
   });
 
-  test("REC-08 the host app's former root super admin (a user still holding a SuperAdmin row) is refused by the host API's environment settings (QC-801)", async ({ browser, request }) => {
-    test.skip(!env.appUrl || !env.appApiUrl || !canUseIdentityDb() || !env.admin, "Needs APP_URL, APP_API_URL, Identity's local database and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway super admin.");
-    const appUp = await request.get(env.appUrl!).then((response) => response.ok()).catch(() => false);
+  test("REC-08 the host app's former root super admin (a user still holding a SuperAdmin row) is refused by the host API's environment settings (QC-801)", async ({
+    browser,
+    request,
+  }) => {
+    test.skip(
+      !env.appUrl || !env.appApiUrl || !canUseIdentityDb() || !env.admin,
+      "Needs APP_URL, APP_API_URL, Identity's local database and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway super admin.",
+    );
+    const appUp = await request
+      .get(env.appUrl!)
+      .then((response) => response.ok())
+      .catch(() => false);
     test.skip(!appUp, `The host app is not running on ${env.appUrl}.`);
 
     removeHostSuperAdmins();
@@ -408,7 +467,10 @@ test.describe('HOST_MASTER is the record for host environment settings (QC-744)'
     await shell.expectStatus('Saved 1 setting. The host has no API address, so they are kept in HOST_MASTER only.');
     expect(masterValue(id, NO_API_SETTING)).toBe('8');
     expect(masterStamp(id, NO_API_SETTING)).toContain(`|${adminAccount()!.email}`);
-    expect(queryMasterDb(`SELECT COUNT(*) FROM app.HostSyncs WHERE HostID_FK = ${id} AND Area = N'Environment'`), 'nothing was sent, so no sync is recorded').toBe('0');
+    expect(
+      queryMasterDb(`SELECT COUNT(*) FROM app.HostSyncs WHERE HostID_FK = ${id} AND Area = N'Environment'`),
+      'nothing was sent, so no sync is recorded',
+    ).toBe('0');
 
     await environment.open(uuid);
     await environment.reveal(NO_API_SETTING);
