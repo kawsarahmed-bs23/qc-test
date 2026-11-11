@@ -612,6 +612,46 @@ test.describe(
         .poll(() => hostGps(ping.TripGpsUUID!), { message: 'the host copy is attached to that assignment, with no trip', ...QUEUE })
         .toBe(`1|${chosenId}|0`);
     });
+    test('TSUB-21 a batch with an impossible point, a point with no time and an over-long X-Device-Id is still 202: the bad points are stored flagged and not sent, the good one is sent', async () => {
+      expect(work.uuid, 'TSUB-01 made the assignment').not.toBe('');
+      const good: GpsPing = { TripGpsUUID: randomUUID(), orderAssignmentUuid: work.uuid, lat: 29.99, lng: -97.87, isMoving: true, recordedAt: secondsAgo(20) };
+      const farOff: GpsPing = { TripGpsUUID: randomUUID(), orderAssignmentUuid: work.uuid, lat: 999, lng: -97.87, isMoving: true, recordedAt: secondsAgo(15) };
+      const noTime: GpsPing = { TripGpsUUID: randomUUID(), orderAssignmentUuid: work.uuid, lat: 29.99, lng: -97.87, isMoving: true, recordedAt: '0001-01-01T00:00:00Z' };
+      const longDevice = `${DEVICE}-${'x'.repeat(250)}`;
+
+      const sent = await driver.gpsPings([good, farOff, noTime], longDevice);
+      expect(sent.status(), await sent.text()).toBe(202);
+
+      expect(driversGps(farOff.TripGpsUUID!)?.split('|').slice(4).join('|'), 'out-of-range point: flagged, not sent').toBe('1|invalid-point|0');
+      expect(driversValue(`SELECT CONCAT(Lat, '|', Lon) FROM app.TripGps WHERE TripGpsUUID = '${farOff.TripGpsUUID}'`), 'the impossible latitude is stored as 0, the longitude kept').toBe('0.000000|-97.870000');
+      expect(driversGps(noTime.TripGpsUUID!)?.split('|').slice(4).join('|'), 'point with no time: flagged, not sent').toBe('1|invalid-time|0');
+      expect(driversNumber(`SELECT LEN(DeviceID) FROM app.TripGps WHERE TripGpsUUID = '${good.TripGpsUUID}'`), 'the device id is cut to 100, the most the host keeps').toBe(100);
+      await expect.poll(() => hostGps(good.TripGpsUUID!), { message: 'the good point reaches the host', ...QUEUE }).toMatch(/^1\|/);
+      expect(hostGps(farOff.TripGpsUUID!), 'the bad point never reaches the host').toBe('0|0|0');
+    });
+
+    test('TSUB-22 points stored while their host could not be sent to go out when the phone sends the same batch again', async () => {
+      expect(work.uuid, 'TSUB-01 made the assignment').not.toBe('');
+      const endpoint = driversValue(`SELECT MessageEndpoint FROM app.Hosts WHERE HostUUID = '${hostUuid}'`);
+      expect(endpoint, 'the host has a message endpoint').toBeTruthy();
+      const ping: GpsPing = { TripGpsUUID: randomUUID(), orderAssignmentUuid: work.uuid, lat: 29.98, lng: -97.86, isMoving: true, recordedAt: secondsAgo(10) };
+
+      driversNumber(`UPDATE app.Hosts SET MessageEndpoint = NULL WHERE HostUUID = '${hostUuid}'; SELECT @@ROWCOUNT`);
+      try {
+        const first = await driver.gpsPings([ping], DEVICE);
+        expect(first.status(), await first.text()).toBe(202);
+        expect(driversGps(ping.TripGpsUUID!)?.split('|').slice(4).join('|'), 'stored, not flagged, not sent').toBe('0|-|0');
+      } finally {
+        driversNumber(`UPDATE app.Hosts SET MessageEndpoint = ${sqlText(endpoint!)} WHERE HostUUID = '${hostUuid}'; SELECT @@ROWCOUNT`);
+      }
+
+      const again = await driver.gpsPings([ping], DEVICE);
+      expect(again.status(), await again.text()).toBe(202);
+      expect(driversNumber(`SELECT COUNT(*) FROM app.TripGps WHERE TripGpsUUID = '${ping.TripGpsUUID}'`), 'still one DRIVERS row').toBe(1);
+      expect(driversGps(ping.TripGpsUUID!)?.split('|')[6], 'now sent').toBe('1');
+      await expect.poll(() => hostGps(ping.TripGpsUUID!), { message: 'the host gets its copy on the retry', ...QUEUE }).toMatch(/^1\|/);
+    });
+
     test('TSUB-20 a photo whose SHA-256 does not match comes back ImageSaved false: DRIVERS sends it again with a new link, at most three times, and does not mark it received', async () => {
       test.setTimeout(150_000);
       const badHash = { id: 0, uuid: '', tripUuid: '' };
