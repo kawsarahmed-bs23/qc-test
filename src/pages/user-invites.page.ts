@@ -5,7 +5,7 @@ import { env, type Credentials } from '@config/env.config';
 import { BasePage } from '@pages/base.page';
 import { IdentityInvitePage } from '@pages/identity-invite.page';
 import { IdentityLoginPage } from '@pages/identity-login.page';
-import { AppUserSession } from '@pages/user-eula.page';
+import { AppUserSession, openIdentitySignInFromApp } from '@pages/user-eula.page';
 import type { InviteStatus } from '@api/user-invites.api';
 import type { ThrowawayUser } from '@utils/throwawayUsers';
 
@@ -21,6 +21,35 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** The confirm dialog Resend invite opens while the invite is still open (status invited). */
+export class ResendInviteDialog {
+  readonly root: Locator;
+  readonly title: Locator;
+  readonly message: Locator;
+  readonly confirm: Locator;
+  readonly cancel: Locator;
+
+  constructor(page: Page) {
+    this.root = page.locator('mat-dialog-container').filter({ has: page.locator('.confirm-dialog') });
+    this.title = this.root.locator('mat-card-title h5');
+    this.message = this.root.locator('.confirm-dialog__message');
+    this.confirm = this.root.getByRole('button', { name: 'Resend invite', exact: true });
+    this.cancel = this.root.getByRole('button', { name: 'Cancel', exact: true });
+  }
+
+  async expectOpen(): Promise<void> {
+    await expect(this.root).toBeVisible();
+    await expect(this.title).toHaveText('Resend invite');
+    await expect(this.message).toContainText('The link already sent will stop working');
+    await expect(this.confirm).toBeVisible();
+    await expect(this.cancel).toBeVisible();
+  }
+}
+
+function isInvitePost(method: string, url: string): boolean {
+  return method === 'POST' && /\/user-edit\/[^/]+\/invite$/i.test(new URL(url).pathname);
+}
+
 /** The Sign-in section of Edit User and Vendor My Users (QC-913): invite badge, dates and Send/Resend invite. */
 export class UserInviteSection {
   readonly section: Locator;
@@ -32,8 +61,10 @@ export class UserInviteSection {
   readonly declinedAt: Locator;
   readonly toast: Locator;
   readonly errorToast: Locator;
+  readonly resendDialog: ResendInviteDialog;
 
   constructor(private readonly page: Page) {
+    this.resendDialog = new ResendInviteDialog(page);
     this.section = page.locator('#user-signin-section');
     this.status = page.locator('#user-invite-status');
     this.badge = this.status.locator('[data-status]');
@@ -67,11 +98,44 @@ export class UserInviteSection {
     await expect(this.send).toHaveCount(0);
   }
 
-  /** Presses Send/Resend invite and returns the status and body of the POST .../user-edit/{id}/invite. */
+  /** Presses Send/Resend invite and returns the status and body of the POST .../user-edit/{id}/invite (no dialog: not invited, expired or declined). */
   async sendInvite(): Promise<{ status: number; text: string }> {
-    const posted = this.page.waitForResponse((r) => r.request().method() === 'POST' && /\/user-edit\/[^/]+\/invite$/i.test(new URL(r.url()).pathname));
+    const posted = this.page.waitForResponse((r) => isInvitePost(r.request().method(), r.url()));
     await this.send.click();
     const response = await posted;
+    return { status: response.status(), text: await response.text() };
+  }
+
+  /** Presses Resend invite on an open invite and checks that the confirm dialog opens instead of sending. */
+  async pressResend(): Promise<void> {
+    await this.expectSendButton('Resend invite');
+    await this.send.click();
+    await this.resendDialog.expectOpen();
+  }
+
+  /** Cancels the open Resend invite dialog; returns how many invite POSTs the page sent meanwhile. */
+  async cancelResend(): Promise<number> {
+    let posts = 0;
+    const count = (request: { method(): string; url(): string }) => {
+      if (isInvitePost(request.method(), request.url())) posts++;
+    };
+    this.page.on('request', count);
+    try {
+      await this.resendDialog.cancel.click();
+      await expect(this.resendDialog.root).toHaveCount(0);
+      await expect(this.send).toBeEnabled();
+    } finally {
+      this.page.off('request', count);
+    }
+    return posts;
+  }
+
+  /** Confirms the open Resend invite dialog and returns the status and body of the POST .../user-edit/{id}/invite. */
+  async confirmResend(): Promise<{ status: number; text: string }> {
+    const posted = this.page.waitForResponse((r) => isInvitePost(r.request().method(), r.url()));
+    await this.resendDialog.confirm.click();
+    const response = await posted;
+    await expect(this.resendDialog.root).toHaveCount(0);
     return { status: response.status(), text: await response.text() };
   }
 
@@ -88,6 +152,9 @@ abstract class HostUserFormPage extends BasePage {
   readonly passwordInputs: Locator;
   readonly passwordLabels: Locator;
   readonly createHint: Locator;
+  readonly passwordSection: Locator;
+  readonly password: Locator;
+  readonly confirmPassword: Locator;
   readonly save: Locator;
   readonly toast: Locator;
   readonly signIn: UserInviteSection;
@@ -100,16 +167,25 @@ abstract class HostUserFormPage extends BasePage {
     this.passwordInputs = page.locator('form input[type="password"]');
     this.passwordLabels = page.locator('form mat-label').filter({ hasText: /password/i });
     this.createHint = page.locator('#user-signin-section').getByText('Save the user, then send the invite from here.');
+    this.passwordSection = page.locator('#user-password-section');
+    this.password = this.passwordSection.getByLabel('Password', { exact: true });
+    this.confirmPassword = this.passwordSection.getByLabel('Repeat Password', { exact: true });
     this.save = page.getByRole('button', { name: 'Save', exact: true });
     this.toast = page.locator('.success-snackbar');
     this.signIn = new UserInviteSection(page);
   }
 
-  /** Opens the page with a full reload, so a different user id never reuses the component the previous one loaded. */
+  /**
+   * Opens the page with a full reload, so a different user id never reuses the component the previous one loaded. The reload
+   * waits until the first load shows the page: reloading while the app's start-up refresh-token call is in flight aborts its
+   * answer after the server has rotated the token, and the app then signs out with the old one.
+   */
   async open(userId?: string): Promise<void> {
+    const heading = this.page.getByRole('heading', { name: userId ? 'Edit User' : 'Create New User', exact: true }).first();
     await this.page.goto(userId ? `${this.path}/${encodeURIComponent(userId)}` : this.path);
+    await expect(heading).toBeVisible({ timeout: 30_000 });
     await this.page.reload();
-    await expect(this.page.getByRole('heading', { name: userId ? 'Edit User' : 'Create New User', exact: true }).first()).toBeVisible({ timeout: 30_000 });
+    await expect(heading).toBeVisible({ timeout: 30_000 });
     if (userId) await expect(this.email).not.toHaveValue('', { timeout: 15_000 });
   }
 
@@ -118,6 +194,22 @@ abstract class HostUserFormPage extends BasePage {
     await expect(this.passwordInputs).toHaveCount(0);
     await expect(this.passwordLabels).toHaveCount(0);
     await expect(this.page.getByText('User can change their own password')).toHaveCount(0);
+  }
+
+  /** Legacy sign-in mode (QC-956): the Password and Repeat Password row is shown and the Sign-in (invite) section is not. */
+  async expectPasswordRowAndNoSignIn(): Promise<void> {
+    await expect(this.passwordSection).toBeVisible();
+    await expect(this.password).toBeVisible();
+    await expect(this.confirmPassword).toBeVisible();
+    await expect(this.passwordSection.locator('input[type="password"]')).toHaveCount(2);
+    await expect(this.signIn.section).toHaveCount(0);
+    await expect(this.signIn.send).toHaveCount(0);
+    await expect(this.signIn.status).toHaveCount(0);
+  }
+
+  async fillPassword(password: string, confirmPassword = password): Promise<void> {
+    await this.password.fill(password);
+    await this.confirmPassword.fill(confirmPassword);
   }
 
   async fillPerson(email: string, firstName: string, lastName: string): Promise<void> {
@@ -309,7 +401,7 @@ export class InviteeBrowser {
 
   /** Signs in to the host app at APP_URL with a login that has no two-step verification, and waits for the app token. */
   async signInToHostApp(login: Credentials): Promise<void> {
-    await this.page.goto('/');
+    await openIdentitySignInFromApp(this.page);
     await this.login.signIn(login);
     await this.page.waitForURL((url) => url.origin === new URL(env.appUrl!).origin, { timeout: 30_000 });
     await expect
@@ -348,6 +440,13 @@ export class VendorPortalSession {
 
   get page(): Page {
     return this.session.page;
+  }
+
+  /** The vendor's host-app access token, for calling the vendor endpoints of the host API directly. */
+  async accessToken(): Promise<string> {
+    const token = await this.session.page.evaluate(() => localStorage.getItem('accessToken'));
+    if (!token) throw new Error('The vendor session holds no access token.');
+    return token;
   }
 
   static async signIn(browser: Browser, vendor: ThrowawayUser): Promise<VendorPortalSession> {

@@ -1,7 +1,8 @@
 // QC-913 (D77/D83): Manage Users and the Vendor Portal create users with no password and invite them through Identity.
 // Local only. Runs against a host API built from QC-913 (APP_API_URL), its database (LOCAL_SQL_DATABASE with app.UserInvites),
 // an Identity that reads the host's invite public key from HOST_MASTER (IDENTITY_URL, MASTER_SQL_DATABASE), and the drivers API.
-// The host must have Invites:SigningKey (never read here), EmailSettings:ApiPublicUrl = APP_API_URL, a return URL
+// The host API must get Invites:SigningKey (a private EC P-256 JWK) from an environment variable (Invites__SigningKey) or user
+// secrets, since it no longer reads it from app.EnvironmentSetting; it needs EmailSettings:ApiPublicUrl = APP_API_URL, a return URL
 // APP_API_URL/api/invites/return in HOST_MASTER, and EmailSettings MailServer/MailPort pointing at the SMTP sink
 // (`node scripts/smtp-sink.mjs <SMTP_SINK_PORT>`, which writes reports/local/mail/*.eml). HOST_API_LOG (the host API's console
 // log file) lets UINV-09 check that LinkEstablished came back; without it that one check is skipped.
@@ -9,6 +10,9 @@
 // and seed/host-qc913-admin.apply.sql), whose session is kept in <AUTH_DIR>/<env>/qc913-app-admin.json.
 // Every e2e.qc913.*@example.com host user, invite, notification, Identity login and DRIVERS link is removed before and after
 // by seed/host-qc913.remove.sql, seed/identity-qc913.remove.sql and seed/drivers-qc913.remove.sql.
+// UINV-13/14 switch the host's Authentication:SignInMode (QC-956) to Legacy through PUT api/environment-setting with the Admin
+// service client (ADMIN_API_CLIENT_ID/SECRET, which the host API must list in IdentityServer:AdminClientIds), and put the
+// original mode and the row's UpdatedBy/UpdatedOn back in finally.
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -28,8 +32,12 @@ import {
   INVITE_LIFETIME_HOURS,
   INVITE_ROW_STATUS,
   INVITE_SENT_MESSAGE,
+  LEGACY_USER_CREATED_MESSAGE,
+  PASSWORD_SIGN_IN_MESSAGE,
   Qc913Data,
+  SIGN_IN_MODE_KEY,
   USER_CREATED_MESSAGE,
+  identityAcceptsLink,
   inviteEmailTo,
   mailsTo,
   qc913Email,
@@ -37,8 +45,10 @@ import {
   seedQc913HostAdmin,
   seedQc913Login,
   seedQc913Vendor,
+  type HostSignInMode,
   type HostUserInvitesApi,
   type InviteEmail,
+  type SignInMode,
 } from '@api/user-invites.api';
 import type { ThrowawayUser } from '@utils/throwawayUsers';
 
@@ -54,6 +64,36 @@ async function hostIsUp(): Promise<boolean> {
   return fetch(`${env.appUrl}`)
     .then((r) => r.ok)
     .catch(() => false);
+}
+
+let vendorLogin: ThrowawayUser | undefined;
+
+/** The QC-913 vendor login, its organisation and two trucks, seeded once per run (re-seeding would remove trucks a driver is on). */
+function qc913Vendor(): ThrowawayUser {
+  if (!vendorLogin) {
+    vendorLogin = seedQc913Login('vendor', true);
+    seedQc913Vendor(vendorLogin);
+  }
+  return vendorLogin;
+}
+
+/** Runs `body` with the host in Legacy sign-in mode, then puts the original mode and the setting row's audit columns back. */
+async function inLegacyMode(signInMode: HostSignInMode, body: () => Promise<void>): Promise<void> {
+  test.skip(
+    !env.adminApiClient,
+    'Needs ADMIN_API_CLIENT_ID / ADMIN_API_CLIENT_SECRET, the Admin service client the host API takes on api/environment-setting.',
+  );
+  const original = (await signInMode.current()) as SignInMode | null;
+  expect(original, 'the host API answers its sign-in mode').not.toBeNull();
+  const audit = Qc913Data.settingAudit(SIGN_IN_MODE_KEY);
+  try {
+    await signInMode.set('Legacy');
+    await body();
+  } finally {
+    await signInMode.set(original!);
+    Qc913Data.restoreSettingAudit(SIGN_IN_MODE_KEY, audit);
+  }
+  expect(Qc913Data.settingValue(SIGN_IN_MODE_KEY), 'the sign-in mode is back in app.EnvironmentSetting').toBe(original);
 }
 
 let deliveryError: string | null = null;
@@ -104,7 +144,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     canSeedLocalDb() && !Qc913Data.sinkIsConfigured(),
     `EmailSettings MailServer/MailPort do not point at the SMTP sink 127.0.0.1:${env.smtpSinkPort}.`,
   );
-  test.skip(canSeedLocalDb() && !Qc913Data.invitesAreSetUp(), 'The host has no Invites:SigningKey, or EmailSettings:ApiPublicUrl is not APP_API_URL.');
+  test.skip(canSeedLocalDb() && !Qc913Data.invitesAreSetUp(), 'EmailSettings:ApiPublicUrl is not APP_API_URL.');
   test.skip(!env.admin, 'Needs ADMIN_EMAIL / ADMIN_PASSWORD; the throwaway host admin copies that password.');
   test.use({ storageState: ADMIN_STATE });
 
@@ -341,6 +381,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
 
     const since = MailSink.mark();
     expectInviteSent(await adminUserFormPage.signIn.sendInvite());
+    await expect(adminUserFormPage.signIn.resendDialog.root, 'an expired invite is resent without asking').toHaveCount(0);
     await adminUserFormPage.signIn.expectStatus('invited');
     const resent = await inviteEmailTo(user.email, since);
     expect(resent.link.payload.jti).not.toBe(first.uuid);
@@ -358,8 +399,8 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     const old = user.mail;
     const since = MailSink.mark();
     await adminUserFormPage.open(user.userId);
-    await adminUserFormPage.signIn.expectSendButton('Resend invite');
-    expectInviteSent(await adminUserFormPage.signIn.sendInvite());
+    await adminUserFormPage.signIn.pressResend();
+    expectInviteSent(await adminUserFormPage.signIn.confirmResend());
     await adminUserFormPage.signIn.expectStatus('invited');
     const fresh = await inviteEmailTo(user.email, since);
     expect(fresh.link.payload.jti).not.toBe(old.link.payload.jti);
@@ -410,8 +451,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     browser,
   }) => {
     test.skip(!canUseDriversDb() || !env.driversApiUrl, 'Needs DRIVERS_API_URL and the DRIVERS local database.');
-    const vendor = seedQc913Login('vendor', true);
-    seedQc913Vendor(vendor);
+    const vendor = qc913Vendor();
     const truck = Qc913Data.vendorTruck(1);
     const portal = await VendorPortalSession.signIn(browser, vendor);
     let userId: string;
@@ -514,5 +554,126 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     expect((await api.sendInvite('manageusers', crypto.randomUUID())).status).toBe(404);
     expect(Qc913Data.invites(createdInactive.data!)).toEqual([]);
     expect(Qc913Data.notificationCount(inactive, INVITE_EMAIL_TYPE)).toBe(0);
+  });
+
+  test('UINV-15 Resend invite on an open invite asks first: Cancel sends nothing and keeps the old link, and Resend invite in the dialog emails a new link and the old one is refused', async ({
+    browser,
+    request,
+    adminUserFormPage,
+  }) => {
+    const user = await createAndInvite(api, 'confirm-resend', 'Cora');
+    const old = user.mail;
+    await adminUserFormPage.open(user.userId);
+    await adminUserFormPage.signIn.expectStatus('invited');
+
+    const beforeCancel = MailSink.mark();
+    await adminUserFormPage.signIn.pressResend();
+    expect(await adminUserFormPage.signIn.cancelResend(), 'Cancel sends no invite request').toBe(0);
+    await adminUserFormPage.signIn.expectStatus('invited');
+    await adminUserFormPage.signIn.expectSendButton('Resend invite');
+    expect(Qc913Data.invites(user.userId), 'the open invite is kept').toEqual([
+      expect.objectContaining({ uuid: old.link.payload.jti, status: INVITE_ROW_STATUS.sent, replaces: null, responded: false }),
+    ]);
+    expect(mailsTo(user.email, beforeCancel), 'Cancel emails nothing').toEqual([]);
+    expect(await identityAcceptsLink(request, old.link.token), 'the old link still opens on Identity').toBe(true);
+
+    const since = MailSink.mark();
+    await adminUserFormPage.signIn.pressResend();
+    expectInviteSent(await adminUserFormPage.signIn.confirmResend());
+    await adminUserFormPage.signIn.expectToast(INVITE_SENT_MESSAGE);
+    await adminUserFormPage.signIn.expectStatus('invited');
+    const fresh = await inviteEmailTo(user.email, since);
+    expect(fresh.link.payload.jti).not.toBe(old.link.payload.jti);
+    expect(Qc913Data.invites(user.userId)).toEqual([
+      expect.objectContaining({ uuid: old.link.payload.jti, status: INVITE_ROW_STATUS.cancelled }),
+      expect.objectContaining({ uuid: fresh.link.payload.jti, status: INVITE_ROW_STATUS.sent, replaces: old.link.payload.jti }),
+    ]);
+
+    const invitee = await InviteeBrowser.open(browser);
+    try {
+      const refused = await invitee.decline(old.declineUrl);
+      expect(refused.status, 'the replaced link is not recorded').toBe('expired');
+      await invitee.invite.expectFailed();
+    } finally {
+      await invitee.close();
+    }
+    expect(Qc913Data.invites(user.userId).map((row) => row.status)).toEqual([INVITE_ROW_STATUS.cancelled, INVITE_ROW_STATUS.sent]);
+  });
+
+  test('UINV-13 in Legacy sign-in mode Manage Users takes a password again: create needs one and the user signs in with it, Edit User shows the password row and no Sign-in section and resets the password, and Send invite is refused', async ({
+    adminUserFormPage,
+    hostSignInMode,
+  }) => {
+    const email = qc913Email('legacy');
+    const first = newPassword();
+    const second = newPassword();
+    await inLegacyMode(hostSignInMode, async () => {
+      const refused = await api.createUser({ userName: email, firstName: 'Leo', lastName: 'Legacy' });
+      expect(refused.status, refused.text).toBe(400);
+      expect(refused.text).toContain('Password is required.');
+      expect(Qc913Data.hostUser(email), 'no user is created without a password').toBeNull();
+
+      const mismatched = await api.createUser({ userName: email, firstName: 'Leo', lastName: 'Legacy', password: first, confirmPassword: `${first}x` });
+      expect(mismatched.status, 'the passwords must match').toBe(400);
+      expect(mismatched.text).toContain('Passwords must match.');
+
+      const saved = await api.createUser({ userName: email, firstName: 'Leo', lastName: 'Legacy', password: first });
+      expect(saved.status, saved.text).toBe(201);
+      const userId = saved.data!;
+      expect(Qc913Data.hostUser(email), 'the user is stored with the password').toMatchObject({ id: userId, hasPassword: true, isActive: true });
+      expect(await api.passwordLogin(email, first), 'the new user signs in with the password it was given').toBe(200);
+
+      const invite = await api.sendInvite('manageusers', userId);
+      expect(invite.status, invite.text).toBe(400);
+      expect(invite.text).toContain(PASSWORD_SIGN_IN_MESSAGE);
+      expect((await api.editForm('manageusers', userId)).data?.invite).toMatchObject({ canSend: false });
+      expect(Qc913Data.invites(userId)).toEqual([]);
+
+      await adminUserFormPage.open();
+      await adminUserFormPage.expectPasswordRowAndNoSignIn();
+      await expect(adminUserFormPage.createHint).toHaveCount(0);
+
+      await adminUserFormPage.open(userId);
+      await adminUserFormPage.expectPasswordRowAndNoSignIn();
+      await expect(adminUserFormPage.password).toHaveValue('');
+      await adminUserFormPage.fillPassword(second);
+      expect(await adminUserFormPage.saveExisting()).toBe(200);
+      expect(await api.passwordLogin(email, second), 'the password set on Edit User signs in').toBe(200);
+      expect(await api.passwordLogin(email, first), 'the old password no longer signs in').toBe(401);
+    });
+  });
+
+  test('UINV-14 in Legacy sign-in mode the Vendor Portal takes a password: a driver created in My Users with one signs in with it, its edit page shows the password row and no Sign-in section, and Send invite is refused', async ({
+    browser,
+    hostSignInMode,
+  }) => {
+    const vendor = qc913Vendor();
+    const truck = Qc913Data.vendorTruck(2);
+    const email = qc913Email('legacy-driver');
+    const password = newPassword();
+    const portal = await VendorPortalSession.signIn(browser, vendor);
+    try {
+      await inLegacyMode(hostSignInMode, async () => {
+        await portal.form.open();
+        await portal.form.expectPasswordRowAndNoSignIn();
+        await portal.form.fillPerson(email, 'Lena', 'Legacy');
+        await portal.form.chooseTruck(truck.name);
+        await portal.form.fillPassword(password);
+        const userId = await portal.form.saveNew();
+        await portal.form.expectToast(LEGACY_USER_CREATED_MESSAGE);
+        await portal.form.expectPasswordRowAndNoSignIn();
+        expect(Qc913Data.hostUser(email), 'the driver is stored with the password').toMatchObject({ id: userId, hasPassword: true, isActive: true });
+
+        const vendorApi = api.withToken(await portal.accessToken());
+        const invite = await vendorApi.sendInvite('vendor', userId);
+        expect(invite.status, invite.text).toBe(400);
+        expect(invite.text).toContain(PASSWORD_SIGN_IN_MESSAGE);
+        expect((await vendorApi.editForm('vendor', userId)).data?.invite).toMatchObject({ canSend: false });
+        expect(Qc913Data.invites(userId)).toEqual([]);
+        expect(await api.passwordLogin(email, password), 'the driver signs in with the password the vendor gave it').toBe(200);
+      });
+    } finally {
+      await portal.close();
+    }
   });
 });

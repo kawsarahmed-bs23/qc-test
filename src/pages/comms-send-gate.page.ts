@@ -5,6 +5,7 @@ import { env } from '@config/env.config';
 import { queryIdentityDb, runIdentitySeedScript, runSeedScript } from '@utils/localDb';
 import { newAuthenticatorKey } from '@utils/totp';
 import { IdentityLoginPage } from '@pages/identity-login.page';
+import { openIdentitySignInFromApp } from '@pages/user-eula.page';
 
 export const MESSAGE_CHANNEL = { Sms: 10, InApp: 20, Link: 30 } as const;
 
@@ -168,7 +169,7 @@ export class CommsHostAdmin {
     });
     try {
       const page = await context.newPage();
-      await page.goto('/#/authentication');
+      await openIdentitySignInFromApp(page);
       await new IdentityLoginPage(page).signInWithTwoStep({ email: QC804_ADMIN_EMAIL, password: env.admin.password }, authenticatorKey);
       await page.waitForURL((url) => url.origin === new URL(env.appUrl!).origin, { timeout: 30_000 });
       await expect.poll(() => page.evaluate(() => localStorage.getItem('accessToken')), { timeout: 30_000 }).toBeTruthy();

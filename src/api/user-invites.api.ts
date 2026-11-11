@@ -1,5 +1,5 @@
 import * as fs from 'fs';
-import type { APIRequestContext } from '@playwright/test';
+import { expect, type APIRequestContext } from '@playwright/test';
 import { APP_STATE, env } from '@config/env.config';
 import {
   queryDriversDb,
@@ -15,6 +15,7 @@ import { decodeInviteLink, type DecodedInviteLink, type PublicInviteKey } from '
 import type { ThrowawayUser } from '@utils/throwawayUsers';
 import { newAuthenticatorKey } from '@utils/totp';
 import { MailSink, type Email } from '@pages/host-password-link.page';
+import { serviceToken } from '@api/identity-admin.api';
 
 /**
  * QC-913: host user invites (D77/D83). Manage Users and the Vendor Portal create a host user with no password, then send it
@@ -35,7 +36,14 @@ export const INACTIVE_MESSAGE = 'Make the user active before sending an invite.'
 export const INVALID_ANSWER_MESSAGE = 'This invite answer is not valid. Open the invite link from the email again.';
 export const PRIVATE_KEY_REFUSED = 'Paste the public key only; this one holds the private part.';
 export const INVITE_KEYS_SAVED = 'Invite signing keys saved. Identity uses them within 5 minutes.';
+export const PRIVATE_KEY_PAGE_MESSAGE = 'This is a private key. Paste the public key only (without "d"); the private key stays on the host.';
+export const PASSWORD_SIGN_IN_MESSAGE = 'This site signs users in with a password, so invites are turned off. Set a password for the user instead.';
+export const LEGACY_USER_CREATED_MESSAGE = 'User created successfully!';
 export const INVITE_LIFETIME_HOURS = 24;
+export const SIGN_IN_MODE_KEY = 'Authentication:SignInMode';
+const HOST_API_SCOPE = 'quarryconnect.api';
+
+export type SignInMode = 'Legacy' | 'Identity' | 'Both';
 
 export type InviteStatus = 'not-invited' | 'invited' | 'expired' | 'declined' | 'linked';
 export type UserArea = 'manageusers' | 'vendor';
@@ -76,6 +84,8 @@ export interface NewHostUser {
   firstName: string;
   lastName: string;
   isActive?: boolean;
+  password?: string;
+  confirmPassword?: string;
 }
 
 function accessTokenIn(statePath: string): string {
@@ -112,6 +122,13 @@ export class HostUserInvitesApi {
     return this;
   }
 
+  /** Another client on the same request context that calls with `token` (for example a vendor's own session). */
+  withToken(token: string): HostUserInvitesApi {
+    const other = new HostUserInvitesApi(this.request);
+    other.token = token;
+    return other;
+  }
+
   private headers(): Record<string, string> {
     return this.token ? { Authorization: `Bearer ${this.token}` } : {};
   }
@@ -131,9 +148,15 @@ export class HostUserInvitesApi {
           organisationLocationId: 0,
           canSetOrganisation: false,
           isBillingContact: false,
+          ...(user.password === undefined ? {} : { password: user.password, confirmPassword: user.confirmPassword ?? user.password }),
         },
       }),
     );
+  }
+
+  /** The host API's own password login (POST api/account/login, Legacy and Both modes); returns its status. */
+  async passwordLogin(email: string, password: string): Promise<number> {
+    return (await this.request.post(`${hostApiUrl()}/api/account/login`, { data: { email, password } })).status();
   }
 
   async editForm(area: UserArea, userId: string): Promise<HostAnswer<Record<string, unknown> & { invite?: InviteStatusModel }>> {
@@ -172,6 +195,53 @@ export class HostUserInvitesApi {
   async removedDriverInvites(): Promise<number> {
     return (await this.request.get(`${hostApiUrl()}/api/driver-invites`, { headers: this.headers() })).status();
   }
+}
+
+/**
+ * The host's Authentication:SignInMode (QC-956). It is changed through the host API's PUT api/environment-setting with the
+ * Admin service client's token, which reloads the host configuration; a direct change to app.EnvironmentSetting is not read
+ * until the host API restarts.
+ */
+export class HostSignInMode {
+  constructor(private readonly request: APIRequestContext) {}
+
+  async current(): Promise<string | null> {
+    const response = await this.request.get(`${hostApiUrl()}/api/account/signinmode`);
+    const body = (await response.json().catch(() => null)) as { data?: { signInMode?: string } } | null;
+    return body?.data?.signInMode ?? null;
+  }
+
+  private async serviceHeaders(): Promise<Record<string, string>> {
+    const token = await serviceToken(this.request, HOST_API_SCOPE);
+    if (token.status !== 200 || !token.body.access_token) {
+      throw new Error(`The Admin service client could not get a ${HOST_API_SCOPE} token: ${token.status} ${JSON.stringify(token.body)}`);
+    }
+    return { Authorization: `Bearer ${token.body.access_token as string}` };
+  }
+
+  /** Sets the mode and waits until GET api/account/signinmode answers it. */
+  async set(mode: SignInMode): Promise<void> {
+    const headers = await this.serviceHeaders();
+    const listed = await this.request.get(`${hostApiUrl()}/api/environment-setting`, { headers });
+    if (listed.status() !== 200) throw new Error(`GET api/environment-setting answered ${listed.status()}: ${await listed.text()}`);
+    const body = (await listed.json()) as
+      | { settings: { environmentSettingId: number; configurationKey: string }[] }[]
+      | { data: { settings: { environmentSettingId: number; configurationKey: string }[] }[] };
+    const groups = Array.isArray(body) ? body : body.data;
+    const setting = groups.flatMap((group) => group.settings).find((s) => s.configurationKey === SIGN_IN_MODE_KEY);
+    if (!setting) throw new Error(`The host has no ${SIGN_IN_MODE_KEY} setting.`);
+    const saved = await this.request.put(`${hostApiUrl()}/api/environment-setting`, {
+      headers,
+      data: { settings: [{ environmentSettingId: setting.environmentSettingId, value: mode }] },
+    });
+    if (saved.status() !== 200) throw new Error(`PUT api/environment-setting ${SIGN_IN_MODE_KEY}=${mode} answered ${saved.status()}: ${await saved.text()}`);
+    await expect.poll(() => this.current(), { message: `the host API answers sign-in mode ${mode}`, timeout: 15_000 }).toBe(mode);
+  }
+}
+
+export interface SettingAudit {
+  updatedBy: string | null;
+  updatedOn: string | null;
 }
 
 export interface HostUserRow {
@@ -299,15 +369,16 @@ export const Qc913Data = {
     );
   },
 
-  /** The host can sign invite links: Invites:SigningKey is set (its value is never read), and EmailSettings:ApiPublicUrl is APP_API_URL. */
+  /**
+   * EmailSettings:ApiPublicUrl is APP_API_URL. The signing key (Invites:SigningKey) is not checked: since the QC-913 review the
+   * host API reads it only from environment variables or user secrets, never from app.EnvironmentSetting, and answers Send
+   * invite with "Invites are not set up for this host yet. Missing: Invites:SigningKey." when it has none.
+   */
   invitesAreSetUp(): boolean {
-    const signingKey = querySingleValue(
-      `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = N'Invites' AND PropertyName = N'SigningKey' AND LEN(PropertyValue) > 0`,
-    );
     const publicUrl = querySingleValue(
       `SELECT TOP 1 PropertyValue FROM app.EnvironmentSetting WHERE GroupName = N'EmailSettings' AND PropertyName = N'ApiPublicUrl'`,
     );
-    return signingKey !== '0' && (publicUrl ?? '').replace(/\/+$/, '') === env.appApiUrl;
+    return (publicUrl ?? '').replace(/\/+$/, '') === env.appApiUrl;
   },
 
   hostUuid(): string {
@@ -316,6 +387,34 @@ export const Qc913Data = {
     );
     if (!uuid) throw new Error('The host has no Messaging:HostUuid setting.');
     return uuid;
+  },
+
+  /** UpdatedBy and UpdatedOn of a host app.EnvironmentSetting row, which a PUT api/environment-setting overwrites. */
+  settingAudit(configurationKey: string): SettingAudit {
+    const [group, property] = configurationKey.split(':');
+    const row = querySingleValue(
+      `SELECT CONCAT(ISNULL(UpdatedBy, 'NULL'), '|', ISNULL(CONVERT(varchar(30), UpdatedOn, 126), 'NULL')) FROM app.EnvironmentSetting` +
+        ` WHERE GroupName = N'${sqlText(group)}' AND PropertyName = N'${sqlText(property)}' AND SubGroupName IS NULL`,
+    );
+    const [updatedBy, updatedOn] = (row ?? 'NULL|NULL').split('|');
+    return { updatedBy: updatedBy === 'NULL' ? null : updatedBy, updatedOn: updatedOn === 'NULL' ? null : updatedOn };
+  },
+
+  restoreSettingAudit(configurationKey: string, audit: SettingAudit): void {
+    const [group, property] = configurationKey.split(':');
+    const by = audit.updatedBy === null ? 'NULL' : `'${sqlText(audit.updatedBy)}'`;
+    const on = audit.updatedOn === null ? 'NULL' : `CONVERT(datetime, '${sqlText(audit.updatedOn)}', 126)`;
+    querySingleValue(
+      `UPDATE app.EnvironmentSetting SET UpdatedBy = ${by}, UpdatedOn = ${on}` +
+        ` WHERE GroupName = N'${sqlText(group)}' AND PropertyName = N'${sqlText(property)}' AND SubGroupName IS NULL`,
+    );
+  },
+
+  settingValue(configurationKey: string): string | null {
+    const [group, property] = configurationKey.split(':');
+    return querySingleValue(
+      `SELECT PropertyValue FROM app.EnvironmentSetting WHERE GroupName = N'${sqlText(group)}' AND PropertyName = N'${sqlText(property)}' AND SubGroupName IS NULL`,
+    );
   },
 
   hostHasTable(table: string): boolean {

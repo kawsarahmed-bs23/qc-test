@@ -514,6 +514,27 @@ export class HostSignInSettingsPage {
     return (await saved).status();
   }
 
+  /**
+   * Pastes a JWK the page refuses before sending it (a private key, QC-915 review), presses Add key, waits for the field
+   * error, and returns how many PUT .../invite-keys requests the page sent meanwhile.
+   */
+  async addInviteKeyRefusedOnPage(jwk: string): Promise<number> {
+    let puts = 0;
+    const count = (request: { method(): string; url(): string }) => {
+      if (request.method() === 'PUT' && /\/invite-keys$/.test(new URL(request.url()).pathname)) puts++;
+    };
+    this.page.on('request', count);
+    try {
+      await this.inviteKeyInput.fill(jwk);
+      await this.inviteKeyAdd.click();
+      await expect(this.inviteKeyFieldError).toBeVisible();
+      await waitForIdle(this.page);
+    } finally {
+      this.page.off('request', count);
+    }
+    return puts;
+  }
+
   /** Presses Remove on a key and confirms; returns the status of the PUT .../invite-keys. */
   async removeInviteKey(kid: string): Promise<number> {
     await this.inviteKeyRemove(kid).click();

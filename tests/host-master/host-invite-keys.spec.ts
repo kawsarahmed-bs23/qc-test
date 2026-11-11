@@ -9,7 +9,15 @@ import { env } from '@config/env.config';
 import { canUseMasterDb } from '@utils/localDb';
 import { AdminApi, canUseAdminApi } from '@api/admin.api';
 import { newInviteKeyPair, signInviteLink } from '@utils/inviteLinks';
-import { INVITE_KEYS_SAVED, PRIVATE_KEY_REFUSED, masterHasInviteKeys, masterInviteKeys, qc913Email, removeTestInviteKeys } from '@api/user-invites.api';
+import {
+  INVITE_KEYS_SAVED,
+  PRIVATE_KEY_PAGE_MESSAGE,
+  PRIVATE_KEY_REFUSED,
+  masterHasInviteKeys,
+  masterInviteKeys,
+  qc913Email,
+  removeTestInviteKeys,
+} from '@api/user-invites.api';
 
 const RUN = Date.now().toString(36);
 
@@ -52,20 +60,16 @@ test.describe('Host invite signing keys in HOST_MASTER (QC-915)', { tag: ['@regr
   });
 
   test(
-    'HIK-02 a private JWK pasted on the page, and a wrong type, curve, point, duplicate kid or a sixth key sent to the API, are refused and change nothing',
+    'HIK-02 a private JWK, a wrong type, curve, point, duplicate kid or a sixth key sent to the API are refused and change nothing',
     { tag: '@write' },
-    async ({ hostSignInSettingsPage, request, targetHost }) => {
+    async ({ request, targetHost }) => {
       const before = masterInviteKeys(targetHost.uuid);
       const pair = newInviteKeyPair(`e2e-qc913-${RUN}-refused`);
-      await hostSignInSettingsPage.open(targetHost.uuid);
-      expect(await hostSignInSettingsPage.addInviteKey(pair.privateJwk)).toBe(400);
-      await expect(hostSignInSettingsPage.inviteKeyFieldError).toHaveText(PRIVATE_KEY_REFUSED);
-      await expect(hostSignInSettingsPage.inviteKey(pair.publicKey.kid)).toHaveCount(0);
-
       const api = AdminApi.asAdmin(request);
       const current = before.filter((key) => key.active).map((key) => JSON.stringify({ kty: 'EC', crv: 'P-256', kid: key.kid, x: key.x, y: key.y }));
       const good = (n: number) => JSON.stringify(newInviteKeyPair(`e2e-qc913-${RUN}-${n}`).publicKey);
-      const refusals: [string, string[], RegExp][] = [
+      const refusals: [string, string[], RegExp | string][] = [
+        ['a private key', [pair.privateJwk], PRIVATE_KEY_REFUSED],
         ['an RSA key', [JSON.stringify({ ...pair.publicKey, kty: 'RSA' })], /kty\) must be EC/],
         ['a P-384 key', [JSON.stringify({ ...pair.publicKey, crv: 'P-384' })], /crv\) must be P-256/],
         ['a point off the curve', [JSON.stringify({ ...pair.publicKey, y: pair.publicKey.x })], /not a point on the P-256 curve/],
@@ -82,6 +86,20 @@ test.describe('Host invite signing keys in HOST_MASTER (QC-915)', { tag: ['@regr
       expect(masterInviteKeys(targetHost.uuid), 'HOST_MASTER is unchanged').toEqual(before);
     },
   );
+
+  test('HIK-04 a private JWK pasted on the page is refused in the browser: the field shows why, nothing is sent to the Admin API, and the box is cleared', async ({
+    hostSignInSettingsPage,
+    targetHost,
+  }) => {
+    const before = masterInviteKeys(targetHost.uuid);
+    const pair = newInviteKeyPair(`e2e-qc913-${RUN}-private`);
+    await hostSignInSettingsPage.open(targetHost.uuid);
+    expect(await hostSignInSettingsPage.addInviteKeyRefusedOnPage(pair.privateJwk), 'no PUT .../invite-keys is sent').toBe(0);
+    await expect(hostSignInSettingsPage.inviteKeyFieldError).toHaveText(PRIVATE_KEY_PAGE_MESSAGE);
+    await expect(hostSignInSettingsPage.inviteKeyInput, 'the private key is not left on the page').toHaveValue('');
+    await expect(hostSignInSettingsPage.inviteKey(pair.publicKey.kid)).toHaveCount(0);
+    expect(masterInviteKeys(targetHost.uuid), 'HOST_MASTER is unchanged').toEqual(before);
+  });
 
   test(
     'HIK-03 a public key added on the page is listed, stored, served to Identity (which then takes links signed with it), and Remove retires it; the host keys stay as they were',

@@ -127,6 +127,18 @@ export function appDateTime(instant: Date): string {
   return formatAppDateTime(instant, env.appTimeZone);
 }
 
+/**
+ * Opens the host app signed out and gets to Identity's sign-in page: in Identity mode the app goes there by itself; in Both
+ * mode (QC-956) it shows its own password form with "Sign in with QuarryConnect", which is pressed.
+ */
+export async function openIdentitySignInFromApp(page: Page): Promise<void> {
+  await page.goto('/');
+  const offered = page.getByRole('button', { name: 'Sign in with QuarryConnect' });
+  const atIdentity = () => page.url().startsWith(env.identityUrl);
+  await expect.poll(async () => atIdentity() || (await offered.isVisible()), { message: 'the app opens Identity or offers it', timeout: 30_000 }).toBe(true);
+  if (!atIdentity()) await offered.click();
+}
+
 /** A seeded user's own browser context, signed in (or refused) through Identity, with the pages that user sees. */
 export class AppUserSession {
   readonly agreement: SignUserAgreementPage;
@@ -148,7 +160,7 @@ export class AppUserSession {
   static async signIn(browser: Browser, user: ThrowawayUser): Promise<AppUserSession> {
     const context = await newAppContext(browser);
     const page = await context.newPage();
-    await page.goto('/');
+    await openIdentitySignInFromApp(page);
     await new IdentityLoginPage(page).signInWithTwoStep(user, user.authenticatorKey!);
     await page.waitForURL((url) => url.origin === new URL(env.appUrl!).origin, { timeout: 30_000 });
     return new AppUserSession(context, page);

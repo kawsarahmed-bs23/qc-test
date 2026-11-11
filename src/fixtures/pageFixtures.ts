@@ -20,7 +20,7 @@ import { ReplyLinkThread } from '@pages/reply-links.page';
 import { AppSignInErrorView, AppTermsPage, HostAppHeader } from '@pages/sign-in-redirect.page';
 import { AdminUserEditPage, SignUserAgreementPage, UserEulaStatus, VendorUserEditPage } from '@pages/user-eula.page';
 import { AdminUserFormPage, UserInviteSection, UserListSignInColumn, VendorSidebar, VendorUserFormPage } from '@pages/user-invites.page';
-import { HostUserInvitesApi } from '@api/user-invites.api';
+import { HostSignInMode, HostUserInvitesApi } from '@api/user-invites.api';
 import { DriverSettingsApi } from '@api/driver-settings.api';
 import { AccountDeletionApi } from '@api/account-deletion.api';
 import { HostDriverEventsApi } from '@api/driver-events.api';
@@ -127,6 +127,7 @@ type TestFixtures = {
 
   // API clients, built from `request`.
   hostUserInvitesApi: HostUserInvitesApi;
+  hostSignInMode: HostSignInMode;
   hostApi: HostApi;
   hostAccountApi: HostAccountApi;
   hostAdminApi: HostAdminApi;
@@ -323,6 +324,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
 
   hostUserInvitesApi: async ({ request }, use) => {
     await use(new HostUserInvitesApi(request));
+  },
+  hostSignInMode: async ({ request }, use) => {
+    await use(new HostSignInMode(request));
   },
   hostApi: async ({ request }, use) => {
     await use(new HostApi(request));
