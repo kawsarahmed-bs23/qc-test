@@ -97,12 +97,21 @@ export class IdentityTwoStepPage {
 
   async expectVisible(): Promise<void> {
     await expect(this.page).toHaveURL(new RegExp(`^${escape(env.identityUrl)}/Account/LoginWith2fa`, 'i'));
-    await expect(this.digits).toHaveCount(6);
+    await expect(this.digits.first().or(this.code)).toBeVisible();
+    if (await this.digits.count()) {
+      await expect(this.digits).toHaveCount(6);
+    }
   }
 
   async submitCode(code: string): Promise<void> {
     await this.expectVisible();
     const posted = this.page.waitForResponse((r) => r.request().method() === 'POST' && /\/Account\/LoginWith2fa/i.test(new URL(r.url()).pathname));
+    if (!(await this.digits.count())) {
+      await this.code.fill(code);
+      await Promise.all([posted, this.submit.click()]);
+      await this.page.waitForLoadState('domcontentloaded');
+      return;
+    }
     for (let i = 0; i < code.length; i++) {
       await this.digits.nth(i).fill(code[i]);
     }
@@ -124,6 +133,11 @@ export class IdentityTwoStepPage {
     }
     lastStepUsed.set(authenticatorKey, currentStep());
     const code = totp(authenticatorKey);
+    if (!(await this.digits.count())) {
+      await this.code.fill(code);
+      await this.submit.click();
+      return;
+    }
     for (let i = 0; i < code.length - 1; i++) {
       await this.digits.nth(i).fill(code[i]);
     }
