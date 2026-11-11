@@ -36,6 +36,15 @@ import { HostUserEditApi } from '@api/email-change.api';
 import { ConfirmEmailChangePage, HostMyProfilePage, HostUserEmailField, UserEmailChangePanel } from '@pages/email-change.page';
 import { EditVendorPage, VendorProfileBillRatesPage } from '@pages/bill-rates.page';
 import { HostBillRatesApi } from '@api/bill-rates.api';
+import {
+  AdminUserDispatchContactPage,
+  AssignDialogDispatchPage,
+  EditTruckDispatchPage,
+  EditVendorDispatchPage,
+  ProfileDispatchContactPage,
+  VendorUserDispatchContactPage,
+} from '@pages/dispatch-contact.page';
+import { DispatchContactApi } from '@api/dispatch-contact.api';
 
 export interface TargetHost {
   uuid: string;
@@ -109,6 +118,12 @@ type TestFixtures = {
   userEmailChangePanel: UserEmailChangePanel;
   editVendorPage: EditVendorPage;
   vendorProfileBillRatesPage: VendorProfileBillRatesPage;
+  adminUserDispatchContactPage: AdminUserDispatchContactPage;
+  vendorUserDispatchContactPage: VendorUserDispatchContactPage;
+  profileDispatchContactPage: ProfileDispatchContactPage;
+  editVendorDispatchPage: EditVendorDispatchPage;
+  editTruckDispatchPage: EditTruckDispatchPage;
+  assignDialogDispatchPage: AssignDialogDispatchPage;
 
   // API clients, built from `request`.
   hostUserInvitesApi: HostUserInvitesApi;
@@ -127,6 +142,7 @@ type TestFixtures = {
   hostDriverEventsApi: HostDriverEventsApi;
   hostUserEditApi: HostUserEditApi;
   hostBillRatesApi: HostBillRatesApi;
+  dispatchContactApi: DispatchContactApi;
 };
 
 type WorkerFixtures = {
@@ -358,6 +374,27 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   vendorProfileBillRatesPage: async ({ page }, use) => {
     await use(new VendorProfileBillRatesPage(page));
+  },
+  adminUserDispatchContactPage: async ({ page }, use) => {
+    await use(new AdminUserDispatchContactPage(page));
+  },
+  vendorUserDispatchContactPage: async ({ page }, use) => {
+    await use(new VendorUserDispatchContactPage(page));
+  },
+  profileDispatchContactPage: async ({ page }, use) => {
+    await use(new ProfileDispatchContactPage(page));
+  },
+  editVendorDispatchPage: async ({ page }, use) => {
+    await use(new EditVendorDispatchPage(page));
+  },
+  editTruckDispatchPage: async ({ page }, use) => {
+    await use(new EditTruckDispatchPage(page));
+  },
+  assignDialogDispatchPage: async ({ page }, use) => {
+    await use(new AssignDialogDispatchPage(page));
+  },
+  dispatchContactApi: async ({ request }, use) => {
+    await use(new DispatchContactApi(request));
   },
 
   targetHost: [
