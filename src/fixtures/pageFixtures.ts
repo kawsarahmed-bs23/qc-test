@@ -19,7 +19,8 @@ import { MessageLinkPanel } from '@pages/message-link.page';
 import { ReplyLinkThread } from '@pages/reply-links.page';
 import { AppSignInErrorView, AppTermsPage, HostAppHeader } from '@pages/sign-in-redirect.page';
 import { AdminUserEditPage, SignUserAgreementPage, UserEulaStatus, VendorUserEditPage } from '@pages/user-eula.page';
-import { DriverInvitesPage, HostDriverInvitesApi } from '@api/driver-invites.api';
+import { AdminUserFormPage, UserInviteSection, UserListSignInColumn, VendorSidebar, VendorUserFormPage } from '@pages/user-invites.page';
+import { HostUserInvitesApi } from '@api/user-invites.api';
 import { DriverSettingsApi } from '@api/driver-settings.api';
 import { AccountDeletionApi } from '@api/account-deletion.api';
 import { HostDriverEventsApi } from '@api/driver-events.api';
@@ -93,7 +94,11 @@ type TestFixtures = {
   hostAppHeader: HostAppHeader;
   appSignInErrorView: AppSignInErrorView;
   appTermsPage: AppTermsPage;
-  driverInvitesPage: DriverInvitesPage;
+  adminUserFormPage: AdminUserFormPage;
+  vendorUserFormPage: VendorUserFormPage;
+  userInviteSection: UserInviteSection;
+  userListSignInColumn: UserListSignInColumn;
+  vendorSidebar: VendorSidebar;
   adminUserEditPage: AdminUserEditPage;
   vendorUserEditPage: VendorUserEditPage;
   userEulaStatus: UserEulaStatus;
@@ -106,7 +111,7 @@ type TestFixtures = {
   vendorProfileBillRatesPage: VendorProfileBillRatesPage;
 
   // API clients, built from `request`.
-  hostDriverInvitesApi: HostDriverInvitesApi;
+  hostUserInvitesApi: HostUserInvitesApi;
   hostApi: HostApi;
   hostAccountApi: HostAccountApi;
   hostAdminApi: HostAdminApi;
@@ -260,8 +265,20 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   appTermsPage: async ({ page }, use) => {
     await use(new AppTermsPage(page));
   },
-  driverInvitesPage: async ({ page }, use) => {
-    await use(new DriverInvitesPage(page));
+  adminUserFormPage: async ({ page }, use) => {
+    await use(new AdminUserFormPage(page));
+  },
+  vendorUserFormPage: async ({ page }, use) => {
+    await use(new VendorUserFormPage(page));
+  },
+  userInviteSection: async ({ page }, use) => {
+    await use(new UserInviteSection(page));
+  },
+  userListSignInColumn: async ({ page }, use) => {
+    await use(new UserListSignInColumn(page));
+  },
+  vendorSidebar: async ({ page }, use) => {
+    await use(new VendorSidebar(page));
   },
   adminUserEditPage: async ({ page }, use) => {
     await use(new AdminUserEditPage(page));
@@ -288,8 +305,8 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     await use(new UserEmailChangePanel(page));
   },
 
-  hostDriverInvitesApi: async ({ request }, use) => {
-    await use(new HostDriverInvitesApi(request));
+  hostUserInvitesApi: async ({ request }, use) => {
+    await use(new HostUserInvitesApi(request));
   },
   hostApi: async ({ request }, use) => {
     await use(new HostApi(request));

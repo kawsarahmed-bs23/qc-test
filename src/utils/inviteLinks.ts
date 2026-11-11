@@ -118,3 +118,66 @@ export function inviteResultSignedBy(result: InviteResult, jwks: { keys: (crypto
 export function newInvitePassword(): string {
   return `Qc914!${crypto.randomBytes(6).toString('hex')}Aa1`;
 }
+
+export interface InviteLinkClaims {
+  iss: string;
+  aud: string;
+  jti: string;
+  iat: number;
+  nbf?: number;
+  exp: number;
+  email: string;
+  given_name?: string;
+  family_name?: string;
+  user_type: string;
+  return_url: string;
+}
+
+export interface DecodedInviteLink {
+  token: string;
+  header: { alg: string; typ: string; kid: string };
+  payload: InviteLinkClaims;
+}
+
+/** Reads the header and claims of a Host-signed invite link without checking its signature. */
+export function decodeInviteLink(token: string): DecodedInviteLink {
+  const [header, payload] = token.split('.');
+  return {
+    token,
+    header: JSON.parse(Buffer.from(header, 'base64url').toString('utf8')),
+    payload: JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')),
+  };
+}
+
+/** True when the link's ES256 signature matches the public key. */
+export function inviteLinkSignedBy(token: string, publicJwk: crypto.JsonWebKey): boolean {
+  const [header, payload, signature] = token.split('.');
+  return crypto.verify(
+    'sha256',
+    Buffer.from(`${header}.${payload}`),
+    { key: crypto.createPublicKey({ key: publicJwk, format: 'jwk' }), dsaEncoding: 'ieee-p1363' },
+    Buffer.from(signature, 'base64url'),
+  );
+}
+
+export interface PublicInviteKey {
+  kid: string;
+  kty: string;
+  crv: string;
+  x: string;
+  y: string;
+}
+
+/** The public half of a private EC JWK, in the order Admin's invite key card expects; never carries `d`. */
+export function publicInviteKeyOf(privateJwk: string, kid?: string): PublicInviteKey {
+  const jwk = JSON.parse(privateJwk) as crypto.JsonWebKey & { kid?: string };
+  return { kty: jwk.kty!, crv: jwk.crv!, kid: kid ?? jwk.kid!, x: jwk.x!, y: jwk.y! };
+}
+
+/** A fresh EC P-256 key pair as JWK strings, for keys that are added and removed again within one test. */
+export function newInviteKeyPair(kid: string): { privateJwk: string; publicKey: PublicInviteKey } {
+  const { privateKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = privateKey.export({ format: 'jwk' }) as crypto.JsonWebKey;
+  const privateJwk = JSON.stringify({ ...jwk, kid });
+  return { privateJwk, publicKey: publicInviteKeyOf(privateJwk) };
+}

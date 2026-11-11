@@ -1,4 +1,6 @@
 // QC-800: the host API emails a single-use link instead of setting or emailing a password. Local only.
+// Since QC-913 user-create emails the new user nothing (no EmailCreateUser); a created user gets its link from Forgot password.
+// The sink port is SMTP_SINK_PORT (default 2525).
 // Needs the SMTP sink (`node scripts/smtp-sink.mjs`, 127.0.0.1:2525, writes reports/local/mail/*.eml) and the host's
 // app.EnvironmentSetting EmailSettings MailServer = 127.0.0.1 and MailPort = 2525 (rows 8 and 9), with the host API restarted
 // after the change. The sink has no TLS: when EmailSettings:UserName and Password are both set (an empty table value does not
@@ -46,7 +48,7 @@ function sinkIsConfigured(): boolean {
   return (
     querySingleValue(
       `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = N'EmailSettings'
-       AND ((PropertyName = N'MailServer' AND PropertyValue = N'127.0.0.1') OR (PropertyName = N'MailPort' AND PropertyValue = N'2525'))`,
+       AND ((PropertyName = N'MailServer' AND PropertyValue = N'127.0.0.1') OR (PropertyName = N'MailPort' AND PropertyValue = N'${env.smtpSinkPort}'))`,
     ) === '2'
   );
 }
@@ -103,7 +105,10 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: ['
       const created = await admin.create({ userName: email, firstName: 'E2E', lastName: 'QC-800', password: newPassword(), isActive });
       expect(created.status, `user-create ${email}: ${created.text}`).toBeLessThan(300);
     }
-    mailError = Qc800HostUsers.deliveryError(ACTIVE, 'EmailCreateUser');
+    expect(MailSink.newTo(ACTIVE, since), 'user-create emails the new user nothing since QC-913').toEqual([]);
+    const forgot = await api.forgot(ACTIVE);
+    expect(forgot.status, forgot.text).toBe(200);
+    mailError = Qc800HostUsers.deliveryError(ACTIVE, 'EmailResetPassword');
     if (mailError !== null) return;
 
     const link = passwordLinkIn(await MailSink.latestTo(ACTIVE, since));
@@ -235,7 +240,7 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: ['
     expect(await api.login(ACTIVE, passwords.current)).toBe(200);
   });
 
-  test('HPWD-07 admin user-create ignores a typed password: no password is stored, the typed one cannot sign in, and a private Set your password email is recorded', async () => {
+  test('HPWD-07 admin user-create ignores a typed password and, since QC-913, emails the new user nothing: no password is stored, the typed one cannot sign in, no notification is recorded', async () => {
     createdTyped = newPassword();
     createdSince = MailSink.mark();
     const created = await admin.create({ userName: CREATED, firstName: 'E2E', lastName: 'QC-800 created', password: createdTyped, isActive: true });
@@ -243,27 +248,29 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: ['
 
     expect(Qc800HostUsers.password(CREATED).passwordHash).toBeNull();
     expect(await api.login(CREATED, createdTyped)).toBe(401);
-    expect(Qc800HostUsers.notificationCount(CREATED)).toBe(1);
-    expect(Qc800HostUsers.latestNotification(CREATED, 'EmailCreateUser').messageBody).toBe('EMPTY');
+    expect(Qc800HostUsers.notificationCount(CREATED), 'no EmailCreateUser or other email to the new user').toBe(0);
   });
 
-  test('HPWD-09 the auth.SystemNotifications rows of both password emails keep no body and no Bcc', async () => {
+  test('HPWD-09 the auth.SystemNotifications rows of the reset password email keep no body and no Bcc', async () => {
     test.info().annotations.push({
       type: 'host bcc',
       description: Qc800HostUsers.hostBccIsSet() ? 'EmailSettings:bcc is set, so other emails are copied' : 'EmailSettings:bcc is empty',
     });
-    expect(Qc800HostUsers.latestNotification(CREATED, 'EmailCreateUser')).toEqual({ messageBody: 'EMPTY', bcc: null });
-    expect(Qc800HostUsers.latestNotification(ACTIVE, 'EmailCreateUser')).toEqual({ messageBody: 'EMPTY', bcc: null });
+    expect(Qc800HostUsers.latestNotification(ACTIVE, 'EmailResetPassword')).toEqual({ messageBody: 'EMPTY', bcc: null });
     const forgot = await api.forgot(ACTIVE);
     expect(forgot.status, forgot.text).toBe(200);
     expect(Qc800HostUsers.latestNotification(ACTIVE, 'EmailResetPassword')).toEqual({ messageBody: 'EMPTY', bcc: null });
   });
 
-  test('HPWD-10 the Set your password email has a link and no password, and the link sets a password that signs in', async () => {
+  test('HPWD-10 a created user gets no Set your password email; Forgot password emails it a link with no password, and the link sets a password that signs in', async () => {
     needsDeliveredMail();
-    const mail = await MailSink.latestTo(CREATED, createdSince);
+    expect(MailSink.newTo(CREATED, createdSince), 'nothing reached the created user after user-create').toEqual([]);
+    const since = MailSink.mark();
+    const forgot = await api.forgot(CREATED);
+    expect(forgot.status, forgot.text).toBe(200);
+    const mail = await MailSink.latestTo(CREATED, since);
     mails.created = mail;
-    expect(mail.text).toMatch(/Set your password/i);
+    expect(mail.text).not.toMatch(/Set your password/i);
     expectNoPassword(mail, createdTyped);
     const link = passwordLinkIn(mail);
     expect(link.email).toBe(CREATED);
@@ -275,7 +282,7 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: ['
     expect(await api.login(CREATED, createdTyped)).toBe(401);
   });
 
-  test('HPWD-11 neither delivered password email has a Bcc or Cc header', () => {
+  test('HPWD-11 neither delivered reset email (HPWD-01 and HPWD-10) has a Bcc or Cc header', () => {
     needsDeliveredMail();
     expect(mails.forgot && mails.created, 'HPWD-01 and HPWD-10 captured both emails').toBeTruthy();
     for (const mail of [mails.forgot!, mails.created!]) {

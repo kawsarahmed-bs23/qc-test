@@ -92,7 +92,7 @@ export function readEmail(file: string): Email {
 export class MailSink {
   static isListening(): Promise<boolean> {
     return new Promise((resolve) => {
-      const socket = net.connect({ host: '127.0.0.1', port: 2525 });
+      const socket = net.connect({ host: '127.0.0.1', port: env.smtpSinkPort });
       socket.setTimeout(2_000);
       socket.once('data', (chunk) => {
         socket.end('QUIT\r\n');

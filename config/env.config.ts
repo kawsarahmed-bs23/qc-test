@@ -36,6 +36,8 @@ export interface TestEnvironment {
   identityHostCacheSeconds: number;
   inviteHostPrivateJwk: string | null;
   inviteWrongPrivateJwk: string | null;
+  smtpSinkPort: number;
+  hostApiLog: string | null;
   allowWrites: boolean;
   allowCreateHosts: boolean;
   allowRestart: boolean;
@@ -94,6 +96,7 @@ const rawEnvSchema = z.object({
   HOST_REDIRECT_URI: optionalUrl('HOST_REDIRECT_URI'),
   DRIVER_UI_REDIRECT_URI: optionalUrl('DRIVER_UI_REDIRECT_URI'),
   IDENTITY_HOST_CACHE_SECONDS: z.preprocess(blankToUndefined, z.coerce.number().int().nonnegative().optional()),
+  SMTP_SINK_PORT: z.preprocess(blankToUndefined, z.coerce.number().int().min(1).max(65535).optional()),
   IGNORE_HTTPS_ERRORS: booleanFlag,
   ALLOW_WRITES: booleanFlag,
   ALLOW_CREATE_HOSTS: booleanFlag,
@@ -201,6 +204,8 @@ export function loadEnvironment(): TestEnvironment {
     identityHostCacheSeconds: Number(process.env.IDENTITY_HOST_CACHE_SECONDS?.trim() || '330'),
     inviteHostPrivateJwk: process.env.INVITE_TEST_HOST_PRIVATE_JWK?.trim() || null,
     inviteWrongPrivateJwk: process.env.INVITE_TEST_WRONG_PRIVATE_JWK?.trim() || null,
+    smtpSinkPort: Number(process.env.SMTP_SINK_PORT?.trim() || '2525'),
+    hostApiLog: name === 'local' && optional('HOST_API_LOG') ? path.resolve(ROOT_DIR, optional('HOST_API_LOG')!) : null,
     allowWrites: !isProd && flag('ALLOW_WRITES'),
     allowCreateHosts: !isProd && flag('ALLOW_CREATE_HOSTS'),
     allowRestart: !isProd && flag('ALLOW_RESTART'),
@@ -209,6 +214,9 @@ export function loadEnvironment(): TestEnvironment {
 
 export const env = loadEnvironment();
 
-export const ADMIN_STATE = path.join('.auth', env.name, 'admin.json');
+/** Where the signed-in sessions are kept: `.auth/<env>`, or `AUTH_STATE_DIR/<env>` when a run must not share them with another stack. */
+export const AUTH_DIR = process.env.AUTH_STATE_DIR?.trim() || '.auth';
 
-export const APP_STATE = path.join('.auth', env.name, 'app-admin.json');
+export const ADMIN_STATE = path.join(AUTH_DIR, env.name, 'admin.json');
+
+export const APP_STATE = path.join(AUTH_DIR, env.name, 'app-admin.json');

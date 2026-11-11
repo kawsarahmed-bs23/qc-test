@@ -1,5 +1,6 @@
 // QC-896: EmailTemplates, DeliveryMethodTypes, DeliveryMethods and MessageTypes moved from [auth] to [app]
 // (migrations/pending/move_email_tables_to_app_schema.sql); auth.SystemNotifications stays. Local only.
+// Since QC-913 user-create sends only the staff audit email; the new user gets no EmailCreateUser (EMLAPP-04).
 // Runs against APP_API_URL / LOCAL_SQL_DATABASE (point both at the migrated host API and its database copy, e.g.
 // APP_API_URL=https://localhost:7426 LOCAL_SQL_DATABASE=QuarryConnect_Dev_QC896). EMLAPP-02 compares the copy with the
 // database it was copied from (LOCAL_SQL_DATABASE without its _QC<n> suffix) while that one is still unmigrated.
@@ -18,7 +19,7 @@ import {
   RESET_TYPE,
   Qc896UserAdminApi,
   auditMailsAbout,
-  auditRecipientsAreSet,
+  auditEmailIsSetUp,
   compareWithSource,
   emailTableForeignKeys,
   emailTableLocations,
@@ -39,6 +40,7 @@ import {
 } from '@api/email-app-schema.api';
 import { HostPasswordApi, MailSink, passwordLinkIn, type Email } from '@pages/host-password-link.page';
 
+const QC913_INVITE_TYPE = 'EmailUserInvite';
 const AUDITED = qc896Email('audited');
 const ACTIVE = qc896Email('active');
 
@@ -82,8 +84,8 @@ test.describe('Email templates and delivery tables live in the app schema (QC-89
       const compared = compareWithSource(source!, table);
       expect(compared.missingFromCopy, `every ${source}.auth.${table} row is in app.${table}`).toBe(0);
       expect(
-        compared.extraNames.every((name) => name === QC798_AUDIT_TYPE),
-        `extra app.${table} rows: ${compared.extraNames.join(', ')}`,
+        compared.extraNames.every((name) => name === QC798_AUDIT_TYPE || name === QC913_INVITE_TYPE),
+        `extra app.${table} rows (only QC-798 and QC-913 rows may be added): ${compared.extraNames.join(', ')}`,
       ).toBe(true);
       expect(compared.copyRows, `app.${table} has the source's rows plus the QC-798 ones`).toBe(compared.sourceRows + compared.extraNames.length);
     }
@@ -134,7 +136,7 @@ test.describe('Host emails read the moved tables and still send (QC-896)', { tag
   });
 
   test('EMLAPP-03 admin user-create sends the branded EmailUserCreatedAudit email and records it without error', async () => {
-    test.skip(!auditRecipientsAreSet(), 'EmailSettings:RecipientEmails is empty, so no audit email is sent.');
+    test.skip(!auditEmailIsSetUp(), 'EmailSettings:RecipientEmails is empty or the EmailUserCreatedAudit template is missing, so no audit email is sent.');
     const sinceId = lastNotificationId();
     const since = MailSink.mark();
     const created = await admin.create({ userName: AUDITED, firstName: 'E2E', lastName: 'QC-896 audited', password: newPassword(), isActive: true });
@@ -161,24 +163,20 @@ test.describe('Host emails read the moved tables and still send (QC-896)', { tag
     expect(mail!.text).not.toContain('endif}}');
   });
 
-  test('EMLAPP-04 admin user-create sends EmailCreateUser to the new user with a Set your password link and no password', async () => {
+  test('EMLAPP-04 admin user-create sends the new user no EmailCreateUser email and records no notification to it (QC-913: users are invited instead)', async () => {
     activeTyped = newPassword();
     const sinceId = lastNotificationId();
     const since = MailSink.mark();
     const created = await admin.create({ userName: ACTIVE, firstName: 'E2E', lastName: 'QC-896 active', password: activeTyped, isActive: true });
     expect(created.status, `user-create ${ACTIVE}: ${created.text}`).toBeLessThan(300);
 
-    await expect
-      .poll(() => notificationFor(ACTIVE, CREATE_TYPE, sinceId), { message: 'an EmailCreateUser notification is recorded', timeout: 20_000 })
-      .not.toBeNull();
-    const row = notificationFor(ACTIVE, CREATE_TYPE, sinceId)!;
-    expect(row.errorMessage, 'the create-user email has no delivery error').toBe('');
-    expect(row.inError).toBe(0);
-    expect(row.messageTypeId).toBe(messageTypeId(CREATE_TYPE));
-
-    const mail = await MailSink.latestTo(ACTIVE, since);
-    expect(mail.text).toMatch(/Set your password/i);
-    expectPasswordLink(mail, ACTIVE, activeTyped);
+    if (auditEmailIsSetUp()) {
+      await expect
+        .poll(() => notificationFor(ACTIVE, QC798_AUDIT_TYPE, sinceId), { message: 'the staff audit email is still recorded', timeout: 20_000 })
+        .not.toBeNull();
+    }
+    expect(notificationFor(ACTIVE, CREATE_TYPE, sinceId), 'no EmailCreateUser notification').toBeNull();
+    expect(MailSink.newTo(ACTIVE, since), 'no email reaches the new user').toEqual([]);
   });
 
   test('EMLAPP-05 forgot password for a throwaway active user sends EmailResetPassword with a reset link and no password', async () => {

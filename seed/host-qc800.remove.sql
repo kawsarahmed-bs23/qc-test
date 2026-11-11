@@ -1,6 +1,7 @@
 -- QC-800: removes the throwaway host users e2e.qc800.*@example.com that tests/app/14-host-password-link.spec.ts creates
 -- through POST api/manageusers/user-create, with the roles, password history, sign-in history, refresh tokens, identity
--- sessions, EULA signatures, audit rows and the auth.SystemNotifications rows of the emails sent to them.
+-- sessions, EULA signatures, audit rows and the auth.SystemNotifications rows of the emails sent to them, and the EmailUserCreatedAudit
+-- rows (sent to EmailSettings:RecipientEmails) whose body names one of them.
 -- Run against the host database (LOCAL_SQL_DATABASE). Prints REMOVED users=<n>;notifications=<n>;left=<n>.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
@@ -13,7 +14,8 @@ DECLARE @NotificationCount int;
 
 BEGIN TRANSACTION;
 
-DELETE auth.SystemNotifications WHERE NotifcationTo LIKE N'e2e.qc800.%@example.com';
+DELETE auth.SystemNotifications WHERE NotifcationTo LIKE N'e2e.qc800.%@example.com'
+    OR (MessageTypeName = N'EmailUserCreatedAudit' AND MessageBody LIKE N'%e2e.qc800.%@example.com%');
 SET @NotificationCount = @@ROWCOUNT;
 DELETE auth.AuditChanges WHERE KeyId IN (SELECT Id FROM @Users);
 DELETE app.IdentitySessions WHERE UserID_FK IN (SELECT Id FROM @Users);

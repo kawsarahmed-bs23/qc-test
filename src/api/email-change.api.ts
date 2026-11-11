@@ -7,7 +7,7 @@ import type { ThrowawayUser } from '@utils/throwawayUsers';
 import { newAuthenticatorKey } from '@utils/totp';
 
 export const EMAIL_LOCKED_MESSAGE = 'Contact support to change your email.';
-export const EMAIL_EDITABLE_HINT = 'This is used as the username';
+export const EMAIL_EDITABLE_HINT = 'The invite is sent here. It becomes their sign-in.';
 export const HOST_ORGANISATION_ID = 30;
 export const VENDOR_ORGANISATION_ID = 34;
 export const VENDOR_TRUCK_ORGANISATION_ID = 38;

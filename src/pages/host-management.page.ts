@@ -455,8 +455,24 @@ export class HostSignInSettingsPage {
   readonly urlsSave: Locator;
   readonly urlsError: Locator;
   readonly loadError: Locator;
+  readonly inviteKeysCard: Locator;
+  readonly inviteKeysHint: Locator;
+  readonly inviteKeysList: Locator;
+  readonly inviteKeysEmpty: Locator;
+  readonly inviteKeyInput: Locator;
+  readonly inviteKeyAdd: Locator;
+  readonly inviteKeysError: Locator;
+  readonly inviteKeyFieldError: Locator;
 
   constructor(private readonly page: Page) {
+    this.inviteKeysCard = page.locator('#invite-keys-card');
+    this.inviteKeysHint = page.locator('#invite-keys-hint');
+    this.inviteKeysList = page.locator('#invite-keys-list');
+    this.inviteKeysEmpty = page.locator('#invite-keys-empty');
+    this.inviteKeyInput = page.locator('#invite-key-input');
+    this.inviteKeyAdd = page.locator('#invite-key-add');
+    this.inviteKeysError = page.locator('#invite-keys-error');
+    this.inviteKeyFieldError = page.locator('#invite-key-input-error');
     this.brandingForm = page.locator('#branding-form');
     this.brandingSave = page.locator('#branding-save');
     this.brandingError = page.locator('#branding-error');
@@ -479,6 +495,32 @@ export class HostSignInSettingsPage {
 
   branding(field: BrandingField): Locator {
     return this.page.locator(`#branding-${field}`);
+  }
+
+  /** One key of the Invite signing keys card (QC-915), by its kid. */
+  inviteKey(kid: string): Locator {
+    return this.inviteKeysList.locator(`[data-kid="${kid}"]`);
+  }
+
+  inviteKeyRemove(kid: string): Locator {
+    return this.page.locator(`[id="invite-key-remove-${kid}"]`);
+  }
+
+  /** Pastes a JWK and presses Add key; returns the status of the PUT .../invite-keys. */
+  async addInviteKey(jwk: string): Promise<number> {
+    await this.inviteKeyInput.fill(jwk);
+    const saved = this.page.waitForResponse((r) => r.request().method() === 'PUT' && /\/invite-keys$/.test(new URL(r.url()).pathname));
+    await this.inviteKeyAdd.click();
+    return (await saved).status();
+  }
+
+  /** Presses Remove on a key and confirms; returns the status of the PUT .../invite-keys. */
+  async removeInviteKey(kid: string): Promise<number> {
+    await this.inviteKeyRemove(kid).click();
+    await expect(this.confirmDialog.title).toHaveText(`Remove the key ${kid}?`);
+    const saved = this.page.waitForResponse((r) => r.request().method() === 'PUT' && /\/invite-keys$/.test(new URL(r.url()).pathname));
+    await this.confirmDialog.accept();
+    return (await saved).status();
   }
 
   urls(field: AllowedUrlField): Locator {

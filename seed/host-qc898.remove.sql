@@ -41,8 +41,9 @@ WHERE OrderAssignmentID_FK IN (SELECT Id FROM @Assignments) OR DriverUserID_FK I
 
 BEGIN TRANSACTION;
 
-DELETE app.DriverInvites WHERE VendorID_FK IN (SELECT Id FROM @Vendors) OR TruckID_FK IN (SELECT Id FROM @Trucks)
-    OR InvitedEmail LIKE N'e2e.qc898.%@quarryconnect.test';
+IF OBJECT_ID(N'app.DriverInvites', N'U') IS NOT NULL
+    DELETE app.DriverInvites WHERE VendorID_FK IN (SELECT Id FROM @Vendors) OR TruckID_FK IN (SELECT Id FROM @Trucks)
+        OR InvitedEmail LIKE N'e2e.qc898.%@quarryconnect.test';
 
 IF OBJECT_ID(N'app.DriverMirrorSubscriptions', N'U') IS NOT NULL
     DELETE app.DriverMirrorSubscriptions WHERE UserID_FK IN (SELECT Id FROM @Subs);

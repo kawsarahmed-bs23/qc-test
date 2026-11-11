@@ -97,7 +97,7 @@ export class IdentityTwoStepPage {
 
   async expectVisible(): Promise<void> {
     await expect(this.page).toHaveURL(new RegExp(`^${escape(env.identityUrl)}/Account/LoginWith2fa`, 'i'));
-    await expect(this.digits.first().or(this.code)).toBeVisible();
+    await expect(this.digits.or(this.code).filter({ visible: true }).first()).toBeVisible();
     if (await this.digits.count()) {
       await expect(this.digits).toHaveCount(6);
     }

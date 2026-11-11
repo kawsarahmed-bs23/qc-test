@@ -9,7 +9,9 @@ import {
   INVITE_RESULT_TYPE,
   type InviteLinkOptions,
   type InviteResult,
+  publicInviteKeyOf,
 } from '@utils/inviteLinks';
+import { identityAcceptsLink, masterHasInviteKeys, masterInviteKeys, registerTestInviteKey, removeTestInviteKeys } from '@api/user-invites.api';
 
 const RUN = Date.now();
 const EMAIL_LIKE = 'qc914-e2e-%@example.test';
@@ -52,14 +54,38 @@ test.describe('Host-signed invite links on Identity (QC-914)', { tag: ['@write',
   const link = (options: Partial<InviteLinkOptions> & { email: string }) =>
     signInviteLink({ privateJwk: env.inviteHostPrivateJwk!, issuer, returnUrl, ...options });
 
-  test.beforeAll(() => {
+  let registeredKey = false;
+
+  test.beforeAll(async ({ playwright }) => {
+    test.setTimeout(env.identityHostCacheSeconds * 1000 + 60_000);
     issuer = hostUuidOf(env.hostClient!.clientId) ?? '';
     returnUrl = env.hostClient!.redirectUri;
     expect(issuer, `host ${env.hostClient!.clientId} in HOST_MASTER`).toMatch(/^[0-9A-F-]{36}$/i);
     removeInviteUsers();
+
+    if (masterHasInviteKeys()) {
+      const key = publicInviteKeyOf(env.inviteHostPrivateJwk!);
+      if (!masterInviteKeys(issuer).some((row) => row.active && row.kid === key.kid && row.x === key.x)) {
+        registerTestInviteKey(env.hostClient!.clientId, key);
+        registeredKey = true;
+      }
+      const request = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
+      try {
+        await expect
+          .poll(() => identityAcceptsLink(request, link({ email: emailFor('probe') }).token), {
+            message: `Identity takes links signed with ${key.kid} once it reads HOST_MASTER (within IDENTITY_HOST_CACHE_SECONDS)`,
+            timeout: env.identityHostCacheSeconds * 1000,
+            intervals: [5_000, 10_000, 15_000],
+          })
+          .toBe(true);
+      } finally {
+        await request.dispose();
+      }
+    }
   });
 
   test.afterAll(() => {
+    if (registeredKey) removeTestInviteKeys();
     removeInviteUsers();
     expect(Number(queryIdentityDb(`SELECT COUNT(*) FROM auth.Users WHERE Email LIKE ${sqlText(EMAIL_LIKE)}`)), 'no QC-914 invite user is left').toBe(0);
   });

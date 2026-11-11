@@ -1,29 +1,15 @@
 import { randomUUID } from 'crypto';
 import type { APIRequestContext, Browser } from '@playwright/test';
 import { test, expect, signedOut } from '@fixtures/pageFixtures';
-import {
-  canSeedLocalDb,
-  canUseDriversDb,
-  canUseIdentityDb,
-  queryIdentityDb,
-  querySingleValue,
-  runDriversSeedScript,
-  runIdentitySeedScript,
-  runSeedScript,
-} from '@utils/localDb';
+import { canSeedLocalDb, canUseIdentityDb, queryIdentityDb, querySingleValue, runIdentitySeedScript, runSeedScript } from '@utils/localDb';
 import { HostAccountApi, hostUserId, identityAccessToken } from '@api/host-account.api';
-import { DriverInvitesApi, type HostDriverInvitesApi } from '@api/driver-invites.api';
 import type { AssignmentSave, HostAssignmentsApi } from '@api/host-assignments.api';
-import { isDriversApiReachable, PasswordGrantApi } from '@api/password-grant.api';
 import { env, type Credentials } from '@config/env.config';
 
 const DISPATCHER_EMAIL = 'e2e.qc898.dispatcher@quarryconnect.test';
-const VENDOR_EMAIL = 'e2e.qc898.vendor@quarryconnect.test';
 const DRIVER1_EMAIL = 'e2e.qc898.driver1@quarryconnect.test';
 const DRIVER2_EMAIL = 'e2e.qc898.driver2@quarryconnect.test';
 const MARKER = 'e2e-qc898';
-const MESSAGE_WINDOW = 30_000;
-const POLL = { intervals: [500, 1_000, 2_000] };
 
 interface IdentityUser extends Credentials {
   id: string;
@@ -134,7 +120,6 @@ function identitySubs(): string {
 }
 
 function removeAll(subs: string): void {
-  if (canUseDriversDb()) runDriversSeedScript('drivers-qc898.remove.sql', { UserIds: subs });
   runSeedScript('host-qc898.remove.sql', { UserIds: subs });
   runIdentitySeedScript('identity-qc898.remove.sql');
 }
@@ -406,77 +391,6 @@ test.describe('Host UUIDs are stamped on save, on sign-in and on invite accept (
       const alsoRefused = await exchangeFor(browser, request, taken);
       expect(alsoRefused.status, 'Id = sub but UserUUID already points at another identity').toBe(401);
       expect(userUuid(takenHost), 'the stored UserUUID is kept').toBe(second);
-    });
-  });
-
-  test.describe('driver invite accept (LinkEstablished)', () => {
-    test.skip(!canUseDriversDb() || !env.driversApiUrl, 'Needs DRIVERS_API_URL and the DRIVERS local database.');
-
-    let host: HostDriverInvitesApi;
-
-    const acceptedInvite = async (request: APIRequestContext, vendor: HostDriverInvitesApi, driver: IdentityUser, truckId: number): Promise<void> => {
-      const sent = await vendor.send({ invitedDriverUuid: driver.sub, truckId });
-      expect(sent.status, sent.text).toBe(200);
-
-      const token = await new PasswordGrantApi(request).passwordGrant(driver.email, driver.password);
-      expect(token.status, `password grant for ${driver.email}: ${token.body.error ?? ''} ${token.body.error_description ?? ''}`).toBe(200);
-      const api = new DriverInvitesApi(request, token.body.access_token!);
-      const inviteUuid = sent.data!.inviteUuid.toLowerCase();
-      await expect.poll(() => api.listedUuids(), { message: 'the invite reaches GET /invites', timeout: MESSAGE_WINDOW, ...POLL }).toContain(inviteUuid);
-
-      const accepted = await api.accept(inviteUuid);
-      expect(accepted.status, accepted.text).toBe(200);
-      await expect
-        .poll(async () => (await vendor.find(inviteUuid))?.status, { message: 'the host hears LinkEstablished', timeout: MESSAGE_WINDOW, ...POLL })
-        .toBe('accepted');
-    };
-
-    test.beforeEach(async ({ request, hostDriverInvitesApi }) => {
-      test.skip(!(await isDriversApiReachable(request)), 'The drivers API (DRIVERS_API_URL) is not running.');
-      host = hostDriverInvitesApi;
-      expect(await host.signIn(VENDOR_EMAIL, env.admin!.password), 'the throwaway vendor signs in to the host API').toBe(200);
-    });
-
-    test('HUUID-09 a driver with no host user who accepts an invite gets a host user with Id = UserUUID = the driver UUID', async ({ request }) => {
-      const driver = seedIdentityUser('newdriver', true);
-      expect(hostRowsByEmail(driver.email)).toHaveLength(0);
-
-      await acceptedInvite(request, host, driver, seeded.truck1);
-
-      expect(hostRowsByEmail(driver.email)).toEqual([{ id: driver.sub, userUuid: driver.sub, organisationId: seeded.truck1, roles: 'Driver' }]);
-    });
-
-    test('HUUID-10 a host user with the invite email and no UserUUID is linked in place: same row, UserUUID = driver UUID, no second row, and its assignments get DriverUserUUID', async ({
-      request,
-    }) => {
-      const driver = seedIdentityUser('existing', true);
-      const hostId = seedHostUser(driver.email, { userId: 'new', userUuid: null, organisationId: seeded.truck2, withAssignment: true });
-      expect(hostId).not.toBe(driver.sub);
-      const seededAssignment = hostNumber(`SELECT MAX(OrderAssignmentID) FROM app.OrderAssignments WHERE DriverUserID_FK = ${sqlText(hostId)}`);
-      expect(partyUuids(seededAssignment).driver).toBeNull();
-
-      await acceptedInvite(request, host, driver, seeded.truck1);
-
-      expect(hostRowsByEmail(driver.email), 'the existing row is linked; organisation and role are left alone').toEqual([
-        { id: hostId, userUuid: driver.sub, organisationId: seeded.truck2, roles: 'Driver' },
-      ]);
-      expect(hostNumber(`SELECT COUNT(*) FROM auth.Users WHERE Id = ${sqlText(driver.sub)}`), 'no row keyed by the driver UUID').toBe(0);
-      expect(partyUuids(seededAssignment).driver, "the linked user's assignment gets DriverUserUUID").toBe(driver.sub);
-    });
-
-    test('HUUID-11 a host user with the invite email that already has another UserUUID is not linked and no second row is made', async ({ request }) => {
-      const other = randomUUID();
-      const driver = seedIdentityUser('conflict', true);
-      const hostId = seedHostUser(driver.email, { userId: 'new', userUuid: other, organisationId: seeded.truck2 });
-
-      await acceptedInvite(request, host, driver, seeded.truck1);
-
-      expect(hostRowsByEmail(driver.email), 'the row keeps its own UserUUID').toEqual([
-        { id: hostId, userUuid: other, organisationId: seeded.truck2, roles: 'Driver' },
-      ]);
-      expect(hostNumber(`SELECT COUNT(*) FROM auth.Users WHERE Id = ${sqlText(driver.sub)} OR UserUUID = '${driver.sub}'`), 'no row for the driver UUID').toBe(
-        0,
-      );
     });
   });
 });

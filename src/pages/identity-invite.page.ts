@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { env } from '@config/env.config';
 import { inviteResultFrom, inviteResultSignedBy, type InviteResult } from '@utils/inviteLinks';
+import { identityAcceptsLink } from '@api/user-invites.api';
 import { BasePage } from './base.page';
 
 export interface InviteSetupInput {
@@ -75,6 +76,11 @@ export class IdentityInvitePage extends BasePage {
 
   async open(token: string): Promise<void> {
     await this.page.goto(`${env.identityUrl}/invite?t=${encodeURIComponent(token)}`);
+  }
+
+  /** True when Identity's /invite page takes the link (shows the setup or existing-login view), false when it shows #invite-failed. */
+  acceptsLink(token: string): Promise<boolean> {
+    return identityAcceptsLink(this.page.request, token);
   }
 
   async openDecline(token: string): Promise<void> {

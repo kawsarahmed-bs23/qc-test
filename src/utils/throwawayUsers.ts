@@ -1,12 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { env, type Credentials } from '@config/env.config';
+import { AUTH_DIR, env, type Credentials } from '@config/env.config';
 import { canUseIdentityDb, canUseMasterDb, queryIdentityDb, runIdentitySeedScript, runMasterSeedScript } from '@utils/localDb';
 import { newAuthenticatorKey } from '@utils/totp';
 
 export const PLATFORM_ADMIN_EMAIL = 'e2e.qc775.admin@quarryconnect.test';
 export const PLATFORM_ADMIN_NAME = 'E2E QC-775 Admin';
-const PLATFORM_ADMIN_FILE = path.join('.auth', env.name, 'platform-admin.json');
+const PLATFORM_ADMIN_FILE = path.join(AUTH_DIR, env.name, 'platform-admin.json');
 
 export interface ThrowawayUser extends Credentials {
   userId: string;

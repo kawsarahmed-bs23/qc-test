@@ -115,9 +115,14 @@ export function sinkIsConfigured(): boolean {
   return (
     querySingleValue(
       `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = N'EmailSettings'
-       AND ((PropertyName = N'MailServer' AND PropertyValue = N'127.0.0.1') OR (PropertyName = N'MailPort' AND PropertyValue = N'2525'))`,
+       AND ((PropertyName = N'MailServer' AND PropertyValue = N'127.0.0.1') OR (PropertyName = N'MailPort' AND PropertyValue = N'${env.smtpSinkPort}'))`,
     ) === '2'
   );
+}
+
+/** The audit email can be sent: RecipientEmails is set and the EmailUserCreatedAudit template exists and is active. */
+export function auditEmailIsSetUp(): boolean {
+  return auditRecipientsAreSet() && querySingleValue(`SELECT COUNT(*) FROM app.EmailTemplates WHERE Name = N'${QC798_AUDIT_TYPE}' AND IsActive = 1`) !== '0';
 }
 
 export function auditRecipientsAreSet(): boolean {
