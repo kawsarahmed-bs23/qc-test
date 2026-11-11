@@ -76,6 +76,28 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
   const setContact = (vendorId: number, name: Name | null) =>
     value(`UPDATE app.VendorSettings SET DispatchContactUserID_FK = ${name ? `N'${id[name]}'` : 'NULL'} WHERE OrganisationID_FK = ${vendorId}`);
   const assignmentsOf = (vendorId: number) => Number(value(`SELECT COUNT(*) FROM app.OrderAssignments WHERE VendorID_FK = ${vendorId}`));
+  const uuidOf = (name: Name) => value(`SELECT LOWER(CONVERT(nvarchar(36), UserUUID)) FROM auth.Users WHERE Id = N'${id[name]}'`);
+  const stampOf = (assignment: number) =>
+    value(`SELECT LOWER(CONVERT(nvarchar(36), DriverUserUUID)) FROM app.OrderAssignments WHERE OrderAssignmentID = ${assignment}`);
+  const offersSent = (assignment: number) =>
+    Number(
+      value(
+        `SELECT COUNT(*) FROM app.OrderAssignmentHistory WHERE OrderAssignmentID_FK = ${assignment} AND OrderAssignmentHistoryData LIKE N'Job offer sent to the Driver%'`,
+      ),
+    );
+  const isActive = (name: Name) => value(`SELECT CAST(IsActive AS int) FROM auth.Users WHERE Id = N'${id[name]}'`);
+  const openVendorOffer = async (vendorId: number) => {
+    const saved = await admin.api.saveVendorOnlyAssignment({ orderId, assignmentDate: hostToday(), vendorId, notes: MARKER });
+    expect(saved.status, saved.text).toBe(201);
+    return Number(saved.data);
+  };
+  const saveUserByApi = async (name: Name, changes: Record<string, unknown>) => {
+    const model = await admin.api.userEdit('manageusers', id[name]);
+    expect(model.status, model.text).toBe(200);
+    const saved = await admin.api.saveUserEdit('manageusers', { ...model.data, ...changes, password: null, confirmPassword: null });
+    expect(saved.status, saved.text).toBe(200);
+    return saved;
+  };
 
   const expectBillingUntouched = () => {
     expect(billToOf(vendorA), "Vendor A's billing contact (BillToUserID_FK) is still alpha").toBe(id.alpha);
@@ -154,7 +176,7 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     await page.open(id.bravo);
     await expect(page.dispatchContact).not.toBeChecked();
     await page.dispatchContact.check();
-    const saved = await page.saveUser();
+    const saved = await page.saveUserConfirming('replace', `${FULL.alpha} is this Vendor's dispatch contact today.`);
     expect(saved.status).toBe(200);
     expect(saved.message).toBe(contactChangedMessage(FULL.alpha, FULL.bravo));
     await page.toasts.expectSuccess(contactChangedMessage(FULL.alpha, FULL.bravo));
@@ -176,7 +198,7 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     await page.open(id.bravo);
     await expect(page.dispatchContact).toBeChecked();
     await page.dispatchContact.uncheck();
-    expect((await page.saveUser()).status).toBe(200);
+    expect((await page.saveUserConfirming('leave')).status).toBe(200);
     expect(contactOf(vendorA), 'unticking the contact clears it').toBeNull();
     expectBillingUntouched();
   });
@@ -219,7 +241,7 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     await expect(page.dispatchContact).toBeVisible();
 
     await page.dispatchContact.check();
-    const saved = await page.saveUser();
+    const saved = await page.saveUserConfirming('replace', `${FULL.alpha} is this Vendor's dispatch contact today.`);
     expect(saved.status).toBe(200);
     expect(saved.message).toBe(contactChangedMessage(FULL.alpha, FULL.bravo));
     await page.toasts.expectSuccess(contactChangedMessage(FULL.alpha, FULL.bravo));
@@ -237,7 +259,7 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     await expect(page.checkbox).not.toBeChecked();
     await expect(page.todayIs(FULL.bravo)).toBeVisible();
 
-    expect(await page.toggle()).toBe(200);
+    expect(await page.toggle('replace')).toBe(200);
     await page.toasts.expectSuccess(contactChangedMessage(FULL.bravo, FULL.alpha));
     await expect(page.checkbox).toBeChecked();
     expect(contactOf(vendorA)).toBe(id.alpha);
@@ -245,7 +267,7 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
 
     await page.open();
     await expect(page.checkbox, 'the tick shows after a reload').toBeChecked();
-    expect(await page.toggle()).toBe(200);
+    expect(await page.toggle('leave')).toBe(200);
     await page.toasts.expectSuccess('Your setting is saved.');
     expect(contactOf(vendorA), 'unticking clears the contact').toBeNull();
 
@@ -499,5 +521,111 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     expect(moved.text).toContain(MISSING_DISPATCH_CONTACT);
     expect(vendorOf(), 'the refused saves change nothing').toBe(vendorA);
     expect(value(`SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${assignment}`), 'no SMS row').toBe('0');
+  });
+
+  test("DCON-20 replacing the contact through Admin > Users' user-edit re-stamps the Vendor's open Vendor-only offer to the new contact and offers it again; unticking them clears the stamp", async () => {
+    setContact(vendorA, 'alpha');
+    const assignment = await openVendorOffer(vendorA);
+    try {
+      expect(stampOf(assignment), 'the offer starts stamped with alpha').toBe(uuidOf('alpha'));
+      const offersBefore = offersSent(assignment);
+
+      const replaced = await saveUserByApi('bravo', { isActive: true, isDispatchContact: true });
+      expect(replaced.message).toBe(contactChangedMessage(FULL.alpha, FULL.bravo));
+      expect(contactOf(vendorA)).toBe(id.bravo);
+      expect(stampOf(assignment), "the open offer now goes to bravo's UserUUID").toBe(uuidOf('bravo'));
+      expect(offersSent(assignment), 'a "Job offer sent to the Driver" history row for the new contact').toBe(offersBefore + 1);
+
+      await saveUserByApi('bravo', { isActive: true, isDispatchContact: false });
+      expect(contactOf(vendorA)).toBeNull();
+      expect(stampOf(assignment), 'clearing the contact clears DriverUserUUID').toBeNull();
+      expect(offersSent(assignment), 'no offer goes out when nobody is the contact').toBe(offersBefore + 1);
+    } finally {
+      setContact(vendorA, 'alpha');
+    }
+  });
+
+  test('DCON-21 deactivating the contact through the Admin > Users user-edit clears the Vendor\'s dispatch contact and the open offer\'s stamp, and Edit Vendor names an inactive contact "<name> (inactive)"', async () => {
+    setContact(vendorA, 'alpha');
+    try {
+      await saveUserByApi('bravo', { isActive: true, isDispatchContact: true });
+      expect(contactOf(vendorA)).toBe(id.bravo);
+      const assignment = await openVendorOffer(vendorA);
+      expect(stampOf(assignment)).toBe(uuidOf('bravo'));
+
+      await saveUserByApi('bravo', { isActive: false, isDispatchContact: true });
+      expect(isActive('bravo')).toBe('0');
+      expect(contactOf(vendorA), 'VendorSettings.DispatchContactUserID_FK is cleared').toBeNull();
+      expect(stampOf(assignment), "the open offer's DriverUserUUID is cleared").toBeNull();
+
+      setContact(vendorA, 'bravo');
+      expect((await admin.api.vendorEdit(vendorA)).data).toMatchObject({ dispatchContactUserId: id.bravo, dispatchContactName: `${FULL.bravo} (inactive)` });
+    } finally {
+      setContact(vendorA, null);
+      await saveUserByApi('bravo', { isActive: true, isDispatchContact: false });
+      setContact(vendorA, 'alpha');
+    }
+    expect(isActive('bravo'), 'bravo is active again').toBe('1');
+    expect(contactOf(vendorA)).toBe(id.alpha);
+  });
+
+  test('DCON-22 Cancel on the "Replace the dispatch contact?" dialog of Admin > Users sends nothing, stays on the page and keeps the contact', async () => {
+    setContact(vendorA, 'alpha');
+    const page = admin.adminUser;
+    await page.open(id.bravo);
+    await page.dispatchContact.check();
+    const saves = page.countSaves();
+    await page.save.click();
+    await page.changeDialog.expectOpen('replace', `${FULL.alpha} is this Vendor's dispatch contact today.`);
+    await page.changeDialog.cancel.click();
+    await expect(page.changeDialog.root).toHaveCount(0);
+    await expect(page.editHeading, 'still on Edit User').toBeVisible();
+    await expect(page.save).toBeEnabled();
+    expect(saves(), 'Cancel sends no user-edit POST').toBe(0);
+    expect(contactOf(vendorA)).toBe(id.alpha);
+    expect((await admin.api.userEdit('manageusers', id.bravo)).data).toMatchObject({ isDispatchContact: false });
+  });
+
+  test('DCON-23 unticking yourself on My Profile asks first: Cancel keeps the tick and saves nothing, "Untick and save" clears the contact', async () => {
+    setContact(vendorA, 'alpha');
+    try {
+      const page = alpha.profile;
+      await page.open();
+      await expect(page.checkbox).toBeChecked();
+      const saves = page.countSaves();
+      await page.checkbox.click();
+      await page.changeDialog.expectOpen('leave');
+      await page.changeDialog.cancel.click();
+      await expect(page.changeDialog.root).toHaveCount(0);
+      await expect(page.checkbox, 'Cancel puts the tick back').toBeChecked();
+      expect(saves(), 'Cancel sends no dispatch-contact POST').toBe(0);
+      expect(contactOf(vendorA)).toBe(id.alpha);
+
+      expect(await page.toggle('leave')).toBe(200);
+      await page.toasts.expectSuccess('Your setting is saved.');
+      await expect(page.checkbox).not.toBeChecked();
+      expect(contactOf(vendorA), 'Untick and save clears the contact').toBeNull();
+    } finally {
+      setContact(vendorA, 'alpha');
+    }
+    expect(contactOf(vendorA)).toBe(id.alpha);
+  });
+
+  test('DCON-24 a double submit of Save on Edit Vendor with a move opens one move dialog and keeps Save disabled while it is open', async () => {
+    setContact(vendorA, 'alpha');
+    const page = admin.editVendor;
+    await page.open(vendorA);
+    await page.addAssociatedUser(FULL.driver);
+    await page.fillAddressIfEmpty('E2E QC-910 Yard', '910 Congress Ave');
+    const saves = page.countSaves();
+    await page.doubleSubmit();
+    await page.moveDialog.expectMove('Vendor', `${FULL.driver} is on Truck E2E910TA. Adding them to this Vendor removes them from that Truck.`);
+    await expect(page.moveDialog.root, 'exactly one move dialog').toHaveCount(1);
+    await expect(page.saveButton).toBeDisabled();
+    await page.moveDialog.cancel.click();
+    await expect(page.moveDialog.root).toHaveCount(0);
+    await expect(page.saveButton).toBeEnabled();
+    expect(saves(), 'Cancel sends no vendor-edit POST').toBe(0);
+    expect(organisationOf('driver'), 'the driver is still on Truck A').toBe(truckA);
   });
 });

@@ -33,11 +33,53 @@ export class AppToasts {
   }
 }
 
+export type DispatchContactChange = 'replace' | 'leave';
+
+const CHANGE_DIALOG: Record<DispatchContactChange, { title: string; confirm: string }> = {
+  replace: { title: 'Replace the dispatch contact?', confirm: 'Replace and save' },
+  leave: { title: 'Leave this Vendor without a dispatch contact?', confirm: 'Untick and save' },
+};
+
+/** The QC-910 confirm dialog (shared ConfirmDialogComponent) before a save replaces or clears a Vendor's dispatch contact. */
+export class DispatchContactDialog {
+  readonly root: Locator;
+  readonly message: Locator;
+  readonly cancel: Locator;
+
+  constructor(page: Page) {
+    this.root = page.locator('app-confirm-dialog');
+    this.message = this.root.locator('.confirm-dialog__message');
+    this.cancel = this.root.getByRole('button', { name: 'Cancel' });
+  }
+
+  confirm(change: DispatchContactChange): Locator {
+    return this.root.getByRole('button', { name: CHANGE_DIALOG[change].confirm });
+  }
+
+  async expectOpen(change: DispatchContactChange, message?: string): Promise<void> {
+    await expect(this.root).toHaveCount(1);
+    await expect(this.root.getByRole('heading', { name: CHANGE_DIALOG[change].title })).toBeVisible();
+    await expect(this.confirm(change)).toBeVisible();
+    if (message) await expect(this.message).toContainText(message);
+  }
+}
+
+/** Counts the POSTs to one API path a page sends from now on, so a Cancel can be proved to send none. */
+function countPosts(page: Page, pathname: RegExp): () => number {
+  let count = 0;
+  page.on('request', (r) => {
+    if (r.method() === 'POST' && pathname.test(new URL(r.url()).pathname)) count++;
+  });
+  return () => count;
+}
+
 abstract class DispatchContactUserPage extends BasePage {
   protected abstract readonly apiArea: string;
   readonly dispatchContact: Locator;
   readonly dispatchContactHelp: Locator;
   readonly save: Locator;
+  readonly editHeading: Locator;
+  readonly changeDialog: DispatchContactDialog;
   readonly toasts: AppToasts;
 
   constructor(page: Page, help: string) {
@@ -45,7 +87,26 @@ abstract class DispatchContactUserPage extends BasePage {
     this.dispatchContact = page.getByRole('checkbox', { name: DISPATCH_CONTACT_LABEL });
     this.dispatchContactHelp = page.getByText(help);
     this.save = page.getByRole('button', { name: 'Save', exact: true });
+    this.editHeading = page.getByRole('heading', { name: 'Edit User', exact: true }).first();
+    this.changeDialog = new DispatchContactDialog(page);
     this.toasts = new AppToasts(page);
+  }
+
+  /** Presses Save, expects the replace / leave-without dialog, confirms it and returns the user-edit POST status and message. */
+  async saveUserConfirming(change: DispatchContactChange, message?: string): Promise<{ status: number; message: string | null }> {
+    const saved = this.page.waitForResponse(
+      (r) => r.request().method() === 'POST' && new RegExp(`/api/${this.apiArea}/user-edit$`).test(new URL(r.url()).pathname),
+    );
+    await this.save.click();
+    await this.changeDialog.expectOpen(change, message);
+    await this.changeDialog.confirm(change).click();
+    const response = await saved;
+    const body = await response.json().catch(() => null);
+    return { status: response.status(), message: typeof body?.message === 'string' ? body.message : null };
+  }
+
+  countSaves(): () => number {
+    return countPosts(this.page, new RegExp(`/api/${this.apiArea}/user-edit$`));
   }
 
   /** Opens the edit page with a full reload and waits for its user-edit GET. */
@@ -77,11 +138,13 @@ export class AdminUserDispatchContactPage extends DispatchContactUserPage {
   protected readonly apiArea = 'manageusers';
   readonly role: Locator;
   readonly billingContact: Locator;
+  readonly active: Locator;
 
   constructor(page: Page) {
     super(page, "Receives this Vendor's Vendor-only Job offers. One per Vendor.");
     this.role = page.getByRole('combobox', { name: 'Role' });
     this.billingContact = page.getByRole('checkbox', { name: 'Is billing contact' });
+    this.active = page.getByRole('checkbox', { name: 'Active', exact: true });
   }
 
   async chooseRole(role: string): Promise<void> {
@@ -108,6 +171,7 @@ export class ProfileDispatchContactPage extends BasePage {
   readonly field: Locator;
   readonly checkbox: Locator;
   readonly card: Locator;
+  readonly changeDialog: DispatchContactDialog;
   readonly toasts: AppToasts;
 
   constructor(page: Page) {
@@ -115,7 +179,12 @@ export class ProfileDispatchContactPage extends BasePage {
     this.field = page.getByTestId('profile-is-dispatch-contact');
     this.checkbox = this.field.getByRole('checkbox', { name: DISPATCH_CONTACT_LABEL });
     this.card = page.locator('mat-card').filter({ has: this.field });
+    this.changeDialog = new DispatchContactDialog(page);
     this.toasts = new AppToasts(page);
+  }
+
+  countSaves(): () => number {
+    return countPosts(this.page, /\/api\/vendor\/settings\/dispatch-contact$/);
   }
 
   async open(): Promise<void> {
@@ -132,12 +201,16 @@ export class ProfileDispatchContactPage extends BasePage {
     return this.card.getByText(`Today that is ${name}; ticking this makes it you.`);
   }
 
-  /** Clicks the checkbox and returns the dispatch-contact POST status. */
-  async toggle(): Promise<number> {
+  /** Clicks the checkbox, confirms the replace / leave-without dialog when one is expected, and returns the dispatch-contact POST status. */
+  async toggle(change?: DispatchContactChange): Promise<number> {
     const saved = this.page.waitForResponse(
       (r) => r.request().method() === 'POST' && /\/api\/vendor\/settings\/dispatch-contact$/.test(new URL(r.url()).pathname),
     );
     await this.checkbox.click();
+    if (change) {
+      await this.changeDialog.expectOpen(change);
+      await this.changeDialog.confirm(change).click();
+    }
     return (await saved).status();
   }
 }
@@ -171,6 +244,8 @@ abstract class OrganisationUsersPage extends BasePage {
   readonly locationName: Locator;
   readonly address1: Locator;
   readonly save: Locator;
+  /** The same Save button found by its loader's `text` attribute, since its accessible name is hidden while it saves. */
+  readonly saveButton: Locator;
   readonly moveDialog: MoveUserDialog;
   readonly toasts: AppToasts;
 
@@ -180,6 +255,7 @@ abstract class OrganisationUsersPage extends BasePage {
     this.locationName = page.getByRole('textbox', { name: 'Location Name' });
     this.address1 = page.getByRole('textbox', { name: 'Address 1' });
     this.save = page.getByRole('button', { name: 'Save', exact: true });
+    this.saveButton = page.locator('form button').filter({ has: page.locator('app-button-loader[text="Save"]') });
     this.moveDialog = new MoveUserDialog(page);
     this.toasts = new AppToasts(page);
   }
@@ -195,6 +271,14 @@ abstract class OrganisationUsersPage extends BasePage {
   }
 
   /** Ticks one more user in the Associated Users multi-select, by the option text the page shows. */
+  /** Two clicks in one task, before the move dialog renders: a real double-click's second click lands on the dialog backdrop instead. */
+  async doubleSubmit(): Promise<void> {
+    await this.saveButton.evaluate((button: HTMLButtonElement) => {
+      button.click();
+      button.click();
+    });
+  }
+
   async addAssociatedUser(option: string | RegExp): Promise<void> {
     await this.associatedUsers.click();
     const choice = this.page.getByRole('option', { name: option });
@@ -365,12 +449,10 @@ export class DispatchContactSession {
         },
         { login, claims },
       );
-      test
-        .info()
-        .annotations.push({
-          type: 'sign-in',
-          description: `${credentials.email} signed in through ${env.appApiUrl}/api/account/login (no Identity round trip).`,
-        });
+      test.info().annotations.push({
+        type: 'sign-in',
+        description: `${credentials.email} signed in through ${env.appApiUrl}/api/account/login (no Identity round trip).`,
+      });
       const page = await context.newPage();
       return new DispatchContactSession(context, page, api);
     } catch (error) {
