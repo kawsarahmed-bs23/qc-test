@@ -66,7 +66,6 @@ function removeAll(): void {
 
 test.describe('Host API local-first driver sync: delta reads, batched writes and idempotency keys (QC-829)', { tag: ['@write', '@regression'] }, () => {
   test.describe.configure({ mode: 'serial' });
-  test.skip(true, 'QC-920: host api/driver-sync removed (D74); DEVT-11 asserts the 404.');
   test.skip(!canSeedLocalDb() || !canUseIdentityDb(), 'Needs the host and Identity local databases (local only; Identity is only read for the password hash).');
   test.skip(!env.admin, 'Needs ADMIN_EMAIL / ADMIN_PASSWORD; the throwaway host users copy that password.');
   test.skip(!env.appApiUrl, 'Needs APP_API_URL (the host API).');
