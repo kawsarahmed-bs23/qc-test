@@ -12,8 +12,12 @@ DECLARE @SecondHostUuid uniqueidentifier = N'$(SecondHostUuid)';
 IF COL_LENGTH(N'app.DriverHostLinks', N'UserUUID') IS NOT NULL
     EXEC sp_executesql N'
 BEGIN TRANSACTION;
-INSERT app.Hosts (HostUUID, HostName, ApiBaseUrl, ClientId, Created, Updated, Active, CreatedBy, UpdatedBy, MessageEndpoint, DispatchEnabled, TimeZoneId)
-VALUES (@SecondHostUuid, N''E2E QC-774 Second host'', N''https://localhost:7999/'', N''drivers.service.e2e-qc774'', GETUTCDATE(), GETUTCDATE(), 1, N''e2e'', N''e2e'', NULL, 1, N''Central Standard Time'');
+DECLARE @HostsInsert nvarchar(max) = CASE WHEN COL_LENGTH(N''app.Hosts'', N''ApiBaseUrl'') IS NULL
+    THEN N''INSERT app.Hosts (HostUUID, HostName, Created, Updated, Active, CreatedBy, UpdatedBy, MessageEndpoint, DispatchEnabled, TimeZoneId)
+VALUES (@SecondHostUuid, N''''E2E QC-774 Second host'''', GETUTCDATE(), GETUTCDATE(), 1, N''''e2e'''', N''''e2e'''', NULL, 1, N''''Central Standard Time'''');''
+    ELSE N''INSERT app.Hosts (HostUUID, HostName, ApiBaseUrl, ClientId, Created, Updated, Active, CreatedBy, UpdatedBy, MessageEndpoint, DispatchEnabled, TimeZoneId)
+VALUES (@SecondHostUuid, N''''E2E QC-774 Second host'''', N''''https://localhost:7999/'''', N''''drivers.service.e2e-qc774'''', GETUTCDATE(), GETUTCDATE(), 1, N''''e2e'''', N''''e2e'''', NULL, 1, N''''Central Standard Time'''');'' END;
+EXEC sp_executesql @HostsInsert, N''@SecondHostUuid uniqueidentifier'', @SecondHostUuid;
 INSERT app.DriverHostLinks (UserUUID, HostUUID, CreatedBy, UpdatedBy) VALUES (@UserId, @SecondHostUuid, N''e2e'', N''e2e'');
 COMMIT TRANSACTION;', N'@UserId nvarchar(450), @SecondHostUuid uniqueidentifier', @UserId, @SecondHostUuid;
 ELSE

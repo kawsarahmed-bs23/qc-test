@@ -1,6 +1,7 @@
 -- QC-920 (host API): removes what tests/36-driver-events.spec.ts made on the host through the API: the 'e2e-qc920'
 -- assignments (and any assignment a reassignment linked to them), their trips, GPS points, messages (with reply links),
--- notes, history and schedule snapshots. Orders, jobs, trucks and users are only read by the spec and stay.
+-- notes, history and schedule snapshots, and (since QC-873) the tickets TicketSubmitted made on those trips with their
+-- flags, history and now-empty batches. Orders, jobs, trucks and users are only read by the spec and stay.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
@@ -13,6 +14,12 @@ WHERE (a.OriginalAssignmentID_FK IN (SELECT Id FROM @Assignments) OR a.Reassigne
 DECLARE @Trips TABLE (Id int PRIMARY KEY);
 INSERT @Trips SELECT TripID FROM app.Trips WHERE OrderAssignmentID_FK IN (SELECT Id FROM @Assignments);
 
+DECLARE @Tickets TABLE (Id int PRIMARY KEY);
+INSERT @Tickets SELECT TicketID FROM app.Tickets WHERE TripID_FK IN (SELECT Id FROM @Trips);
+
+DECLARE @Batches TABLE (Id int PRIMARY KEY);
+INSERT @Batches SELECT DISTINCT TicketBatchID_FK FROM app.Tickets WHERE TicketID IN (SELECT Id FROM @Tickets) AND TicketBatchID_FK > 0;
+
 DECLARE @Messages TABLE (Id int PRIMARY KEY);
 INSERT @Messages SELECT MessageID FROM app.Messages WHERE OrderAssignmentID_FK IN (SELECT Id FROM @Assignments);
 
@@ -20,6 +27,12 @@ BEGIN TRANSACTION;
 
 DELETE app.TripGps WHERE TripID_FK IN (SELECT Id FROM @Trips) OR OrderAssignmentID_FK IN (SELECT Id FROM @Assignments);
 UPDATE app.Trips SET TicketID_FK = NULL WHERE TripID IN (SELECT Id FROM @Trips) AND TicketID_FK IS NOT NULL;
+IF OBJECT_ID(N'app.TicketFlags', N'U') IS NOT NULL
+    DELETE app.TicketFlags WHERE TicketID_FK IN (SELECT Id FROM @Tickets);
+DELETE app.TicketHistory WHERE TicketID_FK IN (SELECT Id FROM @Tickets);
+DELETE app.Tickets WHERE TicketID IN (SELECT Id FROM @Tickets);
+DELETE app.TicketBatches
+WHERE TicketBatchID IN (SELECT Id FROM @Batches) AND NOT EXISTS (SELECT 1 FROM app.Tickets t WHERE t.TicketBatchID_FK = app.TicketBatches.TicketBatchID);
 
 IF OBJECT_ID(N'app.MessageReplyLinks', N'U') IS NOT NULL
     DELETE app.MessageReplyLinks WHERE MessageID_FK IN (SELECT Id FROM @Messages);

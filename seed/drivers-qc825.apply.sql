@@ -27,9 +27,14 @@ BEGIN TRANSACTION;
 
 DELETE app.DriverHostLinks WHERE UserUUID = @UserId;
 
-INSERT app.Hosts (HostUUID, HostName, ApiBaseUrl, ClientId, Created, Updated, Active, CreatedBy, UpdatedBy, MessageEndpoint, DispatchEnabled, TimeZoneId)
-VALUES (@SecondHostUuid, N''E2E QC-825 Second host'', N''https://localhost:7999/'', N''drivers.service.e2e-qc825'', GETUTCDATE(), GETUTCDATE(), 1, N''e2e'', N''e2e'', N''tcp://localhost:6299'', 1, N''Central Standard Time''),
-       (@OffHostUuid, N''E2E QC-825 Off host'', N''https://localhost:7998/'', N''drivers.service.e2e-qc825-off'', GETUTCDATE(), GETUTCDATE(), 1, N''e2e'', N''e2e'', N''tcp://localhost:6299'', 0, N''Central Standard Time'');
+DECLARE @HostsInsert nvarchar(max) = CASE WHEN COL_LENGTH(N''app.Hosts'', N''ApiBaseUrl'') IS NULL
+    THEN N''INSERT app.Hosts (HostUUID, HostName, Created, Updated, Active, CreatedBy, UpdatedBy, MessageEndpoint, DispatchEnabled, TimeZoneId)
+VALUES (@SecondHostUuid, N''''E2E QC-825 Second host'''', GETUTCDATE(), GETUTCDATE(), 1, N''''e2e'''', N''''e2e'''', N''''tcp://localhost:6299'''', 1, N''''Central Standard Time''''),
+       (@OffHostUuid, N''''E2E QC-825 Off host'''', GETUTCDATE(), GETUTCDATE(), 1, N''''e2e'''', N''''e2e'''', N''''tcp://localhost:6299'''', 0, N''''Central Standard Time'''');''
+    ELSE N''INSERT app.Hosts (HostUUID, HostName, ApiBaseUrl, ClientId, Created, Updated, Active, CreatedBy, UpdatedBy, MessageEndpoint, DispatchEnabled, TimeZoneId)
+VALUES (@SecondHostUuid, N''''E2E QC-825 Second host'''', N''''https://localhost:7999/'''', N''''drivers.service.e2e-qc825'''', GETUTCDATE(), GETUTCDATE(), 1, N''''e2e'''', N''''e2e'''', N''''tcp://localhost:6299'''', 1, N''''Central Standard Time''''),
+       (@OffHostUuid, N''''E2E QC-825 Off host'''', N''''https://localhost:7998/'''', N''''drivers.service.e2e-qc825-off'''', GETUTCDATE(), GETUTCDATE(), 1, N''''e2e'''', N''''e2e'''', N''''tcp://localhost:6299'''', 0, N''''Central Standard Time'''');'' END;
+EXEC sp_executesql @HostsInsert, N''@SecondHostUuid uniqueidentifier, @OffHostUuid uniqueidentifier'', @SecondHostUuid, @OffHostUuid;
 
 INSERT app.DriverHostLinks (UserUUID, HostUUID, CreatedBy, UpdatedBy) VALUES (@UserId, @HostUuid, N''e2e'', N''e2e''), (@UserId, @SecondHostUuid, N''e2e'', N''e2e''), (@UserId, @OffHostUuid, N''e2e'', N''e2e'');
 
