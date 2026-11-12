@@ -7,11 +7,9 @@ export const REPLY_LINK_TOKEN = '{ReplyLink}';
 
 export const REPLY_LINK_CODE_LENGTH = 10;
 
-export const REPLY_LINK_DEFAULT_BASE_URL = 'https://drivers.quarryconnect.com/m/';
+export const REPLY_LINK_PATH = '/m/';
 
-export const REPLY_LINK_ORIGIN = 'https://drivers.quarryconnect.com';
-
-export const REPLY_LINK_URL = /https:\/\/drivers\.quarryconnect\.com\/m\/([0-9A-Za-z]{10})/;
+export const DRIVERS_SITE_ORIGIN = 'https://drivers.quarryconnect.com';
 
 export const LINK_NOT_FOUND = 'This link was not found or is no longer available.';
 
@@ -31,11 +29,49 @@ const GSM7_BASIC = new Set(
 
 const GSM7_EXTENDED = new Set('^{}\\[~]|€\f');
 
+export function hostPublicUrl(): string | null {
+  const url = querySingleValue(`SELECT TOP 1 LTRIM(RTRIM(HostPublicURL)) FROM app.HostSettings`);
+  return url ? url.replace(/\/+$/, '') : null;
+}
+
+export function hostPublicOrigin(): string {
+  const url = hostPublicUrl();
+  expect(url, 'app.HostSettings.HostPublicURL builds the reply link').toBeTruthy();
+  return new URL(url!).origin;
+}
+
 export function replyLinkBaseUrl(): string {
-  const configured = querySingleValue(
-    `SELECT TOP 1 LTRIM(RTRIM(PropertyValue)) FROM app.EnvironmentSetting WHERE GroupName = 'DispatchComms' AND PropertyName = 'ReplyLinkBaseUrl'`,
+  const url = hostPublicUrl();
+  expect(url, 'app.HostSettings.HostPublicURL builds the reply link').toBeTruthy();
+  return `${url}${REPLY_LINK_PATH}`;
+}
+
+export function replyLinkPattern(): RegExp {
+  return new RegExp(`${replyLinkBaseUrl().replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}([0-9A-Za-z]{${REPLY_LINK_CODE_LENGTH}})`);
+}
+
+export function smsStaysLocal(): boolean {
+  const fromSet =
+    querySingleValue(
+      `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
+    ) !== '0';
+  if (!fromSet) return true;
+  const base = querySingleValue(
+    `SELECT TOP 1 LTRIM(RTRIM(PropertyValue)) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'ApiBaseAddress'`,
   );
-  return configured || REPLY_LINK_DEFAULT_BASE_URL;
+  try {
+    return !!base && ['localhost', '127.0.0.1', '[::1]'].includes(new URL(base).hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function localSmsSid(): RegExp {
+  const fromSet =
+    querySingleValue(
+      `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
+    ) !== '0';
+  return fromSet ? /^SM[0-9a-f]{32}$/ : /^STUB/;
 }
 
 export function replyLinkReadOnlyDays(): number {
@@ -51,7 +87,7 @@ export function replyLinkUrl(code: string): string {
 }
 
 export function codeIn(body: string | null): string {
-  const match = (body ?? '').match(REPLY_LINK_URL);
+  const match = (body ?? '').match(replyLinkPattern());
   expect(match, `a reply link in the stored SMS body:\n${body}`).not.toBeNull();
   return match![1];
 }
@@ -209,17 +245,26 @@ export interface LinkOption {
   key: string;
   label: string;
   needsComment: boolean;
+  needsLocation?: boolean;
+}
+
+export interface ReplyPosition {
+  lat: number;
+  lon: number;
+  accuracyM?: number | null;
+  capturedAt?: string | null;
 }
 
 export interface ReplyLinkView {
   kind: string;
   state: 'open' | 'expired' | 'withdrawn';
+  language?: string;
   host: { name: string | null; logoUrl: string | null };
   sentAt: string;
   job: { number: string | null; from: string | null; to: string | null; start: string | null; loads: number | null } | null;
   text: string;
   options: LinkOption[];
-  reply: { option: string; label: string; at: string; comment: string | null } | null;
+  reply: { option: string; label: string; at: string; comment: string | null; channel?: 'web' | 'sms' | 'app' | null; atText?: string } | null;
 }
 
 export interface LinkAnswer {
@@ -252,7 +297,7 @@ export class ReplyLinkApi {
     return this.withRetry(() => this.context.get(`/api/m/${encodeURIComponent(code)}`));
   }
 
-  reply(code: string, body: { option?: string | null; comment?: string | null }): Promise<LinkAnswer> {
+  reply(code: string, body: { option?: string | null; comment?: string | null; position?: ReplyPosition | null }): Promise<LinkAnswer> {
     return this.withRetry(() => this.context.post(`/api/m/${encodeURIComponent(code)}/reply`, { data: body }));
   }
 

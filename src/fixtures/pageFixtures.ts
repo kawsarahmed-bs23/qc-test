@@ -17,6 +17,7 @@ import { CompanySettingsPage } from '@pages/login-subtitle.page';
 import { AppHeader, LogoCropper, LogoSettingsPage, TicketUploadScreen } from '@pages/logo-upload.page';
 import { MessageLinkPanel } from '@pages/message-link.page';
 import { ReplyLinkThread } from '@pages/reply-links.page';
+import { ReplyPage } from '@pages/reply-page.page';
 import { AppSignInErrorView, AppTermsPage, HostAppHeader } from '@pages/sign-in-redirect.page';
 import { AdminUserEditPage, SignUserAgreementPage, UserEulaStatus, VendorUserEditPage } from '@pages/user-eula.page';
 import { AdminUserFormPage, UserInviteSection, UserListSignInColumn, VendorSidebar, VendorUserFormPage } from '@pages/user-invites.page';
@@ -105,6 +106,7 @@ type TestFixtures = {
   ticketUploadScreen: TicketUploadScreen;
   messageLinkPanel: MessageLinkPanel;
   replyLinkThread: ReplyLinkThread;
+  replyPage: ReplyPage;
   hostAppHeader: HostAppHeader;
   appSignInErrorView: AppSignInErrorView;
   appTermsPage: AppTermsPage;
@@ -134,9 +136,6 @@ type TestFixtures = {
   truckNumberSchedulePage: TruckNumberSchedulePage;
   adminUserTextMessagesPage: AdminUserTextMessagesPage;
   vendorUserTextMessagesPage: VendorUserTextMessagesPage;
-  notifyBySmsApi: NotifyBySmsApi;
-  addHostUuidPage: AddHostUuidPage;
-  hostExistingUuidApi: HostExistingUuidApi;
 
   // API clients, built from `request`.
   hostUserInvitesApi: HostUserInvitesApi;
@@ -157,6 +156,9 @@ type TestFixtures = {
   hostUserEditApi: HostUserEditApi;
   hostBillRatesApi: HostBillRatesApi;
   dispatchContactApi: DispatchContactApi;
+  notifyBySmsApi: NotifyBySmsApi;
+  addHostUuidPage: AddHostUuidPage;
+  hostExistingUuidApi: HostExistingUuidApi;
 };
 
 type WorkerFixtures = {
@@ -285,6 +287,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   replyLinkThread: async ({ page }, use) => {
     await use(new ReplyLinkThread(page));
+  },
+  replyPage: async ({ page }, use) => {
+    await use(new ReplyPage(page));
   },
   hostAppHeader: async ({ page }, use) => {
     await use(new HostAppHeader(page));

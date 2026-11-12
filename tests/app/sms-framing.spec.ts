@@ -20,7 +20,17 @@ import {
   storedMessageContaining,
   toE164,
 } from '@pages/sms-framing.page';
-import { REPLY_LINK_CODE_LENGTH, REPLY_LINK_TOKEN, codeIn, replyLinkOf, replyLinkUrl, replyLinksOf, sha256Hex } from '@pages/reply-links.page';
+import {
+  REPLY_LINK_CODE_LENGTH,
+  REPLY_LINK_TOKEN,
+  codeIn,
+  localSmsSid,
+  replyLinkOf,
+  replyLinkUrl,
+  replyLinksOf,
+  sha256Hex,
+  smsStaysLocal,
+} from '@pages/reply-links.page';
 import * as path from 'path';
 
 const MARKER = 'E2E-QC780';
@@ -61,20 +71,15 @@ function noSmsEverSentTo(phone: string): boolean {
   );
 }
 
-function smsGoesToLogOnly(): boolean {
-  return (
-    querySingleValue(
-      `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
-    ) === '0'
-  );
-}
-
 test.describe('Dispatch SMS framing: host name and opt-out line on a first text (QC-780)', { tag: ['@write', '@regression'] }, () => {
   test.describe.configure({ mode: 'serial' });
   test.skip(!canSeedLocalDb(), 'Needs the local database (LOCAL_SQL_SERVER / LOCAL_SQL_DATABASE) to pick drivers and read stored messages.');
   test.skip(!env.appApiUrl, 'APP_API_URL is not set, so the send, ping and preview API cannot be called directly.');
   test.skip(!canUseIdentityDb() || !env.admin, "Needs Identity's local database and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway host admin.");
-  test.skip(canSeedLocalDb() && !smsGoesToLogOnly(), 'Twilio FromPhoneNumber is set in app.EnvironmentSetting, so an SMS would really go out.');
+  test.skip(
+    canSeedLocalDb() && !smsStaysLocal(),
+    'Twilio FromPhoneNumber is set and Twilio:ApiBaseAddress is not a local stub, so an SMS would really go out.',
+  );
   test.use({ storageState: QC780_ADMIN_STATE });
 
   let drivers: FramingDrivers;
@@ -126,7 +131,7 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
   }
 
   function expectStub(sid: string | null): void {
-    expect(sid, 'the logging SMS sender stamps a STUB id; a real Twilio id starts SM').toMatch(/^STUB/);
+    expect(sid, 'the logging SMS sender stamps a STUB id; a local Twilio stub (Twilio:ApiBaseAddress on loopback) an SM id').toMatch(localSmsSid());
   }
 
   test('SMSFMT-01 a first manual SMS to a phone with no SMS history is stored as "<HostName>: <body>" plus the opt-out line', async ({ page }) => {
@@ -198,7 +203,7 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     }
   });
 
-  test('SMSFMT-06 an in-app Status Ping reads "Status check <order>. How many loads done?" with no Reply line; an SMS ping after a recent text is unframed and ends with its reply link (QC-777)', async ({
+  test('SMSFMT-06 an in-app Status Ping reads "Status check <order>. How many loads done?" with no Reply line; an SMS ping after a recent text is unframed and ends with its reply link at HostPublicURL (QC-777, QC-947)', async ({
     page,
   }) => {
     const { api } = await openThread(page, drivers.inApp);
@@ -221,7 +226,7 @@ test.describe('Dispatch SMS framing: host name and opt-out line on a first text 
     const code = codeIn(smsRow.body);
     expect(smsRow.body).toBe(`Status check ${jobDocName(smsRow.assignment!)}. How many loads done?\nReply: ${replyLinkUrl(code)}`);
     expect(replyLinkOf(smsRow.id).codeHash).toBe(sha256Hex(code));
-    expect(replyLinksOf(inAppRow.id), 'an in-app ping gets no reply link').toBe(0);
+    expect(replyLinksOf(inAppRow.id), 'QC-947: an in-app ping gets a link row too, with no link in its text').toBe(1);
     expectStub(smsRow.sid);
   });
 

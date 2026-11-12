@@ -4,16 +4,16 @@ import { env } from '@config/env.config';
 import { canSeedLocalDb, canUseIdentityDb, querySingleValue, runSeedScript } from '@utils/localDb';
 import { CommsPage } from '@pages/app.page';
 import { API_CHANNEL, CommsApi, CommsHostAdmin, MESSAGE_CHANNEL, QC804_ADMIN_STATE } from '@pages/comms-send-gate.page';
-import { ASSIGNMENT_STATUS, TRIP_NOTE_STATUS } from '@pages/message-link.page';
+import { ASSIGNMENT_STATUS } from '@pages/message-link.page';
 import { SMS_SINGLE_SEGMENT, jobDocName } from '@pages/sms-framing.page';
 import {
   AI,
   AssignmentNotifyApi,
   DIRECTION,
+  DRIVERS_SITE_ORIGIN,
   InboundSmsApi,
   LINK_NOT_FOUND,
   MESSAGE_TYPE,
-  REPLY_LINK_ORIGIN,
   REPLY_LINK_TOKEN,
   ReplyLinkApi,
   ReplyLinkThread,
@@ -24,12 +24,15 @@ import {
   driverPhone,
   expectedExpiryUtc,
   gsm7Units,
+  hostPublicOrigin,
   inboundBySid,
   latestOutbound,
   linkReplies,
+  localSmsSid,
   messageRow,
   randomCode,
   removeInboundBySid,
+  replyLinkBaseUrl,
   replyLinkOf,
   replyLinkReadOnlyDays,
   replyLinkUrl,
@@ -37,6 +40,7 @@ import {
   rowsHoldingText,
   setReplyLinkExpiry,
   sha256Hex,
+  smsStaysLocal,
 } from '@pages/reply-links.page';
 
 const MARKER = 'E2E-QC777';
@@ -101,13 +105,15 @@ function num(query: string): number {
   return Number(querySingleValue(query));
 }
 
-function smsGoesToLogOnly(): boolean {
-  return (
-    querySingleValue(
-      `SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`,
-    ) === '0'
-  );
+function tripGps(assignmentId: number): { count: number; manual: number; device: string | null } {
+  const row = querySingleValue(`SELECT CONCAT(COUNT(*), '|', ISNULL(MIN(CAST(IsManual AS int)), -1), '|', ISNULL(MAX(DeviceID), '~'))
+    FROM app.TripGps WHERE OrderAssignmentID_FK = ${assignmentId}`);
+  const [count, manual, device] = (row ?? '0|-1|~').split('|');
+  return { count: Number(count), manual: Number(manual), device: device === '~' ? null : device };
 }
+
+const POSITION = { lat: 30.2672, lon: -97.7431, accuracyM: 12 };
+const LOCATION_REQUIRED = 'Allow location access to share your location.';
 
 function assignmentStatus(id: number): number {
   return num(`SELECT OrderAssignmentStatusID_FK FROM app.OrderAssignments WHERE OrderAssignmentID = ${id}`);
@@ -116,10 +122,6 @@ function assignmentStatus(id: number): number {
 function historyCount(id: number, text: string): number {
   return num(`SELECT COUNT(*) FROM app.OrderAssignmentHistory WHERE OrderAssignmentID_FK = ${id}
     AND OrderAssignmentHistoryData = N'${text.replace(/'/g, "''")}'`);
-}
-
-function tripNotes(assignmentId: number, statusType: number): number {
-  return num(`SELECT COUNT(*) FROM app.TripNotes WHERE OrderAssignmentID_FK = ${assignmentId} AND StatusType = ${statusType}`);
 }
 
 function rowCounts(assignmentId: number): string {
@@ -138,7 +140,10 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
   );
   test.skip(!env.appApiUrl, 'APP_API_URL is not set, so the notify, ping and reply-link API cannot be called directly.');
   test.skip(!canUseIdentityDb() || !env.admin, "Needs Identity's local database and ADMIN_EMAIL / ADMIN_PASSWORD for the throwaway host admin.");
-  test.skip(canSeedLocalDb() && !smsGoesToLogOnly(), 'Twilio FromPhoneNumber is set in app.EnvironmentSetting, so an SMS would really go out.');
+  test.skip(
+    canSeedLocalDb() && !smsStaysLocal(),
+    'Twilio FromPhoneNumber is set and Twilio:ApiBaseAddress is not a local stub, so an SMS would really go out.',
+  );
   test.use({ storageState: QC804_ADMIN_STATE });
 
   let s: Seeded;
@@ -203,7 +208,7 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     const row = messageRow(notify.messageId);
     expect(row.messageType).toBe(MESSAGE_TYPE.OrderNotify);
     expect(row.direction).toBe(DIRECTION.Outbound);
-    expect(row.sid, 'the logging SMS sender stamps a STUB id').toMatch(/^STUB/);
+    expect(row.sid, 'the logging SMS sender stamps a STUB id; a local Twilio stub an SM id').toMatch(localSmsSid());
     expect(notify.body).toContain(replyLinkUrl(notify.code));
     expect(notify.body).not.toContain(REPLY_LINK_TOKEN);
     expect(notify.body).toContain(`${jobDocName(s.accept)} | `);
@@ -221,7 +226,7 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(units!, 'one SMS segment').toBeLessThanOrEqual(SMS_SINGLE_SEGMENT);
   });
 
-  test('RLINK-02 a Status Ping by SMS carries a reply link that expires at the end of today; an in-app ping has no link, no token and no Reply line', async ({
+  test('RLINK-02 a Status Ping by SMS carries a reply link that expires at the end of today; an in-app ping gets a link row but no link, no token and no Reply line in its text', async ({
     page,
   }) => {
     const ping = await sendSmsPing(page);
@@ -242,10 +247,10 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(inApp.body).toBe(`Status check ${jobDocName(s.today)}. How many loads done?`);
     expect(inApp.body).not.toContain(REPLY_LINK_TOKEN);
     expect(inApp.body).not.toContain('Reply:');
-    expect(replyLinksOf(inAppId!)).toBe(0);
+    expect(replyLinksOf(inAppId!), 'QC-947: every Status Ping gets a link row, so an answer on any channel closes it').toBe(1);
   });
 
-  test('RLINK-03 GET on a link three times returns the same body and changes no row; it shows the job, host and the accept/cant/question options', async () => {
+  test('RLINK-03 GET on a link three times returns the same body and changes no row; it shows the job, host and the Accept/Decline/Comment options', async () => {
     const link = sent.accept!;
     const counts = rowCounts(s.accept);
     const updated = replyLinkOf(link.messageId).updated;
@@ -271,12 +276,14 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(view.job).toHaveProperty('to');
     expect(view.job!.loads).toBeGreaterThan(0);
     expect(view.options.map((o) => o.key)).toEqual(['accept', 'cant', 'question']);
-    expect(view.options.map((o) => o.label)).toEqual(['Accept', 'Decline', 'Question']);
+    expect(view.options.map((o) => o.label)).toEqual(['Accept', 'Decline', 'Comment']);
+    expect(view.options.filter((o) => o.needsLocation).map((o) => o.key)).toEqual([]);
+    expect(view.language).toMatch(/^[a-z]{2}$/);
     expect(view.options.find((o) => o.key === 'question')!.needsComment).toBe(true);
     expect(view.options.filter((o) => o.needsComment).map((o) => o.key)).toEqual(['question']);
   });
 
-  test('RLINK-04 accept on a Pending assignment accepts it, writes history and a Link-channel reply shown with a "Link" tag; a second accept is refused, a comment still goes through', async ({
+  test('RLINK-04 accept on a Pending assignment accepts it, writes history and a Link-channel reply shown with a "Web" tag; a second accept is refused, a comment still goes through', async ({
     page,
   }) => {
     const link = sent.accept!;
@@ -284,8 +291,9 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
 
     const answer = await links.reply(link.code, { option: 'accept', comment: null });
     expect(answer.status, answer.text).toBe(200);
-    expect(answer.view!.reply).toMatchObject({ option: 'accept', label: 'Accept', comment: null });
+    expect(answer.view!.reply).toMatchObject({ option: 'accept', label: 'Accept', comment: null, channel: 'web' });
     expect(answer.view!.reply!.at).toMatch(/Z$/);
+    expect(answer.view!.reply!.atText).toMatch(/^\d{1,2}:\d{2} (AM|PM)$/);
     expect(answer.view!.state).toBe('open');
 
     expect(assignmentStatus(s.accept)).toBe(ASSIGNMENT_STATUS.Accepted);
@@ -306,12 +314,15 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     });
     expect(replyLinkOf(link.messageId)).toMatchObject({ answeredOption: 'accept', answerMessageId: replies[0] });
     expect(replyLinkOf(link.messageId).answeredAt).not.toBeNull();
+    expect(querySingleValue(`SELECT AnsweredChannel FROM app.MessageReplyLinks WHERE MessageID_FK = ${link.messageId}`), 'AnsweredChannel Link (web)').toBe(
+      String(MESSAGE_CHANNEL.Link),
+    );
 
     await new CommsPage(page).open(s.driver);
     const thread = new ReplyLinkThread(page);
-    await expect(thread.channelTag(replies[0])).toContainText('Link', { timeout: 15_000 });
+    await expect(thread.channelTag(replies[0])).toContainText('Web', { timeout: 15_000 });
     await expect(thread.channelIcon(replies[0])).toHaveText('link');
-    await expect(thread.channelTag(replies[0])).toHaveAttribute('aria-label', 'Channel: Link');
+    await expect(thread.channelTag(replies[0])).toHaveAttribute('aria-label', 'Channel: Web');
     await thread.channelTag(replies[0]).hover();
     await expect(thread.tooltip()).toHaveText('Answered on the reply-link page from the text message.');
     await test.info().attach('link-reply-in-thread', { body: await page.screenshot(), contentType: 'image/png' });
@@ -352,7 +363,7 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(messageRow(replies[0])).toMatchObject({ channel: MESSAGE_CHANNEL.Link, body: 'Decline', ai: AI.CantMakeIt, isActioned: 1 });
   });
 
-  test('RLINK-06 question needs a comment; with one it is stored as "Question: <comment>" and left for review', async ({ page }) => {
+  test('RLINK-06 question (labelled Comment) needs a comment; with one it is stored as "Comment: <comment>" and left for review', async ({ page }) => {
     const link = await sendNotify(page, s.today);
     sent.today = link;
     expect(assignmentStatus(s.today)).toBe(ASSIGNMENT_STATUS.Accepted);
@@ -369,26 +380,34 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     expect(replies).toHaveLength(1);
     expect(messageRow(replies[0])).toMatchObject({
       channel: MESSAGE_CHANNEL.Link,
-      body: `Question: ${MARKER} which pit gate?`,
+      body: `Comment: ${MARKER} which pit gate?`,
       ai: AI.Unknown,
       isActioned: 0,
     });
     expect(assignmentStatus(s.today), 'a question changes no status').toBe(ASSIGNMENT_STATUS.Accepted);
   });
 
-  test('RLINK-07 a Status Ping answered "late" is classified Late and writes a Late trip note, with no status change', async () => {
+  test('RLINK-07 a Status Ping offers Share my location and Comment; location without a position is refused, with one it stores a manual reply-link ping and no status change', async () => {
     const link = sent.ping!;
     const view = await links.get(link.code);
-    expect(view.view!.options.map((o) => o.key)).toEqual(['on-track', 'late', 'problem', 'question']);
-    expect(view.view!.options.filter((o) => o.needsComment).map((o) => o.key)).toEqual(['problem', 'question']);
-    const lateNotes = tripNotes(s.today, TRIP_NOTE_STATUS.Late);
+    expect(view.view!.options.map((o) => o.key)).toEqual(['location', 'question']);
+    expect(view.view!.options.map((o) => o.label)).toEqual(['Share my location', 'Comment']);
+    expect(view.view!.options.filter((o) => o.needsLocation).map((o) => o.key)).toEqual(['location']);
+    expect(view.view!.options.filter((o) => o.needsComment).map((o) => o.key)).toEqual(['question']);
+    const pings = tripGps(s.today).count;
 
-    const answer = await links.reply(link.code, { option: 'late' });
+    const bare = await links.reply(link.code, { option: 'location' });
+    expect(bare.status, bare.text).toBe(400);
+    expect(bare.text).toContain(LOCATION_REQUIRED);
+    expect(linkReplies(link.messageId)).toHaveLength(0);
+
+    const answer = await links.reply(link.code, { option: 'location', position: { ...POSITION, capturedAt: new Date().toISOString() } });
     expect(answer.status, answer.text).toBe(200);
+    expect(answer.view!.reply).toMatchObject({ option: 'location', label: 'Share my location', channel: 'web' });
     const replies = linkReplies(link.messageId);
     expect(replies).toHaveLength(1);
-    expect(messageRow(replies[0])).toMatchObject({ channel: MESSAGE_CHANNEL.Link, body: 'Running late', ai: AI.Late, assignment: s.today });
-    expect(tripNotes(s.today, TRIP_NOTE_STATUS.Late)).toBe(lateNotes + 1);
+    expect(messageRow(replies[0])).toMatchObject({ channel: MESSAGE_CHANNEL.Link, body: 'Share my location', ai: AI.Noted, assignment: s.today });
+    expect(tripGps(s.today)).toEqual({ count: pings + 1, manual: 1, device: 'reply-link' });
     expect(assignmentStatus(s.today)).toBe(ASSIGNMENT_STATUS.Accepted);
   });
 
@@ -426,7 +445,7 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     const expired = await links.get(link.code);
     expect(expired.status, expired.text).toBe(200);
     expect(expired.view!.state).toBe('expired');
-    const option = await links.reply(link.code, { option: 'on-track' });
+    const option = await links.reply(link.code, { option: 'location', position: { ...POSITION, capturedAt: new Date().toISOString() } });
     expect(option.status, option.text).toBe(400);
     expect(option.text).toContain('can no longer be answered');
 
@@ -457,16 +476,20 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     const replaced = await sendNotify(page, s.accept, tokened);
     expect(replaced.body).toContain(`${MARKER} open ${replyLinkUrl(replaced.code)} to answer`);
     expect(replaced.body).not.toContain(REPLY_LINK_TOKEN);
-    expect(replaced.body).not.toContain('Reply: https://');
+    expect(replaced.body).not.toContain(`Reply: ${replyLinkBaseUrl()}`);
     expect(replaced.code).not.toBe(appended.code);
     expect(replyLinkOf(replaced.messageId).codeHash).toBe(sha256Hex(replaced.code));
   });
 
-  test('RLINK-11 CORS lets https://drivers.quarryconnect.com call the reply API and not another origin', async () => {
+  test("RLINK-11 CORS lets the host's own address (HostPublicURL) call the reply API, and no longer https://drivers.quarryconnect.com or another origin", async () => {
     const code = randomCode();
-    const allowed = await links.preflight(code, REPLY_LINK_ORIGIN);
+    const origin = hostPublicOrigin();
+    const allowed = await links.preflight(code, origin);
     expect(allowed.status, JSON.stringify(allowed.headers)).toBeLessThan(300);
-    expect(allowed.headers['access-control-allow-origin']).toBe(REPLY_LINK_ORIGIN);
+    expect(allowed.headers['access-control-allow-origin']).toBe(origin);
+
+    const driversSite = await links.preflight(code, DRIVERS_SITE_ORIGIN);
+    expect(driversSite.headers['access-control-allow-origin']).toBeUndefined();
 
     const evil = await links.preflight(code, 'https://evil.example');
     expect(evil.headers['access-control-allow-origin']).toBeUndefined();
@@ -566,7 +589,7 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     const view = await links.get(link.code);
     expect(view.status, view.text).toBe(200);
     expect(view.view!.text).toBe('');
-    expect(view.view!.options.map((o) => o.key)).toEqual(['on-track', 'late', 'problem', 'question']);
+    expect(view.view!.options.map((o) => o.key)).toEqual(['location', 'question']);
   });
 });
 

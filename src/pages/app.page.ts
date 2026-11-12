@@ -21,7 +21,7 @@ export class AppSignInPage {
     if (await this.localEmail.isVisible()) {
       await this.localEmail.fill(credentials.email);
       await this.page.locator('#password').fill(credentials.password);
-      await this.page.getByRole('button', { name: 'Sign In' }).click();
+      await this.page.getByRole('button', { name: 'Sign In', exact: true }).click();
       return;
     }
 
