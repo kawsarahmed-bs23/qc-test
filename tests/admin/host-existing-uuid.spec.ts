@@ -8,10 +8,15 @@ import {
   QC912_HOST_NAME_PREFIX,
   QC912_REMOVE_SCRIPT,
   deactivatedHostUuid,
+  hostDatabaseHostUuid,
   hostEnvironmentSettingHash,
   masterHostCount,
+  masterHostEnvironmentRows,
   masterHostReady,
+  masterHostReadyAt,
+  masterHostWithApi,
   masterHostsWithUuid,
+  setMasterHostReadyAt,
 } from '@pages/host-existing-uuid.page';
 import { HostExistingUuidApi } from '@api/host-existing-uuid.api';
 import { canSeedLocalDb, canUseMasterDb, runMasterSeedScript } from '@utils/localDb';
@@ -95,11 +100,13 @@ test.describe('Add host with an existing host UUID (QC-912)', { tag: ['@regressi
   });
 
   test(
-    'HUID-04 a host created with a supplied UUID lands on its page, and its Environment reads the host while not ready without writing to it',
+    "HUID-04 a host created with a supplied UUID lands on its page, and when its API address is another host's API, Environment refuses to read it and copies nothing",
     { tag: '@create' },
     async ({ page, env, shell, hostFormPage, addHostUuidPage, hostEnvironmentPage, hostExistingUuidApi }) => {
       test.skip(!canUseMasterDb() || !canSeedLocalDb(), 'The HOST_MASTER and host databases are needed.');
       test.skip(!env.appApiUrl || !canUseAdminApi(), 'APP_API_URL and ADMIN_API_URL are needed.');
+      const apiHostUuid = hostDatabaseHostUuid();
+      test.skip(!apiHostUuid, "The host database has no Messaging:HostUuid, so its API cannot be told apart from another host's.");
       const uuid = randomUUID();
       const host = qc912Host('new', { apiBaseUrl: `${env.appApiUrl}/` });
       const hostDbBefore = hostEnvironmentSettingHash();
@@ -112,38 +119,71 @@ test.describe('Add host with an existing host UUID (QC-912)', { tag: ['@regressi
       await expect(hostFormPage.uuid).toHaveText(uuid);
       expect(masterHostsWithUuid(uuid), 'app.Hosts holds the supplied UUID').toBe(1);
       expect(masterHostReady(uuid)).toBe(false);
+      const mirrorBefore = masterHostEnvironmentRows(uuid);
+      const otherHost = `belongs to another host: its Messaging:HostUuid is ${apiHostUuid}, not ${uuid}.`;
 
       await hostEnvironmentPage.open(uuid);
+      await expect(hostEnvironmentPage.loadWarning).toContainText(otherHost);
       await expect(hostEnvironmentPage.notice).toContainText('This host is not marked ready yet, so changes are kept in HOST_MASTER');
-      await expect(hostEnvironmentPage.loadWarning).toHaveCount(0);
-      await expect(hostEnvironmentPage.rows().first()).toBeAttached();
 
       const view = await hostExistingUuidApi.environment(uuid);
       expect(view.status, view.text).toBe(200);
-      expect(view.body.error).toBeNull();
-      expect(view.body.canSave).toBe(true);
-      const blankRequired = environmentSettings(view.body)
-        .filter((s) => s.isHostSpecific && s.isRequired && !s.hasValue)
-        .map((s) => s.configurationKey);
-      expect(blankRequired, 'every required host-specific value was filled from the host').toEqual([]);
+      expect(view.body.error).toContain(otherHost);
+      expect(view.body.canSave, 'nothing can be saved while the API belongs to another host').toBe(false);
+      expect(view.body.driftCount).toBe(0);
 
-      const readiness = await hostExistingUuidApi.readiness(uuid);
-      expect(readiness.status, readiness.text).toBe(200);
-      expect(readiness.body).toMatchObject({ isReady: false, hasApiBaseUrl: true });
-      expect(readiness.body.missing, 'no host-specific setting is missing').toEqual([]);
+      const take = await hostExistingUuidApi.takeHostValues(uuid);
+      expect(take.status, take.text).toBe(400);
+      expect(take.text).toContain(otherHost);
 
-      if ((await hostEnvironmentPage.driftCard.count()) > 0) {
-        await hostEnvironmentPage.takeHostValues.click();
-        await hostEnvironmentPage.confirmDialog.accept();
-        await shell.expectStatus(/Took the host's value for \d+ settings? into HOST_MASTER\.|HOST_MASTER already matches the host\./);
-        await hostEnvironmentPage.open(uuid);
-        await expect(hostEnvironmentPage.driftCard).toHaveCount(0);
-      } else {
-        test.info().annotations.push({ type: 'note', description: 'No drift was shown for the new host, so Take the host values was not pressed.' });
-      }
-
+      expect(masterHostEnvironmentRows(uuid), "none of the other host's settings were copied into this host's mirror").toBe(mirrorBefore);
       expect(masterHostReady(uuid), 'opening Environment does not mark the host ready').toBe(false);
       expect(hostEnvironmentSettingHash(), 'nothing was written to the host database').toBe(hostDbBefore);
+    },
+  );
+
+  test(
+    'HUID-06 a host that is not ready reads its own API on Environment: host values fill in, nothing is missing, and nothing is sent to the host',
+    { tag: '@write' },
+    async ({ env, hostEnvironmentPage, hostExistingUuidApi }) => {
+      test.skip(!canUseMasterDb() || !canSeedLocalDb(), 'The HOST_MASTER and host databases are needed.');
+      test.skip(!env.appApiUrl || !canUseAdminApi(), 'APP_API_URL and ADMIN_API_URL are needed.');
+      const apiHostUuid = hostDatabaseHostUuid();
+      const uuid = apiHostUuid ? masterHostWithApi(apiHostUuid, `${env.appApiUrl}/`) : null;
+      test.skip(!uuid, "No active HOST_MASTER host has the host database's Messaging:HostUuid and APP_API_URL.");
+      const readyAt = masterHostReadyAt(uuid!);
+      const hostDbBefore = hostEnvironmentSettingHash();
+
+      setMasterHostReadyAt(uuid!, null);
+      try {
+        await hostEnvironmentPage.open(uuid!);
+        await expect(hostEnvironmentPage.notice).toContainText('This host is not marked ready yet, so changes are kept in HOST_MASTER');
+        await expect(hostEnvironmentPage.loadWarning).toHaveCount(0);
+        await expect(hostEnvironmentPage.rows().first()).toBeAttached();
+
+        const view = await hostExistingUuidApi.environment(uuid!);
+        expect(view.status, view.text).toBe(200);
+        expect(view.body.error).toBeNull();
+        expect(view.body.canSave).toBe(true);
+        const blankRequired = environmentSettings(view.body)
+          .filter((s) => s.isHostSpecific && s.isRequired && !s.hasValue)
+          .map((s) => s.configurationKey);
+        expect(blankRequired, 'every required host-specific value was filled from the host').toEqual([]);
+
+        const readiness = await hostExistingUuidApi.readiness(uuid!);
+        expect(readiness.status, readiness.text).toBe(200);
+        expect(readiness.body).toMatchObject({ isReady: false, hasApiBaseUrl: true });
+        expect(readiness.body.missing, 'no host-specific setting is missing').toEqual([]);
+
+        const take = await hostExistingUuidApi.takeHostValues(uuid!);
+        expect(take.status, take.text).toBe(200);
+
+        expect(masterHostReady(uuid!), 'reading Environment does not mark the host ready').toBe(false);
+        expect(hostEnvironmentSettingHash(), 'nothing was written to the host database').toBe(hostDbBefore);
+      } finally {
+        setMasterHostReadyAt(uuid!, readyAt);
+      }
+      expect(masterHostReadyAt(uuid!), 'ReadyAt is back as it was').toBe(readyAt);
     },
   );
 

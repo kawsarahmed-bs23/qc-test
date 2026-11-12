@@ -75,6 +75,38 @@ export function masterHostReady(uuid: string): boolean {
   return queryMasterDb(`SELECT CASE WHEN ReadyAt IS NULL THEN 0 ELSE 1 END FROM app.Hosts WHERE HostUUID = '${uuid.replace(/'/g, '')}'`) === '1';
 }
 
+/** The host UUID the host database says it is (Messaging:HostUuid), lower case, or null when it has none. */
+export function hostDatabaseHostUuid(): string | null {
+  return querySingleValue(
+    "SELECT LOWER(PropertyValue) FROM app.EnvironmentSetting WHERE GroupName = 'Messaging' AND SubGroupName IS NULL AND PropertyName = 'HostUuid'",
+  );
+}
+
+/** The active HOST_MASTER host with this UUID and this API address, or null (QC-912 review: Admin reads a host only from its own API). */
+export function masterHostWithApi(uuid: string, apiBaseUrl: string): string | null {
+  return queryMasterDb(
+    `SELECT LOWER(CONVERT(nvarchar(36), HostUUID)) FROM app.Hosts WHERE Active = 1 AND HostUUID = '${uuid.replace(/'/g, '')}' AND ApiBaseUrl = '${apiBaseUrl.replace(/'/g, "''")}'`,
+  );
+}
+
+export function masterHostEnvironmentRows(uuid: string): number {
+  return Number(
+    queryMasterDb(
+      `SELECT COUNT(*) FROM app.HostEnvironmentSettings e JOIN app.Hosts h ON h.HostID = e.HostID_FK WHERE h.HostUUID = '${uuid.replace(/'/g, '')}'`,
+    ),
+  );
+}
+
+/** ReadyAt as an ISO-like string (style 126), or null when the host is not ready. */
+export function masterHostReadyAt(uuid: string): string | null {
+  return queryMasterDb(`SELECT CONVERT(varchar(30), ReadyAt, 126) FROM app.Hosts WHERE HostUUID = '${uuid.replace(/'/g, '')}'`);
+}
+
+export function setMasterHostReadyAt(uuid: string, readyAt: string | null): void {
+  const value = readyAt === null ? 'NULL' : `CONVERT(datetime, '${readyAt.replace(/'/g, '')}', 126)`;
+  queryMasterDb(`SET NOCOUNT ON; UPDATE app.Hosts SET ReadyAt = ${value} WHERE HostUUID = '${uuid.replace(/'/g, '')}'; SELECT @@ROWCOUNT`);
+}
+
 /** The UUID of a deactivated HOST_MASTER host, or null when the database has none. */
 export function deactivatedHostUuid(): string | null {
   return queryMasterDb('SELECT TOP 1 LOWER(CONVERT(nvarchar(36), HostUUID)) FROM app.Hosts WHERE Active = 0 ORDER BY HostID');

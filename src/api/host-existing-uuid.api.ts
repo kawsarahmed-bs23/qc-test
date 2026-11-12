@@ -28,6 +28,10 @@ export class HostExistingUuidApi {
     return this.api.get<HostEnvironmentJson>(`/hosts/${hostUuid}/environment`);
   }
 
+  takeHostValues(hostUuid: string): Promise<AdminApiResult<{ message?: string; detail?: string }>> {
+    return this.api.post<{ message?: string; detail?: string }>(`/hosts/${hostUuid}/environment/take-host-values`, {});
+  }
+
   readiness(hostUuid: string): Promise<AdminApiResult<ReadinessJson>> {
     return this.api.get<ReadinessJson>(`/hosts/${hostUuid}/readiness`);
   }
