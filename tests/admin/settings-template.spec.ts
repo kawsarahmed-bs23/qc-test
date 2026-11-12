@@ -412,14 +412,15 @@ test.describe('A new host that is not ready yet (QC-745)', { tag: ['@write', '@r
     restoreTarget(target);
   });
 
-  test('TPL-11 a host that is not ready inherits every shared default, inherits no host-specific value but its organisation id, and is sent nothing', async ({
+  test('TPL-11 a not-ready host whose API cannot be read shows what HOST_MASTER holds: every shared default, no host-specific value but its organisation id, and is sent nothing (QC-912)', async ({
     request,
   }) => {
     const tpl = new TemplateApi(AdminApi.asAdmin(request));
     const template = templateSettings(await tpl.view());
     const view = await tpl.environment(withApi.uuid);
-    expect(view.error).toBeNull();
+    expect(view.error).toContain("The host's values could not be read, so only what HOST_MASTER holds is shown");
     expect(view.notice).toContain('not marked ready');
+    expect(view.canSave).toBe(true);
 
     const settings = environmentSettings(view);
     for (const key of template) {

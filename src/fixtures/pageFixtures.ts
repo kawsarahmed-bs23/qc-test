@@ -45,6 +45,8 @@ import {
   VendorUserDispatchContactPage,
 } from '@pages/dispatch-contact.page';
 import { DispatchContactApi } from '@api/dispatch-contact.api';
+import { AddHostUuidPage } from '@pages/host-existing-uuid.page';
+import { HostExistingUuidApi } from '@api/host-existing-uuid.api';
 
 export interface TargetHost {
   uuid: string;
@@ -124,6 +126,8 @@ type TestFixtures = {
   editVendorDispatchPage: EditVendorDispatchPage;
   editTruckDispatchPage: EditTruckDispatchPage;
   assignDialogDispatchPage: AssignDialogDispatchPage;
+  addHostUuidPage: AddHostUuidPage;
+  hostExistingUuidApi: HostExistingUuidApi;
 
   // API clients, built from `request`.
   hostUserInvitesApi: HostUserInvitesApi;
@@ -399,6 +403,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   dispatchContactApi: async ({ request }, use) => {
     await use(new DispatchContactApi(request));
+  },
+  addHostUuidPage: async ({ page }, use) => {
+    await use(new AddHostUuidPage(page));
+  },
+  hostExistingUuidApi: async ({ request }, use) => {
+    await use(new HostExistingUuidApi(request));
   },
 
   targetHost: [
