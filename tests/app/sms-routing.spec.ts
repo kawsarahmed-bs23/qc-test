@@ -22,7 +22,7 @@ import {
   runSeedScript,
 } from '@utils/localDb';
 import { MESSAGE_CHANNEL } from '@pages/comms-send-gate.page';
-import { SmsRoutingApi } from '@api/sms-routing.api';
+import { HostDriversMode, SmsRoutingApi, type DriversMode } from '@api/sms-routing.api';
 import { DispatchContactSession } from '@pages/dispatch-contact.page';
 import {
   COMMS_REFUSAL,
@@ -116,6 +116,7 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
   let plainOfferMessageId = 0;
   let session: DispatchContactSession;
   let driverToken = '';
+  let originalDriversMode: DriversMode | null = null;
 
   test.beforeAll(async ({ playwright, browser }) => {
     test.setTimeout(300_000);
@@ -131,6 +132,9 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
 
     const context = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
     try {
+      const mode = new HostDriversMode(context);
+      originalDriversMode = mode.current();
+      await mode.set('On');
       const api = await signedIn(new SmsRoutingApi(context));
       await expect
         .poll(async () => ((await api.assignVendor(seeded.vendor)) as { trucks?: unknown[] } | null)?.trucks?.length ?? 0, {
@@ -144,8 +148,16 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
     session = await DispatchContactSession.signIn(browser, env.appAdmin!);
   });
 
-  test.afterAll(async () => {
+  test.afterAll(async ({ playwright }) => {
     await session?.close();
+    if (originalDriversMode && originalDriversMode !== 'On') {
+      const context = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
+      try {
+        await new HostDriversMode(context).set(originalDriversMode);
+      } finally {
+        await context.dispose();
+      }
+    }
     for (let wait = 0; wait < 40 && !queuesDrained(); wait++) await new Promise((resolve) => setTimeout(resolve, 500));
     removeAll(linkedUuid);
   });
@@ -221,11 +233,14 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
               new RegExp(`No text for driver ${user}: their Text messages setting is not on\\.`, 'i'),
               'the Drivers API skips the text',
             );
-            expect(driversLog.since(mark)).not.toMatch(new RegExp(`Texting driver ${user}`, 'i'));
+            expect(driversLog.since(mark)).not.toMatch(new RegExp(`Text(ed)? (to )?driver ${user}`, 'i'));
           } else {
             await driversLog.expectLine(
               mark,
-              new RegExp(`Texting driver ${user} from host ${escapeRegex(hostUuid)}'s number ${escapeRegex(fromNumber)}\\.`, 'i'),
+              new RegExp(
+                `(Texted driver ${user} from host ${escapeRegex(hostUuid)}'s number ${escapeRegex(fromNumber)}|Text to driver ${user} from host ${escapeRegex(hostUuid)} was not sent: Twilio is not configured; the text was logged, not sent)\\.`,
+                'i',
+              ),
               `the Drivers API texts the offer (NotifyBySms ${setting})`,
             );
             expect(driversLog.since(mark)).toContain(`Twilio is not configured; SMS from ${fromNumber} to ***${PHONE.linked.slice(-4)} logged instead of sent`);
@@ -402,7 +417,11 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
     await expect.poll(() => driversMessagesOn(uuid).length, { message: 'the copied offer reaches DRIVERS with its message', ...QUEUE }).toBe(1);
     expect(driversMessagesOn(uuid)[0].messageUuid).toBe(linkedMessage.uuid);
     if (driversLog.available) {
-      await driversLog.expectLine(mark, new RegExp(`Texting driver ${escapeRegex(linkedUuid)} from host`, 'i'), 'the Drivers API texts the copied offer');
+      await driversLog.expectLine(
+        mark,
+        new RegExp(`Text(ed)? (to )?driver ${escapeRegex(linkedUuid)} from host`, 'i'),
+        'the Drivers API texts the copied offer',
+      );
     }
 
     const [plainMessage, ...morePlain] = offerMessagesOf(plainCopy);
@@ -428,5 +447,53 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
     }
     expect(driversTextSettingOf(linkedUuid).notifyBySms).toBe(1);
     await expect.poll(() => hostUserSettingOf(ids.linked).notifyBySms, { message: 'turning it back on reaches the host', ...QUEUE }).toBe(1);
+  });
+
+  test('SMSRT-09 a host with Drivers:Mode Off works as before: the Send SMS tick decides, the driver who accepted an invite is texted by the host like any driver, and nothing goes to DRIVERS', async ({
+    playwright,
+  }) => {
+    const context = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
+    const mode = new HostDriversMode(context);
+    await mode.set('Off');
+    try {
+      const api = await signedIn(new SmsRoutingApi(context));
+      const preview = await api.driverSmsPreview(seeded.order, seeded.vendor, ids.linked);
+      expect(preview.status, preview.text).toBe(200);
+      expect(preview.data?.delivery, 'with the Drivers API off the host texts the driver itself').toBe('sms');
+
+      const unticked = await api.saveDriverAssignment({
+        orderId: seeded.order,
+        assignmentDate: hostDay(5),
+        vendorId: seeded.vendor,
+        truckId: seeded.truckL,
+        driverUserId: ids.linked,
+        notes: `${SMS_ROUTING_MARKER} drivers off unticked`,
+        sendSms: false,
+      });
+      expect(unticked.status, unticked.text).toBe(201);
+      expect(offerMessagesOf(Number(unticked.data)), 'no tick, no text').toHaveLength(0);
+
+      const ticked = await api.saveDriverAssignment({
+        orderId: seeded.order,
+        assignmentDate: hostDay(6),
+        vendorId: seeded.vendor,
+        truckId: seeded.truckL,
+        driverUserId: ids.linked,
+        notes: `${SMS_ROUTING_MARKER} drivers off ticked`,
+        sendSms: true,
+      });
+      expect(ticked.status, ticked.text).toBe(201);
+      const assignment = Number(ticked.data);
+      const [message, ...more] = offerMessagesOf(assignment);
+      expect(more).toHaveLength(0);
+      expect(message).toMatchObject({ channel: MESSAGE_CHANNEL.Sms, replyLinks: 1 });
+      expect(historyOf(assignment)).toContain(OFFER_HISTORY.sms);
+
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(driversAssignmentExists(assignmentUuidOf(assignment)), 'no JobOffered reaches DRIVERS').toBe(false);
+    } finally {
+      await mode.set('On');
+      await context.dispose();
+    }
   });
 });
