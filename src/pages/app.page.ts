@@ -197,6 +197,10 @@ export class CommsPage {
   footerTags(messageId: number): Locator {
     return this.messageFooter(messageId).locator('.msg-tag');
   }
+
+  channelBadge(messageId: number): Locator {
+    return this.message(messageId).locator('.msg-channel');
+  }
 }
 
 export interface ElementBox {

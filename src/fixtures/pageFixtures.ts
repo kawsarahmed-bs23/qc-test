@@ -46,6 +46,8 @@ import {
   VendorUserDispatchContactPage,
 } from '@pages/dispatch-contact.page';
 import { DispatchContactApi } from '@api/dispatch-contact.api';
+import { SmsRoutingApi } from '@api/sms-routing.api';
+import { CopyScheduleDialogPage } from '@pages/sms-routing.page';
 import { HostTruckFormPage, HostTrucksListPage, TruckNumberSchedulePage } from '@pages/truck-number.page';
 import { AdminUserTextMessagesPage, VendorUserTextMessagesPage } from '@pages/notify-by-sms.page';
 import { NotifyBySmsApi } from '@api/notify-by-sms.api';
@@ -156,6 +158,8 @@ type TestFixtures = {
   hostUserEditApi: HostUserEditApi;
   hostBillRatesApi: HostBillRatesApi;
   dispatchContactApi: DispatchContactApi;
+  smsRoutingApi: SmsRoutingApi;
+  copyScheduleDialogPage: CopyScheduleDialogPage;
   notifyBySmsApi: NotifyBySmsApi;
   addHostUuidPage: AddHostUuidPage;
   hostExistingUuidApi: HostExistingUuidApi;
@@ -426,6 +430,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   dispatchContactApi: async ({ request }, use) => {
     await use(new DispatchContactApi(request));
+  },
+  smsRoutingApi: async ({ request }, use) => {
+    await use(new SmsRoutingApi(request));
+  },
+  copyScheduleDialogPage: async ({ page }, use) => {
+    await use(new CopyScheduleDialogPage(page));
   },
   adminUserTextMessagesPage: async ({ page }, use) => {
     await use(new AdminUserTextMessagesPage(page));

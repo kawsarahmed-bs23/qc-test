@@ -2,6 +2,8 @@ import { devices, expect, test, type Browser, type BrowserContext, type Locator,
 import { env, type Credentials } from '@config/env.config';
 import { DispatchContactApi } from '@api/dispatch-contact.api';
 import { BasePage } from './base.page';
+import { CommsPage } from './app.page';
+import { CopyScheduleDialogPage } from './sms-routing.page';
 
 export const DISPATCH_CONTACT_LABEL = 'Is dispatch contact';
 export const MISSING_DISPATCH_CONTACT = 'Set a Dispatch Contact for this Vendor. Vendor-only Job offers go to that user.';
@@ -344,26 +346,46 @@ export class EditTruckDispatchPage extends OrganisationUsersPage {
   protected readonly nameLabel = 'Truck Name';
 }
 
-/** Dispatch > Schedule (`#/dispatch/schedule`) and its Assign Truck dialog: the QC-910 Vendor-only dispatch-contact notes. */
+/**
+ * Dispatch > Schedule (`#/dispatch/schedule`) and its Assign Truck dialog: the QC-910 Vendor-only dispatch-contact notes and,
+ * since QC-930, the Offer Message box with its delivery line (the "Send Message Via SMS" tick is retired).
+ */
 export class AssignDialogDispatchPage extends BasePage {
   protected readonly path = '/#/dispatch/schedule';
   readonly assignTruck: Locator;
   readonly dialog: Locator;
+  readonly order: Locator;
   readonly vendor: Locator;
   readonly truck: Locator;
   readonly missingContact: Locator;
   readonly contactNote: Locator;
-  readonly sendSms: Locator;
+  readonly retiredSmsTick: Locator;
+  readonly offerMessage: Locator;
+  readonly offerDelivery: Locator;
+  readonly save: Locator;
+  readonly cancel: Locator;
 
   constructor(page: Page) {
     super(page);
     this.assignTruck = page.getByRole('button', { name: 'Assign Truck' });
     this.dialog = page.locator('app-assign-truck-dialog');
+    this.order = this.dialog.getByRole('combobox', { name: 'Order' });
     this.vendor = this.dialog.getByRole('combobox', { name: 'Vendor' });
     this.truck = this.dialog.getByRole('combobox', { name: 'Truck (optional)' });
     this.missingContact = this.dialog.getByTestId('assign-missing-dispatch-contact');
     this.contactNote = this.dialog.getByTestId('assign-dispatch-contact');
-    this.sendSms = this.dialog.getByRole('checkbox', { name: 'Send Message Via SMS' });
+    this.retiredSmsTick = this.dialog.getByRole('checkbox', { name: 'Send Message Via SMS' });
+    this.offerMessage = this.dialog.getByRole('textbox', { name: 'Offer Message' });
+    this.offerDelivery = this.dialog.getByTestId('assign-offer-delivery');
+    this.save = page.getByRole('button', { name: 'Save assignment' });
+    this.cancel = page.locator('mat-dialog-actions').getByRole('button', { name: 'Cancel' });
+  }
+
+  async openSchedule(date?: string): Promise<void> {
+    const board = this.page.waitForResponse((r) => r.request().method() === 'GET' && /\/api\/dispatch\/board$/.test(new URL(r.url()).pathname));
+    await this.page.goto(date ? `${this.path}?date=${date}` : this.path);
+    await this.page.reload();
+    expect((await board).status(), 'GET dispatch/board').toBe(200);
   }
 
   async openDialog(): Promise<void> {
@@ -375,10 +397,45 @@ export class AssignDialogDispatchPage extends BasePage {
     await expect(this.dialog).toBeVisible();
   }
 
+  async chooseOrder(orderId: number): Promise<void> {
+    await this.order.click();
+    await this.page.getByRole('option', { name: new RegExp(`Order #${orderId} `) }).click();
+  }
+
   async chooseVendor(name: string): Promise<void> {
     await this.vendor.click();
     await this.page.getByRole('option', { name, exact: true }).click();
     await expect(this.truck).toContainText('Vendor-level (no truck)');
+  }
+
+  async chooseTruck(label: string | RegExp): Promise<void> {
+    await this.truck.click();
+    await this.page.getByRole('option', { name: label }).click();
+  }
+
+  /** Opens the edit dialog of the first bar on the board row whose label contains `rowText`. */
+  async openBar(rowText: string): Promise<void> {
+    await this.page
+      .locator('.board-row.resource-row')
+      .filter({ has: this.page.locator('.driver-name', { hasText: rowText }) })
+      .locator('.trip-block')
+      .first()
+      .click();
+    await expect(this.dialog).toBeVisible();
+  }
+
+  async expectOfferBox(delivery: string | RegExp): Promise<void> {
+    await expect(this.offerMessage).toBeVisible();
+    await expect(this.offerDelivery).toHaveText(delivery);
+    await expect(this.retiredSmsTick).toHaveCount(0);
+    await expect(this.save).toHaveText('Save');
+  }
+
+  async expectNoOfferBox(): Promise<void> {
+    await expect(this.offerMessage).toHaveCount(0);
+    await expect(this.offerDelivery).toHaveCount(0);
+    await expect(this.retiredSmsTick).toHaveCount(0);
+    await expect(this.save).toHaveText('Save');
   }
 
   async expectMissingContact(): Promise<void> {
@@ -386,13 +443,15 @@ export class AssignDialogDispatchPage extends BasePage {
       /^\s*Set a Dispatch Contact for this Vendor\. Vendor-only Job offers go to that user:\s*tick "Is dispatch contact" on one of the Vendor's users\.\s*$/,
     );
     await expect(this.contactNote).toHaveCount(0);
-    await expect(this.sendSms).toHaveCount(0);
+    await expect(this.offerMessage).toHaveCount(0);
+    await expect(this.retiredSmsTick).toHaveCount(0);
   }
 
   async expectContact(name: string): Promise<void> {
     await expect(this.contactNote).toHaveText(`The offer goes to the Vendor's dispatch contact, ${name}.`);
     await expect(this.missingContact).toHaveCount(0);
-    await expect(this.sendSms).toBeVisible();
+    await expect(this.offerMessage).toBeVisible();
+    await expect(this.retiredSmsTick).toHaveCount(0);
   }
 }
 
@@ -408,6 +467,8 @@ export class DispatchContactSession {
   readonly editVendor: EditVendorDispatchPage;
   readonly editTruck: EditTruckDispatchPage;
   readonly schedule: AssignDialogDispatchPage;
+  readonly comms: CommsPage;
+  readonly copySchedule: CopyScheduleDialogPage;
 
   private constructor(
     readonly context: BrowserContext,
@@ -420,6 +481,8 @@ export class DispatchContactSession {
     this.editVendor = new EditVendorDispatchPage(page);
     this.editTruck = new EditTruckDispatchPage(page);
     this.schedule = new AssignDialogDispatchPage(page);
+    this.comms = new CommsPage(page);
+    this.copySchedule = new CopyScheduleDialogPage(page);
   }
 
   static async signIn(browser: Browser, credentials: Credentials): Promise<DispatchContactSession> {

@@ -39,6 +39,7 @@ export interface TestEnvironment {
   inviteWrongPrivateJwk: string | null;
   smtpSinkPort: number;
   hostApiLog: string | null;
+  driversApiLog: string | null;
   allowWrites: boolean;
   allowCreateHosts: boolean;
   allowRestart: boolean;
@@ -208,6 +209,7 @@ export function loadEnvironment(): TestEnvironment {
     inviteWrongPrivateJwk: process.env.INVITE_TEST_WRONG_PRIVATE_JWK?.trim() || null,
     smtpSinkPort: Number(process.env.SMTP_SINK_PORT?.trim() || '2525'),
     hostApiLog: name === 'local' && optional('HOST_API_LOG') ? path.resolve(ROOT_DIR, optional('HOST_API_LOG')!) : null,
+    driversApiLog: name === 'local' && optional('DRIVERS_API_LOG') ? path.resolve(ROOT_DIR, optional('DRIVERS_API_LOG')!) : null,
     allowWrites: !isProd && flag('ALLOW_WRITES'),
     allowCreateHosts: !isProd && flag('ALLOW_CREATE_HOSTS'),
     allowRestart: !isProd && flag('ALLOW_RESTART'),

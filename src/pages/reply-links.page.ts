@@ -7,7 +7,7 @@ export const REPLY_LINK_TOKEN = '{ReplyLink}';
 
 export const REPLY_LINK_CODE_LENGTH = 10;
 
-export const REPLY_LINK_PATH = '/m/';
+export const REPLY_LINK_PATH = '/#/m/';
 
 export const DRIVERS_SITE_ORIGIN = 'https://drivers.quarryconnect.com';
 
@@ -379,7 +379,7 @@ export class AssignmentNotifyApi {
     const current = await this.call('GET', `/api/assignment/${orderAssignmentId}`);
     expect(current.status, `GET assignment ${orderAssignmentId} ${current.text}`).toBe(200);
     const model = JSON.parse(current.text).data;
-    const body = { ...model, status: null, histories: [], sendSms: true, smsBody };
+    const body = { ...model, status: null, histories: [], smsBody };
     return this.call('PUT', `/api/assignment/${orderAssignmentId}`, body);
   }
 

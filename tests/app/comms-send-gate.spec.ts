@@ -7,7 +7,7 @@ import { API_CHANNEL, CommsApi, CommsComposer, CommsHostAdmin, MESSAGE_CHANNEL, 
 import { expectedSmsBody, storedMessageContaining } from '@pages/sms-framing.page';
 
 const MARKER = 'E2E-QC804';
-const NO_ASSIGNMENT_IN_APP = "That driver has no assignments, so an in-app message can't reach the app. Send it by SMS instead.";
+const NO_ASSIGNMENT_IN_APP = "That driver has no assignments, so a message can't reach the Driver App.";
 const INACTIVE_SEND = 'That driver is inactive, so no message can be sent.';
 const INACTIVE_REASON = 'This driver is inactive, so no message can be sent.';
 const UNREACHABLE_REASON = 'This driver has no phone number and no assignments, so no message can reach them.';
@@ -142,9 +142,14 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
 
     await expect(composer.input()).toBeEnabled();
     await expect(composer.blockedHint()).toHaveCount(0);
-    await expect(composer.hint()).toContainText('Sent by SMS to');
+    const linked = querySingleValue(`SELECT CASE WHEN UserUUID IS NULL THEN 0 ELSE 1 END FROM auth.Users WHERE Id = '${drivers.planned}'`) === '1';
+    await expect(composer.hint()).toContainText(linked ? 'Posted to the app' : 'Sent by SMS to');
     await expect(composer.toggleButton('In-app')).toBeEnabled();
-    await expect(composer.toggleButton('SMS')).toBeEnabled();
+    if (linked) {
+      await expect(composer.toggleButton('SMS'), 'QC-930: a Driver App driver is texted by their own setting, never from the composer').toBeDisabled();
+    } else {
+      await expect(composer.toggleButton('SMS')).toBeEnabled();
+    }
     await expect(composer.pingMain()).toBeEnabled();
     await expect(composer.pingCaret()).toBeEnabled();
     await snapshot(page, 'tomorrow-driver-composer');
@@ -305,8 +310,8 @@ test.describe('Comms send gate removed: any active driver can be messaged (QC-80
     const before = count();
 
     await composer.pingCaret().click();
-    await expect(composer.pingMenuItem('Post in-app only')).toBeEnabled();
-    await composer.pingMenuItem('Post in-app only').click();
+    await expect(composer.pingMenuItem('Post to the app')).toBeEnabled();
+    await composer.pingMenuItem('Post to the app').click();
 
     await expect.poll(count, { timeout: 15_000 }).toBe(before + 1);
     const pingId = Number(

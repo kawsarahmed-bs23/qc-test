@@ -32,13 +32,13 @@ export interface SmsPreviewAnswer {
   phoneNumber: string | null;
   canSend: boolean;
   cannotSendReason: string | null;
+  delivery?: 'app' | 'sms' | 'none' | null;
 }
 
 export interface VendorOnlyAssignment {
   orderId: number;
   assignmentDate: string;
   vendorId: number;
-  sendSms?: boolean;
   notes: string;
 }
 
@@ -146,7 +146,6 @@ function vendorOnlyBody(assignment: VendorOnlyAssignment): Record<string, unknow
     loadsAssigned: 2,
     fulfillmentType: 'fixed',
     notes: assignment.notes,
-    sendSms: assignment.sendSms ?? false,
     smsBody: null,
     histories: [],
   };

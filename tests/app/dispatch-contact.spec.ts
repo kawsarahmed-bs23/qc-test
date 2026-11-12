@@ -1,7 +1,7 @@
 import { test, expect } from '@fixtures/pageFixtures';
 import { env } from '@config/env.config';
 import { canSeedLocalDb, canUseIdentityDb, queryIdentityDb, querySingleValue, runIdentitySeedScript, runSeedScript } from '@utils/localDb';
-import { DispatchContactSession, MISSING_CONTACT_PHONE, MISSING_DISPATCH_CONTACT, contactChangedMessage } from '@pages/dispatch-contact.page';
+import { DispatchContactSession, MISSING_DISPATCH_CONTACT, contactChangedMessage } from '@pages/dispatch-contact.page';
 import { ReplyLinkApi, randomCode, sha256Hex } from '@pages/reply-links.page';
 import { ASSIGNMENT_STATUS } from '@pages/message-link.page';
 
@@ -43,13 +43,6 @@ function truckLabel(truckId: number): string {
         ? `SELECT COALESCE(NULLIF(ts.TruckNumber, N''), o.OrganisationName) FROM auth.Organisations o LEFT JOIN app.TruckSettings ts ON ts.OrganisationID_FK = o.OrganisationID WHERE o.OrganisationID = ${truckId}`
         : `SELECT COALESCE(NULLIF(OrganisationShortName, N''), OrganisationName) FROM auth.Organisations WHERE OrganisationID = ${truckId}`,
     ) ?? ''
-  );
-}
-
-function smsGoesToLogOnly(): boolean {
-  return (
-    value(`SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`) ===
-    '0'
   );
 }
 
@@ -407,7 +400,7 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     await dialog.expectMissingContact();
     await dialog.chooseVendor('E2E QC-910 Vendor A');
     await dialog.expectContact(FULL.alpha);
-    await expect(dialog.sendSms).toBeEnabled();
+    await expect(dialog.offerMessage).toBeEditable();
   });
 
   test('DCON-13 before a Vendor is chosen the Assign Truck dialog shows no dispatch-contact note', async () => {
@@ -440,25 +433,33 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     expect((preview.data?.phoneNumber ?? '').replace(/\D/g, '')).toContain(ALPHA_PHONE);
   });
 
-  test('DCON-15 Send SMS on a Vendor-only offer is refused when the contact has no phone, and the preview says so', async () => {
+  test('DCON-15 a Vendor-only offer to a dispatch contact with no phone saves (QC-930 retired the Send SMS phone rule); that contact is on the Driver App, so the preview and the history send it there', async () => {
     setContact(vendorA, 'bravo');
     try {
-      const before = assignmentsOf(vendorA);
-      const refused = await admin.api.saveVendorOnlyAssignment({ orderId, assignmentDate: hostToday(), vendorId: vendorA, sendSms: true, notes: MARKER });
-      expect(refused.status, refused.text).toBe(400);
-      expect(refused.text).toContain(MISSING_CONTACT_PHONE);
-      expect(assignmentsOf(vendorA), 'no assignment row is added').toBe(before);
-      expect((await admin.api.smsPreview(orderId, vendorA)).data).toMatchObject({ canSend: false, cannotSendReason: MISSING_CONTACT_PHONE });
+      expect((await admin.api.smsPreview(orderId, vendorA)).data).toMatchObject({ canSend: true, cannotSendReason: null, delivery: 'app' });
+      const saved = await admin.api.saveVendorOnlyAssignment({ orderId, assignmentDate: hostToday(), vendorId: vendorA, notes: MARKER });
+      expect(saved.status, saved.text).toBe(201);
+      const assignment = Number(saved.data);
+      expect(
+        value(
+          `SELECT STRING_AGG(CONCAT(Channel, '|', ISNULL(TwilioMessageSid, '~')), ',') FROM app.Messages WHERE OrderAssignmentID_FK = ${assignment} AND DriverUserID_FK = N'${id.bravo}' AND Direction = 20`,
+        ),
+        'one offer message for the contact, stored as App with no Twilio id',
+      ).toBe('20|~');
+      expect(
+        value(
+          `SELECT COUNT(*) FROM app.OrderAssignmentHistory WHERE OrderAssignmentID_FK = ${assignment} AND OrderAssignmentHistoryData = N'Job offer message sent to the dispatch contact''s Driver App; their own setting decides texts.'`,
+        ),
+      ).toBe('1');
     } finally {
       setContact(vendorA, 'alpha');
     }
     expect(contactOf(vendorA)).toBe(id.alpha);
   });
 
-  test('DCON-16 Send SMS on a Vendor-only offer texts the dispatch contact (message row for the contact)', async () => {
+  test('DCON-16 every new Vendor-only offer sends the offer message to the dispatch contact (message row for the contact) with no Send SMS tick', async () => {
     setContact(vendorA, 'alpha');
-    test.skip(!smsGoesToLogOnly(), 'Twilio FromPhoneNumber is set in app.EnvironmentSetting, so an SMS would really go out.');
-    const saved = await admin.api.saveVendorOnlyAssignment({ orderId, assignmentDate: hostToday(), vendorId: vendorA, sendSms: true, notes: MARKER });
+    const saved = await admin.api.saveVendorOnlyAssignment({ orderId, assignmentDate: hostToday(), vendorId: vendorA, notes: MARKER });
     expect(saved.status, saved.text).toBe(201);
     const assignment = Number(saved.data);
     expect(value(`SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${assignment} AND DriverUserID_FK = N'${id.alpha}' AND Direction = 20`)).toBe(
@@ -503,13 +504,15 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     await expect(page.dispatchContact).toBeChecked();
   });
 
-  test('DCON-19 an existing Vendor-only assignment whose Vendor lost its contact can still be saved unchanged, but not with Send SMS, and not moved to another Vendor without a contact', async () => {
+  test('DCON-19 an existing Vendor-only assignment whose Vendor lost its contact can still be saved unchanged, sending no new offer, and not moved to another Vendor without a contact', async () => {
     setContact(vendorA, 'alpha');
     setContact(vendorB, null);
     const saved = await admin.api.saveVendorOnlyAssignment({ orderId, assignmentDate: hostToday(), vendorId: vendorA, notes: MARKER });
     expect(saved.status, saved.text).toBe(201);
     const assignment = Number(saved.data);
     const vendorOf = () => Number(value(`SELECT VendorID_FK FROM app.OrderAssignments WHERE OrderAssignmentID = ${assignment}`));
+    const messagesOf = () => value(`SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${assignment}`);
+    const offered = messagesOf();
 
     setContact(vendorA, null);
     const unchanged = await admin.api.updateVendorOnlyAssignment(assignment, {
@@ -521,21 +524,11 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     expect(unchanged.status, unchanged.text).toBe(200);
     expect(value(`SELECT Notes FROM app.OrderAssignments WHERE OrderAssignmentID = ${assignment}`)).toBe(`${MARKER} edited`);
 
-    const withSms = await admin.api.updateVendorOnlyAssignment(assignment, {
-      orderId,
-      assignmentDate: hostToday(),
-      vendorId: vendorA,
-      sendSms: true,
-      notes: MARKER,
-    });
-    expect(withSms.status, withSms.text).toBe(400);
-    expect(withSms.text).toContain(MISSING_DISPATCH_CONTACT);
-
     const moved = await admin.api.updateVendorOnlyAssignment(assignment, { orderId, assignmentDate: hostToday(), vendorId: vendorB, notes: MARKER });
     expect(moved.status, moved.text).toBe(400);
     expect(moved.text).toContain(MISSING_DISPATCH_CONTACT);
     expect(vendorOf(), 'the refused saves change nothing').toBe(vendorA);
-    expect(value(`SELECT COUNT(*) FROM app.Messages WHERE OrderAssignmentID_FK = ${assignment}`), 'no SMS row').toBe('0');
+    expect(messagesOf(), 'the unchanged save and the refused move send no new offer').toBe(offered);
   });
 
   test("DCON-20 replacing the contact through Admin > Users' user-edit re-stamps the Vendor's open Vendor-only offer to the new contact and offers it again; unticking them clears the stamp", async () => {

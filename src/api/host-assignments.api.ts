@@ -85,7 +85,6 @@ function body(assignment: AssignmentSave): Record<string, unknown> {
     loadsAssigned: assignment.loadsAssigned,
     fulfillmentType: 'fixed',
     notes: assignment.notes,
-    sendSms: false,
     smsBody: null,
     histories: [],
   };

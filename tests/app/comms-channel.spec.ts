@@ -129,18 +129,26 @@ test.describe('Comms channel choice and unmatched inbound SMS (QC-630)', { tag: 
 
   test('CHAN-01 each message in the thread shows the channel it went out on', async () => {
     await expect(ui.channelBadge(seeded.smsId)).toContainText('SMS');
-    await expect(ui.channelBadge(seeded.inAppId)).toContainText('In-app');
+    await expect(ui.channelBadge(seeded.inAppId)).toContainText('App');
+    await expect(ui.channelBadge(seeded.inAppId)).not.toContainText('In-app');
 
     await ui.channelBadge(seeded.inAppId).hover();
-    await expect(comms.tooltip()).toHaveText('In-app only. No SMS was sent.');
+    await expect(comms.tooltip()).toHaveText("Sent to the Driver App. The Driver's own Text messages setting decides whether it was also texted.");
   });
 
-  test('CHAN-02 the composer offers SMS and In-app and starts on the manual-message default (SMS)', async () => {
+  test('CHAN-02 the composer offers SMS and In-app and starts on the manual-message default (SMS), or on In-app for a Driver App driver (QC-930)', async () => {
+    const linked = querySingleValue(`SELECT CASE WHEN UserUUID IS NULL THEN 0 ELSE 1 END FROM auth.Users WHERE Id = '${seeded.driverUserId}'`) === '1';
     await expect(ui.toggle('SMS')).toBeVisible();
     await expect(ui.toggle('In-app')).toBeVisible();
-    await expect(ui.toggle('SMS')).toHaveClass(/mat-button-toggle-checked/);
-    await expect(ui.hint()).toContainText('Sent by SMS to');
-    await expect(ui.hint()).toContainText('also shown in the app');
+    if (linked) {
+      await expect(ui.toggle('SMS').locator('button'), 'a Driver App driver is texted by their own setting, never from the composer').toBeDisabled();
+      await expect(ui.toggle('In-app')).toHaveClass(/mat-button-toggle-checked/);
+      await expect(ui.hint()).toContainText('Posted to the app');
+    } else {
+      await expect(ui.toggle('SMS')).toHaveClass(/mat-button-toggle-checked/);
+      await expect(ui.hint()).toContainText('Sent by SMS to');
+      await expect(ui.hint()).toContainText('from the Host number');
+    }
   });
 
   test('CHAN-03 choosing In-app for a driver who has not used the app warns, and keeps In-app selected', async ({ page }) => {
@@ -149,13 +157,14 @@ test.describe('Comms channel choice and unmatched inbound SMS (QC-630)', { tag: 
     );
     test.skip(inactive !== '1', 'The seeded driver has logged in within 14 days, so no warning is due.');
 
-    await expect(ui.warning()).toHaveCount(0);
+    const linked = querySingleValue(`SELECT CASE WHEN UserUUID IS NULL THEN 0 ELSE 1 END FROM auth.Users WHERE Id = '${seeded.driverUserId}'`) === '1';
+    if (!linked) await expect(ui.warning(), 'an unlinked driver starts on SMS, with no warning').toHaveCount(0);
     await ui.toggle('In-app').click();
 
     await expect(ui.warning()).toBeVisible();
     await expect(ui.warning()).toContainText('They will not see an in-app message.');
     await expect(ui.toggle('In-app')).toHaveClass(/mat-button-toggle-checked/);
-    await expect(ui.hint()).toContainText('no SMS is sent');
+    await expect(ui.hint()).toContainText('own setting decides texts');
     await snapshot(page, 'in-app-warning');
   });
 
@@ -172,15 +181,15 @@ test.describe('Comms channel choice and unmatched inbound SMS (QC-630)', { tag: 
     expect(channelOf(id)).toBe(CHANNEL_IN_APP);
     expect(querySingleValue(`SELECT TwilioMessageSid FROM app.Messages WHERE MessageID = ${id}`)).toBeNull();
     expect(querySingleValue(`SELECT PhoneNumber FROM app.Messages WHERE MessageID = ${id}`)).not.toBeNull();
-    await expect(ui.channelBadge(id)).toContainText('In-app');
+    await expect(ui.channelBadge(id)).toContainText('App');
   });
 
-  test('CHAN-05 Status Ping defaults to In-app and offers the other channel from its menu', async ({ page }) => {
-    await expect(ui.pingMain()).toContainText('In-app');
+  test('CHAN-05 Status Ping defaults to App (in-app) and offers the other channel from its menu', async ({ page }) => {
+    await expect(ui.pingMain()).toContainText('App');
 
     await ui.pingCaret().click();
     await expect(ui.menuItem('Send by SMS')).toBeVisible();
-    await expect(ui.menuItem('Post in-app only')).toBeVisible();
+    await expect(ui.menuItem('Post to the app')).toBeVisible();
     await page.locator('.mat-mdc-menu-panel').evaluate((panel) => Promise.all(panel.getAnimations({ subtree: true }).map((animation) => animation.finished)));
     await snapshot(page, 'status-ping-menu');
     await page.keyboard.press('Escape');
@@ -201,7 +210,7 @@ test.describe('Comms channel choice and unmatched inbound SMS (QC-630)', { tag: 
     );
     expect(channelOf(pingId)).toBe(CHANNEL_IN_APP);
     expect(querySingleValue(`SELECT TwilioMessageSid FROM app.Messages WHERE MessageID = ${pingId}`)).toBeNull();
-    await expect(ui.channelBadge(pingId)).toContainText('In-app');
+    await expect(ui.channelBadge(pingId)).toContainText('App');
   });
 
   test('CHAN-06 an inbound SMS no driver matches waits in the queue and can be attached to a driver', async ({ page }) => {
