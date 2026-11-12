@@ -45,6 +45,7 @@ import {
   VendorUserDispatchContactPage,
 } from '@pages/dispatch-contact.page';
 import { DispatchContactApi } from '@api/dispatch-contact.api';
+import { HostTruckFormPage, HostTrucksListPage, TruckNumberSchedulePage } from '@pages/truck-number.page';
 import { AdminUserTextMessagesPage, VendorUserTextMessagesPage } from '@pages/notify-by-sms.page';
 import { NotifyBySmsApi } from '@api/notify-by-sms.api';
 import { AddHostUuidPage } from '@pages/host-existing-uuid.page';
@@ -128,6 +129,9 @@ type TestFixtures = {
   editVendorDispatchPage: EditVendorDispatchPage;
   editTruckDispatchPage: EditTruckDispatchPage;
   assignDialogDispatchPage: AssignDialogDispatchPage;
+  hostTruckFormPage: HostTruckFormPage;
+  hostTrucksListPage: HostTrucksListPage;
+  truckNumberSchedulePage: TruckNumberSchedulePage;
   adminUserTextMessagesPage: AdminUserTextMessagesPage;
   vendorUserTextMessagesPage: VendorUserTextMessagesPage;
   notifyBySmsApi: NotifyBySmsApi;
@@ -405,6 +409,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   assignDialogDispatchPage: async ({ page }, use) => {
     await use(new AssignDialogDispatchPage(page));
+  },
+  hostTruckFormPage: async ({ page }, use) => {
+    await use(new HostTruckFormPage(page));
+  },
+  hostTrucksListPage: async ({ page }, use) => {
+    await use(new HostTrucksListPage(page));
+  },
+  truckNumberSchedulePage: async ({ page }, use) => {
+    await use(new TruckNumberSchedulePage(page));
   },
   dispatchContactApi: async ({ request }, use) => {
     await use(new DispatchContactApi(request));

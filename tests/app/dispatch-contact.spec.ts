@@ -31,6 +31,21 @@ function orgId(name: string): number {
   return Number(value(`SELECT OrganisationID FROM auth.Organisations WHERE OrganisationName = N'${name}'`) ?? '0');
 }
 
+/**
+ * What the move warning names a Truck by: its app.TruckSettings.TruckNumber, else its name (QC-922). On a database without the
+ * QC-922 column it is the short name, else the name, as before.
+ */
+function truckLabel(truckId: number): string {
+  const hasNumber = value(`SELECT CASE WHEN COL_LENGTH(N'app.TruckSettings', N'TruckNumber') IS NULL THEN 0 ELSE 1 END`) === '1';
+  return (
+    value(
+      hasNumber
+        ? `SELECT COALESCE(NULLIF(ts.TruckNumber, N''), o.OrganisationName) FROM auth.Organisations o LEFT JOIN app.TruckSettings ts ON ts.OrganisationID_FK = o.OrganisationID WHERE o.OrganisationID = ${truckId}`
+        : `SELECT COALESCE(NULLIF(OrganisationShortName, N''), OrganisationName) FROM auth.Organisations WHERE OrganisationID = ${truckId}`,
+    ) ?? ''
+  );
+}
+
 function smsGoesToLogOnly(): boolean {
   return (
     value(`SELECT COUNT(*) FROM app.EnvironmentSetting WHERE GroupName = 'Twilio' AND PropertyName = 'FromPhoneNumber' AND ISNULL(PropertyValue, '') <> ''`) ===
@@ -305,7 +320,7 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     await page.fillAddressIfEmpty('E2E QC-910 Yard', '910 Congress Ave');
     const saves = page.countSaves();
     await page.save.click();
-    await page.moveDialog.expectMove('Vendor', `${FULL.mover} is on Truck E2E910TB. Adding them to this Vendor removes them from that Truck.`);
+    await page.moveDialog.expectMove('Vendor', `${FULL.mover} is on Truck ${truckLabel(truckB)}. Adding them to this Vendor removes them from that Truck.`);
     await page.moveDialog.cancel.click();
     await expect(page.moveDialog.root).toHaveCount(0);
     await expect(page.save).toBeEnabled();
@@ -321,7 +336,7 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     await page.addAssociatedUser(FULL.mover);
     await page.fillAddressIfEmpty('E2E QC-910 Yard', '910 Congress Ave');
     await page.save.click();
-    await page.moveDialog.expectMove('Vendor', `${FULL.mover} is on Truck E2E910TB. Adding them to this Vendor removes them from that Truck.`);
+    await page.moveDialog.expectMove('Vendor', `${FULL.mover} is on Truck ${truckLabel(truckB)}. Adding them to this Vendor removes them from that Truck.`);
     const saved = page.saveRequest();
     await page.moveDialog.moveAndSave.click();
     const response = await saved;
@@ -619,7 +634,7 @@ test.describe('Vendor Dispatch Contact and the move warning between a Vendor and
     await page.fillAddressIfEmpty('E2E QC-910 Yard', '910 Congress Ave');
     const saves = page.countSaves();
     await page.doubleSubmit();
-    await page.moveDialog.expectMove('Vendor', `${FULL.driver} is on Truck E2E910TA. Adding them to this Vendor removes them from that Truck.`);
+    await page.moveDialog.expectMove('Vendor', `${FULL.driver} is on Truck ${truckLabel(truckA)}. Adding them to this Vendor removes them from that Truck.`);
     await expect(page.moveDialog.root, 'exactly one move dialog').toHaveCount(1);
     await expect(page.saveButton).toBeDisabled();
     await page.moveDialog.cancel.click();
