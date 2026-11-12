@@ -33,6 +33,7 @@ export interface TestEnvironment {
   identityLogDir: string | null;
   landingUrl: string | null;
   expoStubLog: string | null;
+  pushShowContent: boolean;
   identityHostCacheSeconds: number;
   inviteHostPrivateJwk: string | null;
   inviteWrongPrivateJwk: string | null;
@@ -201,6 +202,7 @@ export function loadEnvironment(): TestEnvironment {
     driversSql: name === 'local' && sqlServer && driversSqlDatabase ? { server: sqlServer, database: driversSqlDatabase } : null,
     landingUrl: process.env.LANDING_URL?.trim() || null,
     expoStubLog: name === 'local' ? process.env.EXPO_STUB_LOG?.trim() || null : null,
+    pushShowContent: name === 'local' && flag('PUSH_SHOW_CONTENT'),
     identityHostCacheSeconds: Number(process.env.IDENTITY_HOST_CACHE_SECONDS?.trim() || '330'),
     inviteHostPrivateJwk: process.env.INVITE_TEST_HOST_PRIVATE_JWK?.trim() || null,
     inviteWrongPrivateJwk: process.env.INVITE_TEST_WRONG_PRIVATE_JWK?.trim() || null,

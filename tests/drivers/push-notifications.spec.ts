@@ -15,6 +15,7 @@ const QUEUE = { timeout: 25_000, intervals: [500, 1_000, 2_000] };
 const QUIET_MS = 5_000;
 const MONTHS_EN = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTHS_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sept', 'oct', 'nov', 'dic'];
+const OPEN_APP = { en: 'Open the app to see it.', es: 'Abre la app para verlo.' };
 
 type PushMessage = Record<string, unknown> & { data?: Record<string, unknown> };
 
@@ -269,7 +270,7 @@ test.describe(
       expect(pushes[enToken]).toEqual({
         to: enToken,
         title: `New Job from ${hostName}`,
-        body: `${job} on ${pushDate(offer.date, 'en')}: ${placeName(origin)} to ${placeName(destination)}`,
+        body: env.pushShowContent ? `${job} on ${pushDate(offer.date, 'en')}: ${placeName(origin)} to ${placeName(destination)}` : OPEN_APP.en,
         sound: 'default',
         data,
         _contentAvailable: true,
@@ -278,7 +279,7 @@ test.describe(
       expect(pushes[esToken]).toEqual({
         to: esToken,
         title: `Nuevo trabajo de ${hostName}`,
-        body: `${job} el ${pushDate(offer.date, 'es')}: ${placeName(origin)} a ${placeName(destination)}`,
+        body: env.pushShowContent ? `${job} el ${pushDate(offer.date, 'es')}: ${placeName(origin)} a ${placeName(destination)}` : OPEN_APP.es,
         sound: 'default',
         data,
         _contentAvailable: true,
@@ -314,7 +315,7 @@ test.describe(
       expect(pushes[enToken]).toEqual({
         to: enToken,
         title: `Message from ${hostName}`,
-        body,
+        body: env.pushShowContent ? body : OPEN_APP.en,
         sound: 'default',
         data,
         _contentAvailable: true,
@@ -323,7 +324,7 @@ test.describe(
       expect(pushes[esToken]).toEqual({
         to: esToken,
         title: `Mensaje de ${hostName}`,
-        body,
+        body: env.pushShowContent ? body : OPEN_APP.es,
         sound: 'default',
         data,
         _contentAvailable: true,

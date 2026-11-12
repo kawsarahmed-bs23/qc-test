@@ -474,7 +474,7 @@ test.describe('Drivers API local-first sync: delta reads, batched writes, idempo
     expect(message).toMatchObject({
       to: token,
       title: expect.stringMatching(/^Message from /),
-      body: pushBody,
+      body: env.pushShowContent ? pushBody : 'Open the app to see it.',
       sound: 'default',
       data: { type: 'message', hostUuid: hostUuid.toLowerCase() },
       _contentAvailable: true,
