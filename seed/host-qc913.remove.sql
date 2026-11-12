@@ -43,6 +43,8 @@ IF OBJECT_ID(N'app.DriverMirrorChanges', N'U') IS NOT NULL
     DELETE app.DriverMirrorChanges WHERE UserID_FK IN (SELECT Id FROM @Users);
 IF OBJECT_ID(N'app.DriverCommandReceipts', N'U') IS NOT NULL
     DELETE app.DriverCommandReceipts WHERE UserID_FK IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'app.UserSettings', N'U') IS NOT NULL
+    DELETE app.UserSettings WHERE UserID_FK IN (SELECT Id FROM @Users);
 
 DELETE auth.AuditChanges WHERE KeyId IN (SELECT Id FROM @Users);
 DELETE app.IdentitySessions WHERE UserID_FK IN (SELECT Id FROM @Users);

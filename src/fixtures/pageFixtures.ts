@@ -45,6 +45,8 @@ import {
   VendorUserDispatchContactPage,
 } from '@pages/dispatch-contact.page';
 import { DispatchContactApi } from '@api/dispatch-contact.api';
+import { AdminUserTextMessagesPage, VendorUserTextMessagesPage } from '@pages/notify-by-sms.page';
+import { NotifyBySmsApi } from '@api/notify-by-sms.api';
 import { AddHostUuidPage } from '@pages/host-existing-uuid.page';
 import { HostExistingUuidApi } from '@api/host-existing-uuid.api';
 
@@ -126,6 +128,9 @@ type TestFixtures = {
   editVendorDispatchPage: EditVendorDispatchPage;
   editTruckDispatchPage: EditTruckDispatchPage;
   assignDialogDispatchPage: AssignDialogDispatchPage;
+  adminUserTextMessagesPage: AdminUserTextMessagesPage;
+  vendorUserTextMessagesPage: VendorUserTextMessagesPage;
+  notifyBySmsApi: NotifyBySmsApi;
   addHostUuidPage: AddHostUuidPage;
   hostExistingUuidApi: HostExistingUuidApi;
 
@@ -403,6 +408,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   dispatchContactApi: async ({ request }, use) => {
     await use(new DispatchContactApi(request));
+  },
+  adminUserTextMessagesPage: async ({ page }, use) => {
+    await use(new AdminUserTextMessagesPage(page));
+  },
+  vendorUserTextMessagesPage: async ({ page }, use) => {
+    await use(new VendorUserTextMessagesPage(page));
+  },
+  notifyBySmsApi: async ({ request }, use) => {
+    await use(new NotifyBySmsApi(request));
   },
   addHostUuidPage: async ({ page }, use) => {
     await use(new AddHostUuidPage(page));

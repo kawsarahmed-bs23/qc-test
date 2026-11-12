@@ -116,15 +116,15 @@ export class DispatchContactApi {
     return this.put(`/api/assignment/${orderAssignmentId}`, { ...vendorOnlyBody(assignment), orderAssignmentId });
   }
 
-  private async get<T>(path: string): Promise<HostAnswer<T>> {
+  protected async get<T>(path: string): Promise<HostAnswer<T>> {
     return read(await this.request.get(`${hostApiUrl()}${path}`, { headers: this.headers(), ignoreHTTPSErrors: env.ignoreHttpsErrors }));
   }
 
-  private async put<T>(path: string, data: unknown): Promise<HostAnswer<T>> {
+  protected async put<T>(path: string, data: unknown): Promise<HostAnswer<T>> {
     return read(await this.request.put(`${hostApiUrl()}${path}`, { headers: this.headers(), data, ignoreHTTPSErrors: env.ignoreHttpsErrors }));
   }
 
-  private async post<T>(path: string, data: unknown): Promise<HostAnswer<T>> {
+  protected async post<T>(path: string, data: unknown): Promise<HostAnswer<T>> {
     return read(await this.request.post(`${hostApiUrl()}${path}`, { headers: this.headers(), data, ignoreHTTPSErrors: env.ignoreHttpsErrors }));
   }
 
