@@ -1,9 +1,9 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { ConfirmDialog, openAdmin, waitForIdle } from '@pages/admin-shell.page';
 
-export type HostField = 'Name' | 'HostKey' | 'ClientId' | 'DatabaseName' | 'HostOrganisationId' | 'UiUrl' | 'ApiBaseUrl';
+export type HostField = 'Name' | 'HostKey' | 'ClientId' | 'DatabaseName' | 'HostOrganisationId' | 'UiUrl' | 'ApiBaseUrl' | 'MessageQueue';
 
-export type HostErrorKey = 'name' | 'hostKey' | 'clientId' | 'databaseName' | 'hostOrganisationId' | 'uiUrl' | 'apiBaseUrl';
+export type HostErrorKey = 'name' | 'hostKey' | 'clientId' | 'databaseName' | 'hostOrganisationId' | 'uiUrl' | 'apiBaseUrl' | 'messageQueue';
 
 export interface NewHost {
   name: string;
@@ -13,6 +13,7 @@ export interface NewHost {
   organisationId: string;
   uiUrl: string;
   apiBaseUrl?: string;
+  messageQueue?: string;
 }
 
 export async function chooseOption(page: Page, select: Locator, option: string | RegExp): Promise<void> {
@@ -71,6 +72,9 @@ export class HostFormPage {
   readonly uuid: Locator;
   readonly hostKey: Locator;
   readonly clientId: Locator;
+  readonly messageQueue: Locator;
+  readonly messageQueueLabel: Locator;
+  readonly messageQueueHint: Locator;
   readonly dangerZone: Locator;
   readonly deactivate: Locator;
   readonly confirmDialog: ConfirmDialog;
@@ -86,6 +90,9 @@ export class HostFormPage {
     this.uuid = page.locator('#host-uuid');
     this.hostKey = page.locator('#host-key');
     this.clientId = page.locator('#host-client-id');
+    this.messageQueue = page.locator('#Input_MessageQueue');
+    this.messageQueueLabel = page.locator('.qc-field').filter({ has: this.messageQueue }).locator('mat-label');
+    this.messageQueueHint = page.locator('.qc-field').filter({ has: this.messageQueue }).locator('.qc-hint');
     this.dangerZone = page.locator('#host-danger-zone');
     this.deactivate = page.locator('#host-deactivate');
     this.confirmDialog = new ConfirmDialog(page);
@@ -126,6 +133,7 @@ export class HostFormPage {
     await this.field('HostOrganisationId').fill(host.organisationId);
     await this.field('UiUrl').fill(host.uiUrl);
     await this.field('ApiBaseUrl').fill(host.apiBaseUrl ?? '');
+    await this.messageQueue.fill(host.messageQueue ?? '');
   }
 }
 

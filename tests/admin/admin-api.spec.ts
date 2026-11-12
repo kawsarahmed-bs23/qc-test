@@ -21,6 +21,7 @@ const HOST_KEYS = [
   'hasApiBaseUrl',
   'isReady',
   'readyAt',
+  'messageQueue',
 ];
 const USER_KEYS = ['userId', 'email', 'displayName', 'isActive', 'lastLogin', 'isPlatformAdmin'];
 const READ_PATHS = ['/me', '/dashboard', '/hosts', '/activity', '/users', '/users/filters'];
