@@ -402,7 +402,7 @@ test.describe('Drivers API local-first sync: delta reads, batched writes, idempo
     settled = await settle(delta.cursor);
   });
 
-  test('SYNC-06 a registered device gets one data-only sync push for a dispatcher message, a Gone token is turned off, and a removed device gets none (AC7)', async ({
+  test('SYNC-06 a registered device gets one visible message push for a dispatcher message (QC-918), a Gone token is turned off, and a removed device gets none (AC7)', async ({
     request,
   }) => {
     test.setTimeout(120_000);
@@ -445,7 +445,7 @@ test.describe('Drivers API local-first sync: delta reads, batched writes, idempo
     await dispatch(request, 'chat', pushBody);
     await mirroredMessage(pushBody);
     await expect
-      .poll(() => stub!.pushesTo(mark, token).length, { message: 'the Drivers API posts a sync push to Expo', timeout: 15_000, ...POLL })
+      .poll(() => stub!.pushesTo(mark, token).length, { message: 'the Drivers API posts a message push to Expo', timeout: 15_000, ...POLL })
       .toBeGreaterThan(0);
     await new Promise((resolve) => setTimeout(resolve, PUSH_SETTLE_MS));
     const handedOver = hostValue(
@@ -471,9 +471,16 @@ test.describe('Drivers API local-first sync: delta reads, batched writes, idempo
     );
     expect(pushes, 'exactly one push request for the device').toHaveLength(1);
     const message = pushes[0].messages.find((m) => m.to === token)!;
-    expect(message).toEqual({ to: token, data: { type: 'sync' }, _contentAvailable: true, priority: 'high' });
-    expect(message, 'no visible notification').not.toHaveProperty('title');
-    expect(message).not.toHaveProperty('body');
+    expect(message).toMatchObject({
+      to: token,
+      title: expect.stringMatching(/^Message from /),
+      body: pushBody,
+      sound: 'default',
+      data: { type: 'message', hostUuid: hostUuid.toLowerCase() },
+      _contentAvailable: true,
+      priority: 'high',
+    });
+    expect(String((message.data as Record<string, unknown>).messageUuid), 'the message push names the message').toMatch(/^[0-9a-f-]{36}$/);
 
     await expect
       .poll(() => driversValue(`SELECT CAST(Active AS int) FROM app.DeviceTokens WHERE Token = ${sqlText(goneToken)}`), {

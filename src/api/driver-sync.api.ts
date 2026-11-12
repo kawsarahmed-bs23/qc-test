@@ -62,6 +62,8 @@ export interface DeviceRegistration {
   token?: string;
   platform?: string;
   deviceId?: string;
+  language?: string;
+  appVersion?: string;
 }
 
 export interface TicketFile {
@@ -215,6 +217,11 @@ export class ExpoStubLog {
 
   pushesTo(mark: number, token: string): ExpoStubRequest[] {
     return this.since(mark).filter((entry) => entry.messages.some((m) => m.to === token));
+  }
+
+  /** QC-918: every message the stub received for one token since the mark, in order. */
+  messagesTo(mark: number, token: string): Record<string, unknown>[] {
+    return this.since(mark).flatMap((entry) => entry.messages.filter((m) => m.to === token));
   }
 }
 
