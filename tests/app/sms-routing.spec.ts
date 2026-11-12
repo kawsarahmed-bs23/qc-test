@@ -215,20 +215,20 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
 
         if (driversLog.available) {
           const user = escapeRegex(linkedUuid);
-          if (setting === 0) {
+          if (setting !== 1) {
             await driversLog.expectLine(
               mark,
-              new RegExp(`No text for driver ${user}: their Text messages setting is off\\.`, 'i'),
+              new RegExp(`No text for driver ${user}: their Text messages setting is not on\\.`, 'i'),
               'the Drivers API skips the text',
             );
-            expect(driversLog.since(mark)).not.toMatch(new RegExp(`Texted driver ${user}`, 'i'));
+            expect(driversLog.since(mark)).not.toMatch(new RegExp(`Texting driver ${user}`, 'i'));
           } else {
             await driversLog.expectLine(
               mark,
-              new RegExp(`Texted driver ${user} from host ${escapeRegex(hostUuid)}'s number ${escapeRegex(fromNumber)}\\.`, 'i'),
+              new RegExp(`Texting driver ${user} from host ${escapeRegex(hostUuid)}'s number ${escapeRegex(fromNumber)}\\.`, 'i'),
               `the Drivers API texts the offer (NotifyBySms ${setting})`,
             );
-            expect(driversLog.since(mark)).toContain(`Twilio is not configured; SMS from ${fromNumber} to ${PHONE.linked} logged instead of sent`);
+            expect(driversLog.since(mark)).toContain(`Twilio is not configured; SMS from ${fromNumber} to ***${PHONE.linked.slice(-4)} logged instead of sent`);
           }
           expect(driversMessagesOn(uuid), 'no separate MessageSent duplicate arrives').toHaveLength(1);
         }
@@ -402,7 +402,7 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
     await expect.poll(() => driversMessagesOn(uuid).length, { message: 'the copied offer reaches DRIVERS with its message', ...QUEUE }).toBe(1);
     expect(driversMessagesOn(uuid)[0].messageUuid).toBe(linkedMessage.uuid);
     if (driversLog.available) {
-      await driversLog.expectLine(mark, new RegExp(`Texted driver ${escapeRegex(linkedUuid)} from host`, 'i'), 'the Drivers API texts the copied offer');
+      await driversLog.expectLine(mark, new RegExp(`Texting driver ${escapeRegex(linkedUuid)} from host`, 'i'), 'the Drivers API texts the copied offer');
     }
 
     const [plainMessage, ...morePlain] = offerMessagesOf(plainCopy);
