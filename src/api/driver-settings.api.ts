@@ -58,6 +58,15 @@ export class DriverSettingsApi {
     return this.read(this.request.get(`${baseUrl()}/driver-assignment/details/${orderAssignmentUuid}`, { headers: headers(accessToken) }));
   }
 
+  myAssignments(accessToken: string, from: string, to: string = from): Promise<DriversResult<{ data: AsHauledAssignment[] }>> {
+    return this.read(
+      this.request.post(`${baseUrl()}/driver-assignment/my-assignments`, {
+        headers: headers(accessToken),
+        data: { searchFromAssignmentDate: from, searchToAssignmentDate: to },
+      }),
+    );
+  }
+
   syncAssignments(accessToken: string): Promise<DriversResult<{ assignments: AsHauledAssignment[] }>> {
     return this.read(this.request.get(`${baseUrl()}/sync`, { headers: headers(accessToken) }));
   }
