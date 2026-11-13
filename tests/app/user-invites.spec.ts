@@ -16,8 +16,10 @@
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import type { Browser } from '@playwright/test';
 import { test, expect } from '@fixtures/pageFixtures';
 import { AUTH_DIR, env } from '@config/env.config';
+import { HostDriversMode } from '@api/sms-routing.api';
 import { canSeedLocalDb, canUseDriversDb, canUseIdentityDb } from '@utils/localDb';
 import { INVITE_AUDIENCE, INVITE_TYPE, newInviteKeyPair, signInviteLink } from '@utils/inviteLinks';
 import { MailSink } from '@pages/host-password-link.page';
@@ -55,6 +57,7 @@ import type { ThrowawayUser } from '@utils/throwawayUsers';
 const ADMIN_STATE = path.join(AUTH_DIR, env.name, 'qc913-app-admin.json');
 const NEW_USER = { email: qc913Email('created'), firstName: 'Nina', lastName: 'Invited' };
 const DRIVER = { email: qc913Email('driver'), firstName: 'Dan', lastName: 'Driver' };
+const DRIVER_MODE_OFF = { email: qc913Email('driver-off'), firstName: 'Olga', lastName: 'Driver' };
 
 function newPassword(): string {
   return `Qc913!${crypto.randomBytes(6).toString('hex')}Aa1`;
@@ -447,10 +450,10 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     await adminUserFormPage.signIn.expectStatus('invited');
   });
 
-  test('UINV-09 a Vendor creates a Driver on its truck in My Users (no password fields), invites it, the driver accepts, and DRIVERS links the driver to the host', async ({
-    browser,
-  }) => {
-    test.skip(!canUseDriversDb() || !env.driversApiUrl, 'Needs DRIVERS_API_URL and the DRIVERS local database.');
+  async function driverAcceptsThroughVendorPortal(
+    browser: Browser,
+    person: { email: string; firstName: string; lastName: string },
+  ): Promise<{ sub: string; userId: string; mail: InviteEmail }> {
     const vendor = qc913Vendor();
     const truck = Qc913Data.vendorTruck(1);
     const portal = await VendorPortalSession.signIn(browser, vendor);
@@ -462,7 +465,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
 
       await portal.form.open();
       await portal.form.expectNoPasswordFields();
-      await portal.form.fillPerson(DRIVER.email, DRIVER.firstName, DRIVER.lastName);
+      await portal.form.fillPerson(person.email, person.firstName, person.lastName);
       await portal.form.chooseTruck(truck.name);
       userId = await portal.form.saveNew();
       await portal.form.expectToast(USER_CREATED_MESSAGE);
@@ -471,26 +474,46 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
       const since = MailSink.mark();
       expectInviteSent(await portal.form.signIn.sendInvite());
       await portal.form.signIn.expectStatus('invited');
-      mail = await inviteEmailTo(DRIVER.email, since);
+      mail = await inviteEmailTo(person.email, since);
       expect(mail.link.payload.user_type).toBe('driver');
 
       await portal.list.open('vendor');
-      await portal.list.expectBadge(DRIVER.email, 'invited');
+      await portal.list.expectBadge(person.email, 'invited');
     } finally {
       await portal.close();
     }
 
     const invitee = await InviteeBrowser.open(browser);
     try {
-      const outcome = await invitee.acceptAsNew(mail!.acceptUrl, { ...DRIVER, password: newPassword() });
+      const outcome = await invitee.acceptAsNew(mail!.acceptUrl, { ...person, password: newPassword() });
       expect(outcome.status).toBe('recorded');
       await invitee.invite.expectSetupComplete(true);
     } finally {
       await invitee.close();
     }
 
-    const sub = Qc913Data.identityUserUuid(DRIVER.email)!;
-    expect(Qc913Data.hostUser(DRIVER.email)).toMatchObject({ id: userId!, userUuid: sub, emailConfirmed: true });
+    const sub = Qc913Data.identityUserUuid(person.email)!;
+    expect(Qc913Data.hostUser(person.email)).toMatchObject({ id: userId!, userUuid: sub, emailConfirmed: true });
+    return { sub, userId: userId!, mail: mail! };
+  }
+
+  test('UINV-09 a Vendor creates a Driver on its truck in My Users (no password fields), invites it, the driver accepts, and DRIVERS links the driver to the host', async ({
+    browser,
+    playwright,
+  }) => {
+    test.skip(!canUseDriversDb() || !env.driversApiUrl, 'Needs DRIVERS_API_URL and the DRIVERS local database.');
+    const context = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
+    const mode = new HostDriversMode(context);
+    const original = mode.current();
+    await mode.set('On');
+    let accepted: { sub: string; userId: string; mail: InviteEmail };
+    try {
+      accepted = await driverAcceptsThroughVendorPortal(browser, DRIVER);
+    } finally {
+      if (original && original !== 'On') await mode.set(original);
+      await context.dispose();
+    }
+    const { sub, mail } = accepted;
     const hostUuid = Qc913Data.hostUuid();
     await expect
       .poll(() => Qc913Data.activeDriverLinks(hostUuid, sub), {
@@ -508,6 +531,33 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
         .toBe(true);
     } else {
       test.info().annotations.push({ type: 'skipped check', description: 'HOST_API_LOG is not set, so LinkEstablished in the host log was not checked.' });
+    }
+  });
+
+  test('UINV-16 with Drivers:Mode Off a Driver who accepts an invite is linked on the host only: no DriverInviteAccepted is sent and DRIVERS gets no link', async ({
+    browser,
+    playwright,
+  }) => {
+    test.skip(!canUseDriversDb() || !env.driversApiUrl, 'Needs DRIVERS_API_URL and the DRIVERS local database.');
+    const context = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
+    const mode = new HostDriversMode(context);
+    const original = mode.current();
+    await mode.set('Off');
+    try {
+      const { sub, mail } = await driverAcceptsThroughVendorPortal(browser, DRIVER_MODE_OFF);
+      const hostUuid = Qc913Data.hostUuid();
+      await new Promise((resolve) => setTimeout(resolve, 10_000));
+      expect(Qc913Data.activeDriverLinks(hostUuid, sub), 'DRIVERS has no link for a host with Drivers:Mode Off').toBe(0);
+      if (env.hostApiLog) {
+        expect(Qc913Data.hostLogContains(`DriverInviteAccepted for invite ${mail.link.payload.jti} queued`), 'no DriverInviteAccepted is queued').toBe(false);
+      } else {
+        test
+          .info()
+          .annotations.push({ type: 'skipped check', description: 'HOST_API_LOG is not set, so the host log was not checked for DriverInviteAccepted.' });
+      }
+    } finally {
+      await mode.set(original ?? 'Off');
+      await context.dispose();
     }
   });
 
