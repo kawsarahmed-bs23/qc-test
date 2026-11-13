@@ -18,6 +18,7 @@ import { AppHeader, LogoCropper, LogoSettingsPage, TicketUploadScreen } from '@p
 import { MessageLinkPanel } from '@pages/message-link.page';
 import { ReplyLinkThread } from '@pages/reply-links.page';
 import { ReplyPage } from '@pages/reply-page.page';
+import { AssignAvailabilityPage, AvailabilityComms, AvailabilityReplyPage } from '@pages/availability.page';
 import { AppSignInErrorView, AppTermsPage, HostAppHeader } from '@pages/sign-in-redirect.page';
 import { AdminUserEditPage, SignUserAgreementPage, UserEulaStatus, VendorUserEditPage } from '@pages/user-eula.page';
 import { AdminUserFormPage, UserInviteSection, UserListSignInColumn, VendorSidebar, VendorUserFormPage } from '@pages/user-invites.page';
@@ -109,6 +110,9 @@ type TestFixtures = {
   messageLinkPanel: MessageLinkPanel;
   replyLinkThread: ReplyLinkThread;
   replyPage: ReplyPage;
+  availabilityComms: AvailabilityComms;
+  availabilityReplyPage: AvailabilityReplyPage;
+  assignAvailabilityPage: AssignAvailabilityPage;
   hostAppHeader: HostAppHeader;
   appSignInErrorView: AppSignInErrorView;
   appTermsPage: AppTermsPage;
@@ -294,6 +298,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   replyPage: async ({ page }, use) => {
     await use(new ReplyPage(page));
+  },
+  availabilityComms: async ({ page }, use) => {
+    await use(new AvailabilityComms(page));
+  },
+  availabilityReplyPage: async ({ page }, use) => {
+    await use(new AvailabilityReplyPage(page));
+  },
+  assignAvailabilityPage: async ({ page }, use) => {
+    await use(new AssignAvailabilityPage(page));
   },
   hostAppHeader: async ({ page }, use) => {
     await use(new HostAppHeader(page));
