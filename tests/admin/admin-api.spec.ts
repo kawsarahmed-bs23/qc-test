@@ -21,6 +21,7 @@ const HOST_KEYS = [
   'hasApiBaseUrl',
   'isReady',
   'readyAt',
+  'signInMode',
   'messageQueue',
 ];
 const USER_KEYS = ['userId', 'email', 'displayName', 'isActive', 'lastLogin', 'isPlatformAdmin'];
@@ -179,7 +180,8 @@ test.describe('Admin API (QC-742)', { tag: ['@regression'] }, () => {
     const invalid = await api.post('/hosts', {});
     expect(invalid.status).toBe(400);
     expect(invalid.body).toMatchObject({ status: 400, title: 'The request could not be completed.', detail: 'Check the highlighted fields.' });
-    expect(Object.keys(invalid.body.errors)).toEqual(expect.arrayContaining(['name', 'hostKey', 'clientId', 'databaseName', 'uiUrl', 'hostOrganisationId']));
+    expect(Object.keys(invalid.body.errors)).toEqual(expect.arrayContaining(['name', 'hostKey', 'databaseName', 'uiUrl', 'hostOrganisationId']));
+    expect(Object.keys(invalid.body.errors), 'the sign-in client id is optional').not.toContain('clientId');
     for (const key of Object.keys(invalid.body.errors)) {
       expect(key, 'field keys are camelCase').toMatch(/^[a-z][A-Za-z0-9]*$/);
     }

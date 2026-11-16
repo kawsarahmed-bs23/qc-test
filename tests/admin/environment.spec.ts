@@ -165,15 +165,27 @@ test.describe('Environment settings (QC-742)', { tag: ['@regression'] }, () => {
     expect(restarts).toEqual([]);
   });
 
-  test('ENV-07 Save is off until something changes, counts the changes, and Reset throws them away without calling the API', async ({ page, targetHost }) => {
+  test('ENV-07 Save is off until something changes (or reads Send to host while the host has drifted settings), counts the changes, and Reset throws them away without calling the API', async ({
+    page,
+    targetHost,
+  }) => {
     const environment = new HostEnvironmentPage(page);
     await environment.open(targetHost.uuid);
     const original = await environment.input(SAFE_SETTING).inputValue();
     const puts: string[] = [];
     page.on('request', writes('/environment', 'PUT', puts));
 
-    await expect(environment.save).toHaveText(/^\s*Save\s*$/);
-    await expect(environment.save).toBeDisabled();
+    const drifted = (await environment.driftItems.count()) > 0;
+    const idle = async () => {
+      if (drifted) {
+        await expect(environment.save).toHaveText(/^\s*Send to host\s*$/);
+        await expect(environment.save).toBeEnabled();
+      } else {
+        await expect(environment.save).toHaveText(/^\s*Save\s*$/);
+        await expect(environment.save).toBeDisabled();
+      }
+    };
+    await idle();
 
     await environment.setValue(SAFE_SETTING, String(Number(original) + 1));
     await expect(environment.save).toHaveText(/Save \(1\)/);
@@ -181,7 +193,7 @@ test.describe('Environment settings (QC-742)', { tag: ['@regression'] }, () => {
 
     await environment.reset.click();
     await expect(environment.input(SAFE_SETTING)).toHaveValue(original);
-    await expect(environment.save).toBeDisabled();
+    await idle();
     expect(puts).toEqual([]);
   });
 });

@@ -73,11 +73,14 @@ test.describe('Hosts: list, add, details (QC-742)', { tag: ['@regression'] }, ()
     for (const [field, label] of [
       ['Name', 'Name'],
       ['HostKey', 'Host key'],
-      ['ClientId', 'Sign-in client id'],
       ['DatabaseName', 'Database name'],
+      ['HostOrganisationId', 'Host organisation id'],
       ['UiUrl', 'Host app address'],
     ] as const) {
       await expect(form.clientError(field)).toHaveText(`${label} is required.`);
+    }
+    for (const optional of ['ClientId', 'HostUuid', 'ApiBaseUrl', 'MessageQueue'] as const) {
+      await expect(form.clientError(optional), `${optional} is optional`).toHaveCount(0);
     }
 
     await form.field('HostKey').fill('Not A Key');

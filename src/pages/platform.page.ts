@@ -2,7 +2,7 @@ import * as path from 'path';
 import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { env, ROOT_DIR } from '@config/env.config';
 import { AdminApi, type AdminApiResult } from '@api/admin.api';
-import { ConfirmDialog, openAdmin, waitForIdle } from '@pages/admin-shell.page';
+import { ConfirmDialog, openAdmin, SIGN_IN_REDIRECT_TIMEOUT, waitForIdle } from '@pages/admin-shell.page';
 import { solidPng, type UploadFile } from '@api/host-branding.api';
 
 export const PLATFORM_SETTING_GROUPS = ['Admin sign-in', 'Admin branding', 'Identity cache'];
@@ -190,7 +190,7 @@ export class PlatformSettingsPage {
 
   async open(expandAll = true): Promise<void> {
     await openAdmin(this.page, '/settings');
-    await expect(this.root).toBeVisible();
+    await expect(this.root).toBeVisible({ timeout: SIGN_IN_REDIRECT_TIMEOUT });
     await waitForIdle(this.page);
     await expect(this.groups.first()).toBeVisible();
     if (expandAll) {

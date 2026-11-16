@@ -103,8 +103,12 @@ test.describe('Platform settings (QC-823)', { tag: ['@regression'] }, () => {
   test('PSET-01 the Settings page shows the three groups in order, the four Admin branding rows with the three image tiles, the one Identity cache row and no restart badge anywhere', async ({
     page,
     shell,
+    request,
   }) => {
     const settings = new PlatformSettingsPage(page);
+    const stored = new PlatformSettingsApi(AdminApi.asAdmin(request));
+    const requireTwoFactor = (await stored.setting(REQUIRE_TWO_FACTOR)).value;
+    const displayName = (await stored.setting(DISPLAY_NAME)).value ?? DEFAULT_DISPLAY_NAME;
     await page.goto(adminUrl('/'));
     await shell.nav('settings').click();
     await expect(page).toHaveURL(adminUrl('/settings'));
@@ -139,8 +143,8 @@ test.describe('Platform settings (QC-823)', { tag: ['@regression'] }, () => {
     const cacheRows = settings.group('Identity cache').locator('[data-setting-key]');
     expect(await cacheRows.evaluateAll((rows) => rows.map((row) => row.getAttribute('data-setting-key')))).toEqual([CACHE_SECONDS]);
 
-    await expect(settings.toggle(REQUIRE_TWO_FACTOR)).toHaveAttribute('aria-checked', 'true');
-    await expect(settings.input(DISPLAY_NAME)).toHaveValue(settingValue(DISPLAY_NAME) ?? '');
+    await expect(settings.toggle(REQUIRE_TWO_FACTOR)).toHaveAttribute('aria-checked', requireTwoFactor === 'true' ? 'true' : 'false');
+    await expect(settings.input(DISPLAY_NAME)).toHaveValue(displayName);
     await expect(settings.input(CACHE_SECONDS)).toHaveAttribute('type', 'number');
     await expect(settings.input(CACHE_SECONDS)).toHaveAttribute('min', '10');
     await expect(settings.input(CACHE_SECONDS)).toHaveAttribute('max', '86400');
@@ -375,11 +379,14 @@ test.describe('Platform settings (QC-823)', { tag: ['@regression'] }, () => {
       expect((await anonymous.post('/admins', { userUuid: '00000000-0000-0000-0000-000000000000' })).status).toBe(401);
       expect((await anonymous.upload('/settings/branding/images/logo-main', solidPng('e2e-qc823.png'))).status).toBe(401);
       expect((await anonymous.delete('/settings/branding/images/logo-main')).status).toBe(401);
-      const logoStored = canUseMasterDb() && storedImageCount('logo-main') > 0;
-      expect(
-        (await request.get(`${env.adminApiUrl}/api/public/branding/logo-main`, { ignoreHTTPSErrors: env.ignoreHttpsErrors })).status(),
-        'the public image route is anonymous: 404 only while nothing is set',
-      ).toBe(logoStored ? 200 : 404);
+      const logoStored = (await new PlatformBrandingApi(AdminApi.asAdmin(request), request).images()).some(
+        (image) => image.type === 'logo-main' && image.present,
+      );
+      const publicImage = await request.get(`${env.adminApiUrl}/api/public/branding/logo-main`, { ignoreHTTPSErrors: env.ignoreHttpsErrors });
+      expect(publicImage.status(), 'the public image route is anonymous: 200 while an image is set, 404 while nothing is set').toBe(logoStored ? 200 : 404);
+      if (logoStored) {
+        expect(publicImage.headers()['content-type'], 'the stored image is served as an image').toMatch(/^image\//);
+      }
 
       const policy = await request.get(`${env.identityUrl}/api/account/password/policy`, { ignoreHTTPSErrors: env.ignoreHttpsErrors });
       expect(policy.status()).toBe(200);

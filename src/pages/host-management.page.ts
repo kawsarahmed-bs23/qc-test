@@ -1,7 +1,7 @@
 import { expect, type Locator, type Page } from '@playwright/test';
-import { ConfirmDialog, openAdmin, waitForIdle } from '@pages/admin-shell.page';
+import { ConfirmDialog, openAdmin, SIGN_IN_REDIRECT_TIMEOUT, waitForIdle } from '@pages/admin-shell.page';
 
-export type HostField = 'Name' | 'HostKey' | 'ClientId' | 'DatabaseName' | 'HostOrganisationId' | 'UiUrl' | 'ApiBaseUrl' | 'MessageQueue';
+export type HostField = 'Name' | 'HostKey' | 'HostUuid' | 'ClientId' | 'DatabaseName' | 'HostOrganisationId' | 'UiUrl' | 'ApiBaseUrl' | 'MessageQueue';
 
 export type HostErrorKey = 'name' | 'hostKey' | 'clientId' | 'databaseName' | 'hostOrganisationId' | 'uiUrl' | 'apiBaseUrl' | 'messageQueue';
 
@@ -296,7 +296,7 @@ export class HostEnvironmentPage {
 
   async open(uuid: string): Promise<void> {
     await openAdmin(this.page, `/hosts/${uuid}/environment`);
-    await expect(this.save).toBeVisible();
+    await expect(this.save).toBeVisible({ timeout: SIGN_IN_REDIRECT_TIMEOUT });
     await waitForIdle(this.page);
   }
 

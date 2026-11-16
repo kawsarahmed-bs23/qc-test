@@ -7,6 +7,8 @@ export function adminUrl(path = '/'): string {
   return `${env.adminUrl}/#${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+export const SIGN_IN_REDIRECT_TIMEOUT = 30_000;
+
 export async function openAdmin(page: Page, path = '/'): Promise<void> {
   const sameDocument = page.url().startsWith(`${env.adminUrl}/`);
   await page.goto(adminUrl(path));

@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page } from '@playwright/test';
 import { env, type Credentials } from '@config/env.config';
+import { SIGN_IN_REDIRECT_TIMEOUT } from '@pages/admin-shell.page';
 import { markIdentityLog, resetLinkSince } from '@utils/identityLog';
 import { currentStep, secondsLeftInStep, totp } from '@utils/totp';
 
@@ -41,7 +42,9 @@ export class IdentityLoginPage {
   }
 
   async expectVisible(): Promise<void> {
-    await expect(this.page).toHaveURL(new RegExp(`^${escape(env.identityUrl)}/Account/Login`, 'i'));
+    await expect(this.page).toHaveURL(new RegExp(`^${escape(env.identityUrl)}/Account/Login`, 'i'), {
+      timeout: SIGN_IN_REDIRECT_TIMEOUT,
+    });
     await expect(this.email).toBeVisible();
     await expect(this.password).toBeVisible();
   }
