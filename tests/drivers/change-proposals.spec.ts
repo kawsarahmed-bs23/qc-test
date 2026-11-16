@@ -375,4 +375,46 @@ test.describe('Change proposals, Driver side: approving, declining and the rules
     expect(queue.data?.filter((item) => item.change?.kind === 'driver-truck-number').map((item) => item.change?.truckNumber)).toEqual(['E2E933-D3']);
     expect(digits(hostUser(world.driver.hostUserId).phone)).toBe(BASE.driverHostPhone);
   });
+
+  test("CHG-16 a phone-only proposal approved after the Driver was renamed on the Driver side keeps the Driver's new name", async ({
+    changeProposalsApi,
+    driverChangesApi,
+  }) => {
+    const admin = await signedIn(changeProposalsApi);
+    expect((await admin.editUser('manageusers', world.driver.hostUserId, { phoneNumber: '5125550936' })).status).toBe(200);
+    const [pending] = await pendingFor(driverChangesApi, world.driver.token, 1);
+    expect(pending).toMatchObject({ mobilePhone: '+15125550936', firstName: null, lastName: null });
+
+    driversValue(`UPDATE auth.Users SET FirstName = N'Renamed' WHERE UserUUID = '${world.driver.sub}'`);
+    expect((await driverChangesApi.answer(world.driver.token, pending.changeUuid, 'approved')).status).toBe(200);
+    expect(driversUser(world.driver.sub), 'the phone is applied and the Driver keeps its new name').toMatchObject({
+      firstName: 'Renamed',
+      phone: '+15125550936',
+    });
+    expect(driversUser(world.driver.sub).notifyBySms, 'Text messages is not turned on by a phone proposal').not.toBe('1');
+
+    await expect.poll(() => hostProposals(world.driver.hostUserId)[0]?.status, { message: 'ChangeAnswered reaches the Host', ...POLL }).toBe(STATUS.approved);
+    expect(digits(hostUser(world.driver.hostUserId).phone)).toBe('15125550936');
+    expect(hostUser(world.driver.hostUserId), 'the Host name is untouched and Text messages stays off').toMatchObject({
+      firstName: BASE.firstName,
+      notifyBySms: '0',
+    });
+  });
+
+  test('CHG-17 answering a proposal after the Driver left that Host is refused with 409', async ({ changeProposalsApi, driverChangesApi }) => {
+    const admin = await signedIn(changeProposalsApi);
+    expect((await admin.editUser('manageusers', world.driver.hostUserId, { firstName: 'AfterLeaving' })).status).toBe(200);
+    const [pending] = await pendingFor(driverChangesApi, world.driver.token, 1);
+    const link = `UserUUID = '${world.driver.sub}' AND HostUUID = '${world.hostUuid}'`;
+
+    driversValue(`UPDATE app.DriverHostLinks SET Active = 0 WHERE ${link}`);
+    try {
+      const refused = await driverChangesApi.answer(world.driver.token, pending.changeUuid, 'approved');
+      expect(refused.status, JSON.stringify(refused.body)).toBe(409);
+      expect(driversUser(world.driver.sub).firstName, 'nothing is applied').toBe(BASE.firstName);
+    } finally {
+      driversValue(`UPDATE app.DriverHostLinks SET Active = 1 WHERE ${link}`);
+    }
+    expect(driversValue(`SELECT Active FROM app.DriverHostLinks WHERE ${link}`), 'the link is back').toBe('1');
+  });
 });
