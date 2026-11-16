@@ -175,6 +175,13 @@ export function answerOf(questionId: number): StoredAnswer {
   return { answerId: answerId === null ? null : Number(answerId), option, channel: channel === null ? null : Number(channel), answerBody: body };
 }
 
+export function inboundRepliesTo(questionId: number): string[] {
+  const rows = querySingleValue(
+    `SELECT STRING_AGG(REPLACE(MessageBody, CHAR(10), ' '), '||') FROM app.Messages WHERE ReplyToMessageID_FK = ${questionId} AND Direction = 10`,
+  );
+  return rows ? rows.split('||') : [];
+}
+
 export interface DriversGeneralMessage {
   id: number;
   type: number;

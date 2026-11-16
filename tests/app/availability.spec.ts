@@ -9,6 +9,7 @@ import {
   AVAILABILITY_TYPE,
   SEEDED_VENDOR,
   answerOf,
+  inboundRepliesTo,
   appDay,
   askSince,
   canReach,
@@ -190,20 +191,23 @@ test.describe('Availability messages: today, tomorrow and next week (QC-931)', {
       }
     });
 
-    test('AVAIL-12 Comment needs text and answers the question with that comment', async ({ availabilityReplyPage }) => {
+    test('AVAIL-12 Comment needs text, is sent as a message and leaves the question open', async ({ availabilityReplyPage }) => {
       await availabilityReplyPage.open(slots.weekno.code);
       await availabilityReplyPage.choose('question');
       await availabilityReplyPage.send.click();
+      await expect(availabilityReplyPage.error).toBeVisible();
       expect(answerOf(slots.weekno.messageId).option, 'an empty comment does not answer').toBeNull();
+      expect(inboundRepliesTo(slots.weekno.messageId)).toHaveLength(0);
 
       await availabilityReplyPage.commentTextArea.fill('Call me about the schedule');
       await availabilityReplyPage.send.click();
-      await expect(availabilityReplyPage.answer).toHaveText(/^You replied Comment on the web at \d{1,2}:\d{2} (AM|PM)$/);
-      await expect(availabilityReplyPage.card).toContainText('Call me about the schedule');
-      const stored = answerOf(slots.weekno.messageId);
-      expect(stored.option).toBe('question');
-      expect(stored.channel).toBe(MESSAGE_CHANNEL.Link);
-      expect(stored.answerBody).toContain('Call me about the schedule');
+      await expect(availabilityReplyPage.notice).toHaveText('Comment sent.');
+      await expect(availabilityReplyPage.error).toHaveCount(0);
+      await expect(availabilityReplyPage.options.locator('.reply-option')).toHaveCount(4);
+      expect(answerOf(slots.weekno.messageId).option, 'a comment does not answer the question').toBeNull();
+      const sent = inboundRepliesTo(slots.weekno.messageId);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toContain('Call me about the schedule');
     });
   });
 
@@ -280,11 +284,12 @@ test.describe('Availability messages: today, tomorrow and next week (QC-931)', {
       await reply.choose('question');
       await reply.commentTextArea.fill('Running late, call me');
       await reply.send.click();
-      await expect(reply.answer).toHaveText(/^You replied Comment on the web at \d{1,2}:\d{2} (AM|PM)$/);
+      await expect(reply.notice).toHaveText('Comment sent.');
     } finally {
       await context.close();
     }
-    expect(answerOf(slots.commenttoday.messageId).option).toBe('question');
+    expect(answerOf(slots.commenttoday.messageId).option, 'a comment does not answer the newer ask').toBeNull();
+    expect(inboundRepliesTo(slots.commenttoday.messageId)).toHaveLength(1);
 
     await assign.openForVendor(SEEDED_VENDOR);
     await assign.openTruckList();
