@@ -177,9 +177,9 @@ export function answerOf(questionId: number): StoredAnswer {
 
 export function inboundRepliesTo(questionId: number): string[] {
   const rows = querySingleValue(
-    `SELECT STRING_AGG(REPLACE(MessageBody, CHAR(10), ' '), '||') FROM app.Messages WHERE ReplyToMessageID_FK = ${questionId} AND Direction = 10`,
+    `SELECT STRING_AGG(REPLACE(REPLACE(MessageBody, CHAR(13), ''), CHAR(10), ' '), CHAR(1)) FROM app.Messages WHERE ReplyToMessageID_FK = ${questionId} AND Direction = 10`,
   );
-  return rows ? rows.split('||') : [];
+  return rows ? rows.split('') : [];
 }
 
 export interface DriversGeneralMessage {
