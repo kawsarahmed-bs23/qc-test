@@ -35,7 +35,7 @@ function fingerprint(): string {
         (SELECT CHECKSUM_AGG(CHECKSUM(DriverSettingID, OrganisationID_FK, TruckNumber, Active, DeletionRequestedAt, DeletionScheduledFor, DeletionCanceledAt)) FROM app.DriverSettings), '|',
         (SELECT COUNT(*) FROM app.DriverHostLinks), '|', (SELECT CHECKSUM_AGG(CHECKSUM(DriverHostLinkID, UserUUID, HostUUID, Active)) FROM app.DriverHostLinks), '|',
         (SELECT COUNT(*) FROM app.OrderAssignments), '|', (SELECT COUNT(*) FROM app.Trips), '|', (SELECT COUNT(*) FROM app.Tickets), '|',
-        (SELECT COUNT(*) FROM app.Messages), '|', (SELECT COUNT(*) FROM app.DeviceTokens), '|', (SELECT COUNT(*) FROM app.DriverInvites), '|',
+        (SELECT COUNT(*) FROM app.Messages), '|', (SELECT COUNT(*) FROM app.DeviceTokens), '|',
         (SELECT COUNT(*) FROM app.DriverCommands), '|', (SELECT COUNT(*) FROM app.SyncTombstones), '|', (SELECT COUNT(*) FROM app.DriverDeletions))`,
     ) ?? ''
   );
@@ -52,7 +52,7 @@ function driverRows(userUuid: string): string {
         (SELECT COUNT(*) FROM app.OrderAssignments WHERE DriverUserUUID = ${uuid}), '|', (SELECT COUNT(*) FROM app.Trips WHERE UserUUID = ${uuid}), '|',
         (SELECT COUNT(*) FROM app.Tickets WHERE UserUUID = ${uuid}), '|', (SELECT COUNT(*) FROM app.Messages WHERE DriverUserUUID = ${uuid}), '|',
         (SELECT COUNT(*) FROM app.DeviceTokens WHERE UserUUID = ${uuid}), '|', (SELECT COUNT(*) FROM app.DriverHostLinks WHERE UserUUID = ${uuid}), '|',
-        (SELECT COUNT(*) FROM app.DriverInvites WHERE InvitedUserID = ${key}), '|', (SELECT COUNT(*) FROM app.DriverCommands WHERE UserUUID = ${uuid}), '|',
+        (SELECT COUNT(*) FROM app.DriverCommands WHERE UserUUID = ${uuid}), '|',
         (SELECT COUNT(*) FROM app.SyncTombstones WHERE UserUUID = ${uuid}))`,
     ) ?? ''
   );
@@ -195,7 +195,6 @@ test.describe('Driver account deletion with a 30-day restore window and the purg
 
     expect((await accountDeletionApi.hosts(accessToken)).status).toBe(200);
     expect((await accountDeletionApi.settings(accessToken)).status).toBe(200);
-    expect((await accountDeletionApi.invites(accessToken)).status).toBe(200);
   });
 
   test('DEL-04 POST makes the deletion pending for 30 days in whole UTC seconds, the row agrees, and a second POST keeps the same dates', async ({
@@ -226,7 +225,7 @@ test.describe('Driver account deletion with a 30-day restore window and the purg
     expect((await accountDeletionApi.status(accessToken)).body.data).toEqual(requested);
   });
 
-  test('DEL-05 while pending, /me/hosts, /me/settings and /invites are 403 with Status pending and the restore message, and PUT changes nothing', async ({
+  test('DEL-05 while pending, /me/hosts and /me/settings are 403 with Status pending and the restore message, and PUT changes nothing', async ({
     accountDeletionApi,
   }) => {
     test.skip(!requested, 'DEL-04 did not make the deletion pending.');
@@ -236,7 +235,6 @@ test.describe('Driver account deletion with a 30-day restore window and the purg
       await accountDeletionApi.hosts(accessToken),
       await accountDeletionApi.settings(accessToken),
       await accountDeletionApi.saveSettings(accessToken, { TruckNumber: 'DEL-902' }),
-      await accountDeletionApi.invites(accessToken),
     ]) {
       expect(answer.status, JSON.stringify(answer.body)).toBe(403);
       expectPendingDeletion(answer.body, requested!);
@@ -262,7 +260,6 @@ test.describe('Driver account deletion with a 30-day restore window and the purg
 
     expect((await accountDeletionApi.hosts(accessToken)).status).toBe(200);
     expect((await accountDeletionApi.settings(accessToken)).status).toBe(200);
-    expect((await accountDeletionApi.invites(accessToken)).status).toBe(200);
 
     const again = await accountDeletionApi.restore(accessToken);
     expect(again.status, JSON.stringify(again.body)).toBe(200);

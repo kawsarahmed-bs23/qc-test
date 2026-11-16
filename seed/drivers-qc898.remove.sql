@@ -9,7 +9,8 @@ INSERT @Users SELECT DISTINCT LTRIM(RTRIM(value)) FROM STRING_SPLIT(N'$(UserIds)
 
 BEGIN TRANSACTION;
 
-DELETE app.DriverInvites WHERE InvitedUserID IN (SELECT Id FROM @Users) OR InvitedEmail LIKE N'e2e.qc898.%@quarryconnect.test';
+IF OBJECT_ID(N'app.DriverInvites', N'U') IS NOT NULL
+    DELETE app.DriverInvites WHERE InvitedUserID IN (SELECT Id FROM @Users) OR InvitedEmail LIKE N'e2e.qc898.%@quarryconnect.test';
 DELETE app.Messages WHERE UserID_FK IN (SELECT Id FROM @Users);
 DELETE app.Tickets WHERE UserID_FK IN (SELECT Id FROM @Users);
 DELETE app.Trips WHERE UserID_FK IN (SELECT Id FROM @Users);

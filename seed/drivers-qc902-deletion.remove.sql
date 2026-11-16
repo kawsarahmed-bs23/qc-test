@@ -4,7 +4,6 @@
 -- signed EULAs, their auth.Users rows with their roles, their organisations with the app.DriverSettings rows, and the
 -- app.DriverDeletions hash rows of those UUIDs. Every 'E2E QC-902 Purge%' organisation and every e2e.qc902.purge.* /
 -- e2e.qc902.deletion* user goes too. One-list schema (DRIVERS 027-030): rows are keyed by UserUUID / DriverUserUUID;
--- DriverInvites.InvitedUserID is still the lower-case UUID string.
 SET NOCOUNT ON;
 SET XACT_ABORT ON;
 
@@ -43,7 +42,8 @@ DELETE app.SyncTombstones WHERE UserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.DeviceTokens WHERE UserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.DriverSignedEulas WHERE UserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.DriverHostLinks WHERE UserUUID IN (SELECT Id FROM @Uuids);
-DELETE app.DriverInvites WHERE InvitedUserID IN (SELECT Id FROM @Users);
+IF OBJECT_ID(N'app.DriverInvites', N'U') IS NOT NULL
+    DELETE app.DriverInvites WHERE InvitedUserID IN (SELECT Id FROM @Users);
 DELETE app.DriverDeletions
 WHERE UserUUIDHash IN (SELECT HASHBYTES('SHA2_256', CONVERT(varbinary(100), CONVERT(varchar(36), UPPER(Id)))) FROM @Users);
 DELETE auth.UserToRoles WHERE UserId IN (SELECT Id FROM @AuthUsers);

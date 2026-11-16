@@ -42,10 +42,6 @@ export class AccountDeletionApi {
     return this.read(this.request.put(`${baseUrl()}/me/settings`, { headers: headers(accessToken), data: body }));
   }
 
-  invites(accessToken: string): Promise<DriversResult<unknown>> {
-    return this.read(this.request.get(`${baseUrl()}/invites`, { headers: headers(accessToken) }));
-  }
-
   private async read<T>(pending: Promise<APIResponse>): Promise<DriversResult<T>> {
     const response = await pending;
     const text = await response.text();

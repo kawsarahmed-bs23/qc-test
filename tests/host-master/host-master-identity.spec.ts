@@ -726,7 +726,7 @@ test.describe('Identity holds no host information (QC-775)', { tag: ['@regressio
       expect((await request.get(`${env.driversApiUrl}/me/hosts`)).status()).toBe(401);
     });
 
-    test('HMI-11 host-scoped drivers endpoints need the X-Host-Uuid of a linked host: 200 for it, 403 for none, another host or an unlinked driver', async ({
+    test('HMI-11 /me reads the X-Host-Uuid of a linked host for its host block and /me/host is gone (404)', async ({
       request,
       targetHost,
     }) => {
@@ -734,14 +734,8 @@ test.describe('Identity holds no host information (QC-775)', { tag: ['@regressio
       const api = new PasswordGrantApi(request);
       const header = (uuid: string) => ({ headers: { 'X-Host-Uuid': uuid } });
 
-      const chosen = await api.driversMeHost(driverTokens.access_token!, header(targetHost.uuid));
-      expect(chosen.status()).toBe(200);
-      expect(((await chosen.json()).data.hostUuid as string).toLowerCase()).toBe(targetHost.uuid);
-
-      expect((await api.driversMeHost(driverTokens.access_token!)).status(), 'no header').toBe(403);
-      expect((await api.driversMeHost(driverTokens.access_token!, header(randomUUID()))).status(), 'a host the driver is not linked to').toBe(403);
-      expect((await api.driversMeHost(driverTokens.access_token!, header('not-a-uuid'))).status(), 'a malformed host').toBe(403);
-      expect((await api.driversMeHost(unlinkedTokens.access_token!, header(targetHost.uuid))).status(), 'a driver with no link').toBe(403);
+      expect((await api.driversMeHost(driverTokens.access_token!, header(targetHost.uuid))).status(), '/me/host with a linked host').toBe(404);
+      expect((await api.driversMeHost(driverTokens.access_token!)).status(), '/me/host with no header').toBe(404);
 
       const me = await api.driversMe(driverTokens.access_token!, header(targetHost.uuid));
       expect(me.status()).toBe(200);

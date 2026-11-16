@@ -2,8 +2,8 @@
 -- They exist only in DRIVERS (no Identity user), each with an auth.Organisations row (E2E QC-902 Purge ...), an auth.Users row
 -- (email e2e.qc902.purge.*@quarryconnect.test), the Driver role and an app.DriverSettings row:
 --   $(DueUserId)       deletion due: requested 31 days ago, scheduled 5 minutes ago, not canceled. It also gets one row in
---                      app.OrderAssignments, Trips, Tickets, Messages, DeviceTokens, DriverHostLinks, DriverInvites (InvitedUserID),
---                      DriverCommands and SyncTombstones, keyed by UserUUID / DriverUserUUID and HostUUID (InvitedUserID by the lower-case UUID string). The purge must remove all of it.
+--                      app.OrderAssignments, Trips, Tickets, Messages, DeviceTokens, DriverHostLinks,
+--                      DriverCommands and SyncTombstones, keyed by UserUUID / DriverUserUUID and HostUUID. The purge must remove all of it.
 --   $(FutureUserId)    deletion pending but scheduled in 29 days. The purge must leave it alone.
 --   $(RestoredUserId)  scheduled 5 minutes ago but restored (DeletionCanceledAt set). The purge must leave it alone.
 -- The host is $(HostUuid). drivers-qc902-deletion.remove.sql deletes everything here, including the DriverDeletions hash rows.
@@ -77,9 +77,6 @@ BEGIN
 
         INSERT app.DeviceTokens (DeviceTokenUUID, UserUUID, Token, Platform, DeviceId, LastSeenAt, CreatedBy, UpdatedBy)
         VALUES (NEWID(), @UserUuid, CONCAT(N'ExponentPushToken[e2e-qc902-purge-', @UserKey, N']'), N'ios', N'e2e-qc902-purge-device', GETUTCDATE(), N'e2e-qc902', N'e2e-qc902');
-
-        INSERT app.DriverInvites (DriverInviteUUID, HostUUID, InvitedUserID, ExpiresAt, Status, CreatedBy, UpdatedBy)
-        VALUES (NEWID(), @HostUuid, @UserKey, DATEADD(DAY, 7, GETUTCDATE()), 10, N'e2e-qc902', N'e2e-qc902');
 
         INSERT app.DriverCommands (CommandUUID, HostUUID, UserUUID, CommandType, Status, CreatedBy, UpdatedBy)
         VALUES (NEWID(), @HostUuid, @UserUuid, N'e2e-qc902-purge', 20, N'e2e-qc902', N'e2e-qc902');

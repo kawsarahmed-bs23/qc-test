@@ -20,7 +20,7 @@ INSERT @Hosts SELECT HostUUID FROM app.Hosts WHERE HostName LIKE N''E2E QC-774%'
 
 BEGIN TRANSACTION;
 
-DELETE app.DriverInvites WHERE TRY_CONVERT(uniqueidentifier, InvitedUserID) IN (SELECT Id FROM @Users) OR InvitedEmail LIKE N''e2e.qc774.%@quarryconnect.test''
+IF OBJECT_ID(N''app.DriverInvites'', N''U'') IS NOT NULL DELETE app.DriverInvites WHERE TRY_CONVERT(uniqueidentifier, InvitedUserID) IN (SELECT Id FROM @Users) OR InvitedEmail LIKE N''e2e.qc774.%@quarryconnect.test''
     OR HostUUID IN (SELECT Id FROM @Hosts);
 DELETE app.Messages WHERE DriverUserUUID IN (SELECT Id FROM @Users) OR HostUUID IN (SELECT Id FROM @Hosts);
 DELETE app.Tickets WHERE UserUUID IN (SELECT Id FROM @Users) OR HostUUID IN (SELECT Id FROM @Hosts);
@@ -43,7 +43,7 @@ INSERT @Hosts SELECT HostID FROM app.Hosts WHERE Name LIKE N''E2E QC-774%'' AND 
 
 BEGIN TRANSACTION;
 
-DELETE app.DriverInvites WHERE InvitedUserID IN (SELECT Id FROM @Users) OR InvitedEmail LIKE N''e2e.qc774.%@quarryconnect.test''
+IF OBJECT_ID(N''app.DriverInvites'', N''U'') IS NOT NULL DELETE app.DriverInvites WHERE InvitedUserID IN (SELECT Id FROM @Users) OR InvitedEmail LIKE N''e2e.qc774.%@quarryconnect.test''
     OR HostID_FK IN (SELECT Id FROM @Hosts);
 DELETE app.Messages WHERE UserID_FK IN (SELECT Id FROM @Users) OR HostID_FK IN (SELECT Id FROM @Hosts);
 DELETE app.Tickets WHERE UserID_FK IN (SELECT Id FROM @Users) OR HostID_FK IN (SELECT Id FROM @Hosts);
