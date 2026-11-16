@@ -3,7 +3,7 @@ import { APP_STATE, env } from '@config/env.config';
 import { canSeedLocalDb, canUseDriversDb, canUseIdentityDb, queryIdentityDb, runIdentitySeedScript } from '@utils/localDb';
 import { ASSIGNMENT_STATUS } from '@pages/message-link.page';
 import { API_CHANNEL, CommsApi, MESSAGE_CHANNEL } from '@pages/comms-send-gate.page';
-import { AI, InboundSmsApi, ReplyLinkApi, inboundBySid, messageRow, smsStaysLocal } from '@pages/reply-links.page';
+import { AI, InboundSmsApi, MESSAGE_TYPE, ReplyLinkApi, inboundBySid, messageRow, replyLinkUrl, smsStaysLocal } from '@pages/reply-links.page';
 import { toE164 } from '@pages/sms-framing.page';
 import {
   ANSWERED_CHANNEL,
@@ -41,6 +41,15 @@ const SID_PREFIX = `SME947${Date.now()}`;
 const THROWAWAY_DRIVER_EMAIL = 'e2e.qc947.driver@quarryconnect.test';
 const THROWAWAY_DRIVER_PHONE = '5125559947';
 
+async function receiveText(inbound: InboundSmsApi, sid: string, phone: string, body: string): Promise<number> {
+  const status = await inbound.receive(sid, phone, body);
+  test.skip(status === 403, 'The local API validates Twilio signatures (Twilio:ValidateSignature), so an unsigned webhook is refused.');
+  expect(status, `inbound SMS "${body}"`).toBe(204);
+  const id = inboundBySid(sid);
+  expect(id, `the stored inbound SMS "${body}"`).not.toBeNull();
+  return id!;
+}
+
 test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: ['@write', '@regression'] }, () => {
   test.describe.configure({ mode: 'serial', timeout: 120_000 });
   test.skip(
@@ -69,6 +78,7 @@ test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: [
       { slot: 'expired', type: 10, state: 'expired' },
       { slot: 'withdrawn', type: 10, state: 'withdrawn' },
       { slot: 'app', type: 10, state: 'app' },
+      { slot: 'concurrent', type: 10, state: 'open' },
     ]);
   });
 
@@ -84,7 +94,13 @@ test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: [
     if (driver) removeReplySlots(driver.id, watermark, SID_PREFIX);
   });
 
-  test('RPAGE-01 /m/{code} opens signed out at #/m/{code} with no app shell, a noindex robots tag and the job offer', async ({ replyPage }) => {
+  test('RPAGE-01 /m/{code} opens signed out at #/m/{code} with no app shell, a noindex robots tag and the job offer; the texted form {HostPublicURL}/#/m/{code} opens the same page', async ({
+    replyPage,
+  }) => {
+    await replyPage.openLink(replyLinkUrl(s.look.code));
+    await replyPage.expectStandalone(s.look.code);
+    await expect(replyPage.title).toHaveText(REPLY_PAGE_EN.jobOffer);
+
     await replyPage.open(s.look.code);
     await replyPage.expectStandalone(s.look.code);
     await expect(replyPage.card).toHaveAttribute('data-state', 'open');
@@ -215,6 +231,18 @@ test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: [
     await expect(replyPage.addComment).toBeVisible();
   });
 
+  test('RPAGE-11 two different options posted at once to a fresh offer link: exactly one wins, the other gets 400 "already been answered", and the link and assignment agree with the winner', async () => {
+    const [accept, decline] = await Promise.all([links.reply(s.concurrent.code, { option: 'accept' }), links.reply(s.concurrent.code, { option: 'cant' })]);
+    expect([accept.status, decline.status].sort(), `${accept.text}\n${decline.text}`).toEqual([200, 400]);
+    const [winner, loser] = accept.status === 200 ? ['accept', decline] : ['cant', accept];
+    expect(loser.text).toContain('already been answered');
+
+    expect(hostLinkAnswer(s.concurrent.messageId)).toMatchObject({ option: winner, channel: ANSWERED_CHANNEL.Web });
+    expect(assignmentStatusOf(s.concurrent.assignmentId)).toBe(winner === 'accept' ? ASSIGNMENT_STATUS.Accepted : ASSIGNMENT_STATUS.Rejected);
+    expect(repliesTo(s.concurrent.messageId), 'only the winning answer is stored').toHaveLength(1);
+    await expectDriversAnswer(s.concurrent.messageUuid, winner === 'accept' ? 'accept' : 'reject', 'web');
+  });
+
   test.describe('SMS STOP and START (QC-947, QC-948)', () => {
     test.use({ storageState: APP_STATE });
 
@@ -276,6 +304,54 @@ test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: [
     });
   });
 
+  test.describe('SMS keywords that change nothing (QC-947 review)', () => {
+    test('RPAGE-12 START while texts are on, YES while opted out and a second STOP are ordinary replies (type 40, no System notice, no opt-out change); only STOP and START that change the state count', async () => {
+      const phone = toE164(driver.phone);
+      const optOut = smsOptOutOf(phone);
+      const driversOptOut = driversOptOutOf(driver.id, hostUuid);
+      test.skip(optOut.optedOut === 1, 'The driver is opted out already; this case starts from texts on.');
+      const inbound = await InboundSmsApi.open();
+      let sids = 0;
+      const receive = (body: string) => receiveText(inbound, `${SID_PREFIX}K${sids++}`, phone, body);
+      const expectOrdinary = (id: number, body: string) => {
+        expect(messageRow(id)).toMatchObject({ messageType: MESSAGE_TYPE.StatusReply, body });
+        expect(hostNoticeFor(id), `"${body}" gets no System notice`).toBeNull();
+      };
+
+      try {
+        const noticeBefore = latestDriversNotice(driver.id, watermark);
+        const start = await receive('START');
+        expectOrdinary(start, 'START');
+        expect(smsOptOutOf(phone), 'START while texts are on changes no opt-out row').toEqual(optOut);
+        expect(driversOptOutOf(driver.id, hostUuid)).toEqual(driversOptOut);
+        expect(latestDriversNotice(driver.id, watermark), 'no SmsOptOutChanged notice in DRIVERS').toBe(noticeBefore);
+
+        const stop = await receive('STOP');
+        expect(hostNoticeFor(stop), 'a STOP that opts out still gets its notice').not.toBeNull();
+        expect(smsOptOutOf(phone)).toMatchObject({ optedOut: 1, keyword: 'STOP' });
+        await expect.poll(() => driversOptOutOf(driver.id, hostUuid).smsOptedOut, { timeout: 30_000 }).toBe(1);
+        const optedOut = smsOptOutOf(phone);
+
+        const yes = await receive('YES');
+        expectOrdinary(yes, 'YES');
+        expect(smsOptOutOf(phone), 'YES is no longer an opt-in keyword').toEqual(optedOut);
+
+        const again = await receive('stop');
+        expectOrdinary(again, 'stop');
+        expect(smsOptOutOf(phone), 'a second STOP changes nothing').toEqual(optedOut);
+
+        const back = await receive('START');
+        expect(hostNoticeFor(back), 'a START that opts back in gets its notice').not.toBeNull();
+        expect(smsOptOutOf(phone)).toMatchObject({ optedOut: 0, keyword: 'START' });
+        await expect.poll(() => driversOptOutOf(driver.id, hostUuid).smsOptedOut, { timeout: 30_000 }).toBe(0);
+      } finally {
+        await inbound.close();
+        restoreSmsOptOut(phone, optOut);
+        restoreDriversOptOut(driver.id, hostUuid, driversOptOut);
+      }
+    });
+  });
+
   test.describe('Drivers API shows the web answer and refuses a second one (QC-948)', () => {
     test.skip(
       !canUseIdentityDb() || !env.admin || !env.driversApiUrl || !env.mobileClientId,
@@ -284,15 +360,24 @@ test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: [
 
     let throwaway: string;
     let offer: ReplySlot;
+    let appAnswer: ReplySlot;
+    let appRejected: ReplySlot;
 
     test.beforeAll(() => {
       runIdentitySeedScript('identity-qc947-user.apply.sql', { Email: THROWAWAY_DRIVER_EMAIL, SourceEmail: env.admin!.email, LastName: 'QC-947 Driver' });
       throwaway = queryIdentityDb(`SELECT LOWER(Id) FROM auth.Users WHERE NormalizedEmail = UPPER(N'${THROWAWAY_DRIVER_EMAIL}')`)!;
       expect(throwaway, 'the throwaway Identity driver exists').toBeTruthy();
-      offer = seedReplySlots(
+      const slots = seedReplySlots(
         { driverId: throwaway, templateDriverId: driver.id, hostUuid, newDriver: { email: THROWAWAY_DRIVER_EMAIL, phone: THROWAWAY_DRIVER_PHONE } },
-        [{ slot: 'drivers', type: 10, state: 'open' }],
-      ).drivers;
+        [
+          { slot: 'drivers', type: 10, state: 'open' },
+          { slot: 'appanswer', type: 10, state: 'open' },
+          { slot: 'apprejected', type: 10, state: 'app' },
+        ],
+      );
+      offer = slots.drivers;
+      appAnswer = slots.appanswer;
+      appRejected = slots.apprejected;
     });
 
     test.afterAll(() => {
@@ -340,6 +425,50 @@ test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: [
       );
       expect(reject.status(), await reject.text()).toBe(409);
       expect(assignmentStatusOf(offer.assignmentId)).toBe(ASSIGNMENT_STATUS.Accepted);
+    });
+
+    test('RPAGE-13 an app Accept (responseCode accept) on an unanswered offer marks the link in-app and accepts the assignment; one on an offer already answered in the app comes back replyRejected', async ({
+      request,
+      passwordGrantApi,
+      replyPage,
+    }) => {
+      const token = await passwordGrantApi.passwordGrant(THROWAWAY_DRIVER_EMAIL, env.admin!.password);
+      expect(token.status, JSON.stringify(token.body)).toBe(200);
+      const drivers = new DriversMirrorApi(request, token.body.access_token!);
+      const acceptInApp = (slot: ReplySlot) =>
+        drivers.send(
+          {
+            method: 'POST',
+            path: '/driver-message/send',
+            data: { orderAssignmentUuid: slot.assignmentUuid, messageBody: 'Accept', replyToMessageUuid: slot.messageUuid, responseCode: 'accept' },
+          },
+          hostUuid,
+        );
+
+      const first = await acceptInApp(appAnswer);
+      expect(first.status(), `queued for the host: ${await first.text()}`).toBe(202);
+      await expect
+        .poll(() => hostLinkAnswer(appAnswer.messageId).channel, { message: 'MessageReplied reaches the host', timeout: 30_000 })
+        .toBe(ANSWERED_CHANNEL.InApp);
+      expect(hostLinkAnswer(appAnswer.messageId).option).toBe('accept');
+      await expect.poll(() => assignmentStatusOf(appAnswer.assignmentId), { timeout: 30_000 }).toBe(ASSIGNMENT_STATUS.Accepted);
+      await replyPage.open(appAnswer.code);
+      await replyPage.expectAnswered(REPLY_PAGE_EN.options.accept, 'in the app');
+
+      const late = await acceptInApp(appRejected);
+      expect(late.status(), `queued for the host: ${await late.text()}`).toBe(202);
+      const rejectedReply = async () => {
+        const thread = await threadOf(await drivers.send({ method: 'GET', path: `/driver-message/threads/${appRejected.assignmentUuid}` }, hostUuid));
+        return thread.messages.find((m) => !m.isFromDispatch)?.replyRejected ?? null;
+      };
+      await expect.poll(rejectedReply, { message: 'MessageAnswered with RejectedReplyUUID reaches DRIVERS', timeout: 30_000 }).toBe(true);
+      const thread = await threadOf(await drivers.send({ method: 'GET', path: `/driver-message/threads/${appRejected.assignmentUuid}` }, hostUuid));
+      expect(thread.messages.find((m) => m.messageUuid.toLowerCase() === appRejected.messageUuid)!.answer).toMatchObject({
+        responseCode: 'accept',
+        channel: 'app',
+      });
+      expect(hostLinkAnswer(appRejected.messageId), 'the standing in-app answer stays').toMatchObject({ option: 'accept', channel: ANSWERED_CHANNEL.InApp });
+      expect(assignmentStatusOf(appRejected.assignmentId), 'a rejected second answer changes no status').toBe(ASSIGNMENT_STATUS.Pending);
     });
   });
 });

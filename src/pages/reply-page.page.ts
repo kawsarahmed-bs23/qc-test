@@ -93,6 +93,11 @@ export class ReplyPage extends BasePage {
     await expect(this.card.or(this.notFound)).toBeVisible({ timeout: 30_000 });
   }
 
+  async openLink(url: string): Promise<void> {
+    await this.page.goto(url);
+    await expect(this.card.or(this.notFound)).toBeVisible({ timeout: 30_000 });
+  }
+
   option(key: string): Locator {
     return this.page.locator(`.reply-option[data-option="${key}"]`);
   }
@@ -335,6 +340,7 @@ export function smsRowByMarker(marker: string): { error: string | null; sid: str
 
 export interface DriverThreadMessage {
   messageUuid: string;
+  isFromDispatch: boolean;
   answer: { responseCode: string; label: string; comment: string | null; channel: string; answeredAt: string; text: string } | null;
   replyRejected: boolean;
 }

@@ -178,8 +178,10 @@ test.describe('Reply links on order-notify and Status Ping SMS (QC-777)', { tag:
     const before = latestOutbound(s.driver, s.watermark, MESSAGE_TYPE.OrderNotify) ?? s.watermark;
     const answer = await notify.notify(assignmentId, smsBody);
     expect(answer.status, `PUT assignment ${assignmentId} with sendSms ${answer.text}`).toBe(200);
+    await expect
+      .poll(() => latestOutbound(s.driver, before, MESSAGE_TYPE.OrderNotify), { message: 'the stored order-notify SMS', timeout: 15_000 })
+      .not.toBeNull();
     const id = latestOutbound(s.driver, before, MESSAGE_TYPE.OrderNotify);
-    expect(id, 'the stored order-notify SMS').not.toBeNull();
     const row = messageRow(id!);
     expect(row.assignment).toBe(assignmentId);
     expect(row.channel).toBe(MESSAGE_CHANNEL.Sms);
