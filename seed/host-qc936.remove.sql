@@ -21,6 +21,8 @@ INSERT @OrgAddresses SELECT DISTINCT AddressID_FK FROM app.OrganisationAddresses
 
 BEGIN TRANSACTION;
 
+IF OBJECT_ID(N'app.ChangeProposals', N'U') IS NOT NULL
+    DELETE app.ChangeProposals WHERE UserID IN (SELECT Id FROM @Users);
 DELETE app.UserSettings WHERE UserID_FK IN (SELECT Id FROM @Users);
 
 IF OBJECT_ID(N'app.UserInvites', N'U') IS NOT NULL

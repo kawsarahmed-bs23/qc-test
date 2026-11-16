@@ -5,7 +5,7 @@ import { AdminUserFormPage, VendorUserFormPage } from '@pages/user-invites.page'
 
 export const TEXT_MESSAGES_LABEL = 'Text messages';
 export const TEXT_MESSAGES_HELP = 'Texts Job offers and messages to this number.';
-export const CONTACT_LOCKED_TEXT = 'Set by the Driver in the Driver App.';
+export const CONTACT_LOCKED_TEXT = 'Sent to the Driver to approve in the Driver App.';
 export const PHONE_HINT = '10-digit US number';
 
 /** The QC-936 "Text messages" tick with its help line, inside the block the app marks with an id. */
@@ -34,14 +34,16 @@ export class PhoneField {
   }
 }
 
-/** What both user forms show for a user whose phone and Text messages the Driver App owns (`IsContactLocked`). */
-async function expectContactLocked(textMessages: TextMessagesField, phone: PhoneField): Promise<void> {
+/**
+ * What both user forms show for a user the Driver App owns (`IsContactLocked`): since QC-933 the phone and Text messages can
+ * be edited, and a change is sent to the Driver to approve instead of being saved, which the hint says.
+ */
+async function expectContactForDriverApproval(textMessages: TextMessagesField, phone: PhoneField): Promise<void> {
   await expect(textMessages.checkbox).toBeVisible();
-  await expect(textMessages.checkbox).toBeDisabled();
+  await expect(textMessages.checkbox).toBeEnabled();
   await expect(textMessages.help(CONTACT_LOCKED_TEXT)).toBeVisible();
   await expect(textMessages.help(TEXT_MESSAGES_HELP)).toHaveCount(0);
-  await expect(phone.input).toHaveAttribute('readonly', /.*/);
-  await expect(phone.input).not.toBeEditable();
+  await expect(phone.input).toBeEditable();
   await expect(phone.hint).toHaveText(CONTACT_LOCKED_TEXT);
 }
 
@@ -58,11 +60,13 @@ export class AdminUserTextMessagesPage extends AdminUserFormPage {
   readonly textMessages: TextMessagesField;
   readonly phone: PhoneField;
   readonly organisation: Locator;
+  readonly pendingChanges: Locator;
 
   constructor(page: Page) {
     super(page);
     this.textMessages = new TextMessagesField(page.locator('#user-notify-by-sms'));
     this.phone = new PhoneField(page);
+    this.pendingChanges = page.getByTestId('pending-change');
     this.organisation = page.getByRole('combobox', { name: 'Organisation' });
   }
 
@@ -72,8 +76,8 @@ export class AdminUserTextMessagesPage extends AdminUserFormPage {
     await expect(this.organisation).toContainText(name);
   }
 
-  async expectContactLocked(): Promise<void> {
-    await expectContactLocked(this.textMessages, this.phone);
+  async expectContactForDriverApproval(): Promise<void> {
+    await expectContactForDriverApproval(this.textMessages, this.phone);
   }
 
   async expectContactEditable(): Promise<void> {
@@ -85,15 +89,17 @@ export class AdminUserTextMessagesPage extends AdminUserFormPage {
 export class VendorUserTextMessagesPage extends VendorUserFormPage {
   readonly textMessages: TextMessagesField;
   readonly phone: PhoneField;
+  readonly pendingChanges: Locator;
 
   constructor(page: Page) {
     super(page);
     this.textMessages = new TextMessagesField(page.locator('#vendor-user-notify-by-sms'));
     this.phone = new PhoneField(page);
+    this.pendingChanges = page.getByTestId('pending-change');
   }
 
-  async expectContactLocked(): Promise<void> {
-    await expectContactLocked(this.textMessages, this.phone);
+  async expectContactForDriverApproval(): Promise<void> {
+    await expectContactForDriverApproval(this.textMessages, this.phone);
   }
 
   async expectContactEditable(): Promise<void> {

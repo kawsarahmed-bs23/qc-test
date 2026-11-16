@@ -43,6 +43,16 @@ function storedPhone(id: string): string | null {
   return value(`SELECT PhoneNumber FROM auth.Users WHERE Id = N'${id}'`);
 }
 
+function proposals(id: string): string[] {
+  return (
+    value(
+      `SELECT CONCAT_WS(N'|', Kind, Direction, Status, ISNULL(MobilePhone, N'~'), ISNULL(CONVERT(nvarchar(5), NotifyBySms), N'~')) FROM app.ChangeProposals WHERE UserID = N'${id}' ORDER BY ChangeProposalID`,
+    ) ?? ''
+  )
+    .split(/\r?\n/)
+    .filter(Boolean);
+}
+
 function removeAll(): void {
   const output = runSeedScript('host-qc936.remove.sql');
   if (!/REMOVED left=0/.test(output)) throw new Error(`QC-936 rows are left behind:\n${output}`);
@@ -207,14 +217,14 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
     await expect(page.textMessages.checkbox, 'ticked after a reload').toBeChecked();
   });
 
-  test('SMSSET-05 a linked user (UserUUID set) shows Text messages disabled and unticked and the phone read-only with "Set by the Driver in the Driver App." on both forms, and a Save keeps them', async () => {
+  test('SMSSET-05 a linked user (UserUUID set) shows Text messages enabled and unticked and the phone editable with "Sent to the Driver to approve in the Driver App." on both forms, and a Save with nothing changed keeps them and proposes nothing (QC-933)', async () => {
     const before = settingStamp(id.linked);
     expect(before, 'the seeded row is NotifyBySms 0 with the phone').toMatch(new RegExp(`^0\\|${LINKED_PHONE}\\|`));
 
     const manage = admin.adminUser;
     await manage.open(id.linked);
     await expect(manage.textMessages.checkbox).not.toBeChecked();
-    await manage.expectContactLocked();
+    await manage.expectContactForDriverApproval();
     await expect(manage.phone.input).toHaveValue(/512.*555.*9361/);
     expect(await manage.saveExisting()).toBe(200);
     expect(settingStamp(id.linked), 'saving the page leaves the row untouched').toBe(before);
@@ -223,14 +233,16 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
     const portal = vendor.vendorUser;
     await portal.open(id.linked);
     await expect(portal.textMessages.checkbox).not.toBeChecked();
-    await portal.expectContactLocked();
+    await portal.expectContactForDriverApproval();
     expect(await portal.saveExisting()).toBe(200);
     expect(settingStamp(id.linked), 'saving the Vendor Portal page leaves the row untouched').toBe(before);
     expect(storedPhone(id.linked)).toBe(LINKED_PHONE);
+    expect(proposals(id.linked), 'a Save with nothing changed proposes nothing').toEqual([]);
   });
 
-  test('SMSSET-06 for a linked user, posting user-edit with notifyBySms true and another phone changes neither the row nor the phone (Manage Users and Vendor Portal)', async () => {
+  test('SMSSET-06 for a linked user, posting user-edit with notifyBySms true and another phone leaves the row and the phone as they are and stores one pending proposal for the Driver, the later post replacing the earlier (Manage Users and Vendor Portal; QC-933)', async () => {
     const before = settingStamp(id.linked);
+    const seen: string[][] = [];
     for (const [session, area] of [
       [admin, 'manageusers'],
       [vendor, 'vendor'],
@@ -248,8 +260,18 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
       expect(saved.status, saved.text).toBe(200);
       expect(settingStamp(id.linked), `${area}: app.UserSettings is not touched`).toBe(before);
       expect(storedPhone(id.linked), `${area}: auth.Users.PhoneNumber stays as stored`).toBe(LINKED_PHONE);
-      expect((await session.api.userEdit(area, id.linked)).data).toMatchObject({ notifyBySms: false, phoneNumber: LINKED_PHONE });
+      const reread = await session.api.userEdit(area, id.linked);
+      expect(reread.data).toMatchObject({
+        notifyBySms: false,
+        phoneNumber: LINKED_PHONE,
+        PendingChanges: ['Waiting for the Driver to approve: phone +15125550936, Text messages on.'],
+      });
+      seen.push(proposals(id.linked));
     }
+    expect(seen[0], 'the first post stores one pending proposal: user details, sent, pending, the E.164 phone and Text messages on').toEqual([
+      '10|10|10|+15125550936|1',
+    ]);
+    expect(seen[1], 'the second post supersedes the first and adds its own').toEqual(['10|10|40|+15125550936|1', '10|10|10|+15125550936|1']);
   });
 
   test('SMSSET-07 an unlinked Driver posted through user-edit saves the new phone and NotifyBySms; a Sales user gets no app.UserSettings row', async () => {

@@ -52,6 +52,7 @@ import { CopyScheduleDialogPage } from '@pages/sms-routing.page';
 import { HostTruckFormPage, HostTrucksListPage, TruckNumberSchedulePage } from '@pages/truck-number.page';
 import { AdminUserTextMessagesPage, VendorUserTextMessagesPage } from '@pages/notify-by-sms.page';
 import { NotifyBySmsApi } from '@api/notify-by-sms.api';
+import { ChangeProposalsApi, DriverChangesApi } from '@api/change-proposals.api';
 import { AddHostUuidPage } from '@pages/host-existing-uuid.page';
 import { HostExistingUuidApi } from '@api/host-existing-uuid.api';
 
@@ -165,6 +166,8 @@ type TestFixtures = {
   smsRoutingApi: SmsRoutingApi;
   copyScheduleDialogPage: CopyScheduleDialogPage;
   notifyBySmsApi: NotifyBySmsApi;
+  changeProposalsApi: ChangeProposalsApi;
+  driverChangesApi: DriverChangesApi;
   addHostUuidPage: AddHostUuidPage;
   hostExistingUuidApi: HostExistingUuidApi;
 };
@@ -455,6 +458,12 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   vendorUserTextMessagesPage: async ({ page }, use) => {
     await use(new VendorUserTextMessagesPage(page));
+  },
+  changeProposalsApi: async ({ request }, use) => {
+    await use(new ChangeProposalsApi(request));
+  },
+  driverChangesApi: async ({ request }, use) => {
+    await use(new DriverChangesApi(request));
   },
   notifyBySmsApi: async ({ request }, use) => {
     await use(new NotifyBySmsApi(request));

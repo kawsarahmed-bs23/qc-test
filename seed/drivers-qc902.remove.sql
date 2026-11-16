@@ -28,6 +28,8 @@ IF COL_LENGTH(N'app.DriverHostLinks', N'UserUUID') IS NOT NULL
     EXEC sp_executesql N'
 DECLARE @Ids TABLE (Id uniqueidentifier PRIMARY KEY);
 INSERT @Ids SELECT DISTINCT TRY_CONVERT(uniqueidentifier, value) FROM STRING_SPLIT(ISNULL(@UserIds, N''''), N'','') WHERE TRY_CONVERT(uniqueidentifier, value) IS NOT NULL;
+IF OBJECT_ID(N''app.ChangeProposals'', N''U'') IS NOT NULL
+    DELETE app.ChangeProposals WHERE DriverUserUUID IN (SELECT Id FROM @Ids);
 DELETE app.Messages WHERE DriverUserUUID IN (SELECT Id FROM @Ids);
 DELETE app.Tickets WHERE UserUUID IN (SELECT Id FROM @Ids);
 DELETE app.Trips WHERE UserUUID IN (SELECT Id FROM @Ids);
