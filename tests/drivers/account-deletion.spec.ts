@@ -303,7 +303,7 @@ test.describe('Driver account deletion with a 30-day restore window and the purg
 
     await expect
       .poll(() => driverRows(PURGE.due), { message: 'the purge removes the due driver', timeout: PURGE_WINDOW, intervals: [5_000] })
-      .toBe('0|0|0|0|0|0|0|0|0|0|0');
+      .toBe('0|0|0|0|0|0|0|0|0|0');
 
     const [count, deletedOn, createdBy, todayUtc] = deletionHashRows(PURGE.due).split('|');
     expect(count, 'one DriverDeletions row for the purged UUID').toBe('1');
