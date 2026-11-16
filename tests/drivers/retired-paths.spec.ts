@@ -37,7 +37,7 @@ test.describe('Drivers API: the old invite paths and /me/host are gone (QC-952)'
     expect((await request.get(url, { headers: { ...BEARER, 'X-Host-Uuid': randomUUID() } })).status(), 'a token and a host').toBe(404);
   });
 
-  test('RETIRED-05 the kept /me paths still exist and ask for a token: 401 without one', async ({ request }) => {
+  test('RETIRED-05 the kept /me paths are still routed and protected: 401, not 404, without a token (DEL-03 covers them with a token)', async ({ request }) => {
     for (const path of ['/me', '/me/hosts', '/me/settings']) {
       expect((await request.get(`${env.driversApiUrl}${path}`)).status(), path).toBe(401);
     }
