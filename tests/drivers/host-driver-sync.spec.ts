@@ -243,13 +243,15 @@ test.describe('Host API local-first driver sync: delta reads, batched writes and
   test("HSYNC-07 an assignment moved to a second driver shows in the first driver's deleted from its tombstone, does not come back as current, and is current for the second driver", async () => {
     const from = settled;
     hostValue(
-      `UPDATE app.OrderAssignments SET DriverUserID_FK = ${sqlText(seeded.secondDriverId)}, Updated = GETUTCDATE() WHERE OrderAssignmentID = ${seeded.ids.move}`,
+      `UPDATE auth.Users SET OrganisationIdFk = (SELECT TruckID_FK FROM app.OrderAssignments WHERE OrderAssignmentID = ${seeded.ids.move}) WHERE Id = ${sqlText(seeded.secondDriverId)}`,
     );
+    const reassigned = await (await dispatcher()).reassignDriver(seeded.ids.move, seeded.secondDriverId);
+    expect(reassigned.status(), `PUT api/assignment moves the job to the second driver (${await reassigned.text()})`).toBe(200);
     expect(
       hostNumber(
         `SELECT COUNT(*) FROM app.DriverSyncTombstones WHERE DriverUserID_FK = ${sqlText(seeded.userId)} AND EntityType = N'assignment' AND EntityID = ${seeded.ids.move}`,
       ),
-      'TR_OrderAssignments_DriverSync writes a tombstone for the first driver',
+      'the Host API writes a tombstone for the first driver',
     ).toBe(1);
 
     const delta = await driver.changes(from);

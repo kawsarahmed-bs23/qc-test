@@ -271,6 +271,18 @@ export class HostApi {
     });
   }
 
+  async reassignDriver(orderAssignmentId: number, driverUserId: string): Promise<APIResponse> {
+    const current = await this.request.get(`${hostApiUrl()}/api/assignment/${orderAssignmentId}`, { headers: this.headers() });
+    if (current.status() !== 200) {
+      return current;
+    }
+    const model = (await current.json()).data as Record<string, unknown>;
+    return this.request.put(`${hostApiUrl()}/api/assignment/${orderAssignmentId}`, {
+      headers: this.headers(),
+      data: { ...model, driverUserId },
+    });
+  }
+
   voidOrder(orderId: number): Promise<APIResponse> {
     return this.request.delete(`${hostApiUrl()}/api/order/${orderId}`, { headers: this.headers() });
   }
