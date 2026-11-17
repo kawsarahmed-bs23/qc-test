@@ -12,6 +12,7 @@ import {
 } from '@utils/throwawayUsers';
 import { currentStep, totp } from '@utils/totp';
 import { IdentityLoginPage, IdentityLogoutPage, IdentityTwoStepPage } from '@pages/identity-login.page';
+import { adminUrl } from '@pages/admin-shell.page';
 
 const INVALID = 'Invalid email or password';
 const LOCKED = 'Your account is locked for 15 minutes after 5 failed sign-in attempts. Try again later or contact your administrator.';
@@ -133,7 +134,9 @@ test.describe('Sign-in lockout and deactivated accounts say so (QC-876)', { tag:
     const user = seedQc876User(email('lock06'), 'QC-876 Lock 06', { twoFactor: true });
     const login = new IdentityLoginPage(page);
     const twoStep = new IdentityTwoStepPage(page);
-    await login.open();
+    // Two-step is policy-only: it is asked for by the client, so start from the Admin app (an Admin UI client), not Identity's bare login page.
+    await page.goto(adminUrl('/'));
+    await login.expectVisible();
     await login.signIn(user);
     await twoStep.expectVisible();
     expect(qc876LockoutState(user).accessFailedCount, 'the right password counts nothing').toBe(0);
