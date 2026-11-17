@@ -27,14 +27,14 @@ DELETE auth.Users WHERE NormalizedEmail = UPPER(@Email);
 INSERT auth.Users
 (
     Id, UserUUID, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PasswordHash, SecurityStamp, ConcurrencyStamp,
-    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
+    PhoneNumberConfirmed, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     LastLoginDate, LastPasswordChangedDate, PasswordResetFlag, IsActive
 )
 VALUES
 (
     @UserId, CONVERT(uniqueidentifier, @UserId), @Email, UPPER(@Email), @Email, UPPER(@Email), 1, @PasswordHash,
     UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
-    0, 0, 1, 0, N'E2E', N'QC-937 Linked driver',
+    0, 1, 0, N'E2E', N'QC-937 Linked driver',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), 0, 1
 );
 

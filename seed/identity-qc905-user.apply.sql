@@ -39,18 +39,21 @@ DECLARE @UserId nvarchar(450) = LOWER(CONVERT(nvarchar(36), NEWID()));
 INSERT auth.Users
 (
     Id, UserUUID, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PasswordHash, SecurityStamp, ConcurrencyStamp,
-    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
+    PhoneNumberConfirmed, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     LastLoginDate, LastPasswordChangedDate, PasswordResetFlag, IsActive
 )
 VALUES
 (
     @UserId, CONVERT(uniqueidentifier, @UserId), @Email, UPPER(@Email), @Email, UPPER(@Email), 1, @PasswordHash,
     UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
-    0, @TwoFactor, 1, 0, N'E2E', N'$(LastName)',
+    0, 1, 0, N'E2E', N'$(LastName)',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), 0, 1
 );
 
 IF @TwoFactor = 1
+BEGIN
     INSERT auth.UserTokens (UserId, LoginProvider, Name, Value) VALUES (@UserId, N'[AspNetUserStore]', N'AuthenticatorKey', @AuthenticatorKey);
+    INSERT auth.UserTokens (UserId, LoginProvider, Name, Value) VALUES (@UserId, N'[AspNetUserStore]', N'RecoveryCodes', N'e2e-code-1;e2e-code-2;e2e-code-3');
+END;
 
 COMMIT TRANSACTION;

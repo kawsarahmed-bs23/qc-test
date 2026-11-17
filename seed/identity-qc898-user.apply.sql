@@ -31,14 +31,14 @@ DECLARE @UserUuid uniqueidentifier = CASE WHEN @SameUuid = 1 THEN CONVERT(unique
 INSERT auth.Users
 (
     Id, UserUUID, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PasswordHash, SecurityStamp, ConcurrencyStamp,
-    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
+    PhoneNumberConfirmed, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     LastLoginDate, LastPasswordChangedDate, PasswordResetFlag, IsActive
 )
 VALUES
 (
     @UserId, @UserUuid, @Email, UPPER(@Email), @Email, UPPER(@Email), 1, @PasswordHash,
     UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
-    0, 0, 1, 0, N'E2E', N'$(LastName)',
+    0, 1, 0, N'E2E', N'$(LastName)',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), 0, 1
 );
 

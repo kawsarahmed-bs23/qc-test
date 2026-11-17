@@ -24,14 +24,14 @@ BEGIN
     INSERT auth.Users
     (
         Id, UserUUID, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, SecurityStamp, ConcurrencyStamp,
-        PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
+        PhoneNumberConfirmed, LockoutEnabled, AccessFailedCount, FirstName, LastName,
         LastLoginDate, LastPasswordChangedDate, PasswordResetFlag, IsActive
     )
     VALUES
     (
         @UserId, CONVERT(uniqueidentifier, @UserId), @Email, UPPER(@Email), @Email, UPPER(@Email), 1,
         UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
-        0, 0, 1, 0, N'E2E', N'QC742 L' + RIGHT(N'0' + CAST((@i * 17) % 41 AS nvarchar(2)), 2),
+        0, 1, 0, N'E2E', N'QC742 L' + RIGHT(N'0' + CAST((@i * 17) % 41 AS nvarchar(2)), 2),
         DATEADD(minute, -((@i * 13) % 41), CAST('2026-01-01T12:00:00+00:00' AS datetimeoffset)), SYSDATETIMEOFFSET(), 0,
         CASE WHEN @i % 7 = 0 THEN 0 ELSE 1 END
     );

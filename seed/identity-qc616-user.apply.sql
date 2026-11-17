@@ -25,12 +25,12 @@ DELETE auth.Users WHERE NormalizedEmail = UPPER(@Email);
 
 INSERT auth.Users (
     Id, UserUUID, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed,
-    PasswordHash, SecurityStamp, ConcurrencyStamp, PhoneNumber, PhoneNumberConfirmed, TwoFactorEnabled,
+    PasswordHash, SecurityStamp, ConcurrencyStamp, PhoneNumber, PhoneNumberConfirmed,
     LockoutEnd, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     CreateDate, LastLoginDate, LastPasswordChangedDate, PasswordResetFlag, IsActive)
 SELECT h.Id, h.UserUUID, h.UserName, h.NormalizedUserName, h.Email, h.NormalizedEmail, h.EmailConfirmed,
        h.PasswordHash, ISNULL(h.SecurityStamp, CONVERT(nvarchar(36), NEWID())), ISNULL(h.ConcurrencyStamp, CONVERT(nvarchar(36), NEWID())),
-       h.PhoneNumber, h.PhoneNumberConfirmed, 0,
+       h.PhoneNumber, h.PhoneNumberConfirmed,
        NULL, h.LockoutEnabled, h.AccessFailedCount, h.FirstName, h.LastName,
        ISNULL(h.CreateDate, SYSDATETIMEOFFSET()),
        COALESCE(h.LastLoginDate, h.CreateDate, SYSDATETIMEOFFSET()),
@@ -42,7 +42,8 @@ WHERE  h.NormalizedEmail = UPPER(@Email);
 
 IF LEN(@AuthenticatorKey) >= 16
 BEGIN
-    UPDATE auth.Users SET TwoFactorEnabled = 1 WHERE NormalizedEmail = UPPER(@Email);
+    INSERT auth.UserTokens (UserId, LoginProvider, Name, Value)
+    SELECT Id, N'[AspNetUserStore]', N'RecoveryCodes', N'e2e-code-1;e2e-code-2;e2e-code-3' FROM auth.Users WHERE NormalizedEmail = UPPER(@Email);
     INSERT auth.UserTokens (UserId, LoginProvider, Name, Value)
     SELECT Id, N'[AspNetUserStore]', N'AuthenticatorKey', @AuthenticatorKey FROM auth.Users WHERE NormalizedEmail = UPPER(@Email);
 END;
