@@ -48,6 +48,9 @@ VALUES
 );
 
 IF @TwoFactor = 1
+BEGIN
     INSERT auth.UserTokens (UserId, LoginProvider, Name, Value) VALUES (@UserId, N'[AspNetUserStore]', N'AuthenticatorKey', @AuthenticatorKey);
+    INSERT auth.UserTokens (UserId, LoginProvider, Name, Value) VALUES (@UserId, N'[AspNetUserStore]', N'RecoveryCodes', N'e2e-code-1;e2e-code-2;e2e-code-3');
+END;
 
 COMMIT TRANSACTION;
