@@ -23,14 +23,14 @@ DECLARE @UserId nvarchar(450) = CONVERT(nvarchar(450), NEWID());
 INSERT auth.Users
 (
     Id, UserUUID, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed, PasswordHash, SecurityStamp, ConcurrencyStamp,
-    PhoneNumberConfirmed, LockoutEnabled, AccessFailedCount, FirstName, LastName,
+    PhoneNumberConfirmed, TwoFactorEnabled, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     LastLoginDate, LastPasswordChangedDate, PasswordResetFlag, IsActive
 )
 VALUES
 (
     @UserId, CONVERT(uniqueidentifier, @UserId), @Email, UPPER(@Email), @Email, UPPER(@Email), 1, @PasswordHash,
     UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
-    0, 1, 0, N'E2E', N'QC-738 Deactivate',
+    0, 0, 1, 0, N'E2E', N'QC-738 Deactivate',
     SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), 0, 1
 );
 

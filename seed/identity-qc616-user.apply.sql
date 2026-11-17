@@ -25,12 +25,12 @@ DELETE auth.Users WHERE NormalizedEmail = UPPER(@Email);
 
 INSERT auth.Users (
     Id, UserUUID, UserName, NormalizedUserName, Email, NormalizedEmail, EmailConfirmed,
-    PasswordHash, SecurityStamp, ConcurrencyStamp, PhoneNumber, PhoneNumberConfirmed,
+    PasswordHash, SecurityStamp, ConcurrencyStamp, PhoneNumber, PhoneNumberConfirmed, TwoFactorEnabled,
     LockoutEnd, LockoutEnabled, AccessFailedCount, FirstName, LastName,
     CreateDate, LastLoginDate, LastPasswordChangedDate, PasswordResetFlag, IsActive)
 SELECT h.Id, h.UserUUID, h.UserName, h.NormalizedUserName, h.Email, h.NormalizedEmail, h.EmailConfirmed,
        h.PasswordHash, ISNULL(h.SecurityStamp, CONVERT(nvarchar(36), NEWID())), ISNULL(h.ConcurrencyStamp, CONVERT(nvarchar(36), NEWID())),
-       h.PhoneNumber, h.PhoneNumberConfirmed,
+       h.PhoneNumber, h.PhoneNumberConfirmed, 0,
        NULL, h.LockoutEnabled, h.AccessFailedCount, h.FirstName, h.LastName,
        ISNULL(h.CreateDate, SYSDATETIMEOFFSET()),
        COALESCE(h.LastLoginDate, h.CreateDate, SYSDATETIMEOFFSET()),
