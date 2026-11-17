@@ -635,7 +635,6 @@ export class UserDetailPage {
   readonly facts: Locator;
   readonly email: Locator;
   readonly platformAdmin: Locator;
-  readonly twoFactor: Locator;
   readonly deactivate: Locator;
   readonly reactivate: Locator;
   readonly error: Locator;
@@ -646,7 +645,6 @@ export class UserDetailPage {
     this.facts = page.locator('#user-facts');
     this.email = page.locator('#user-email');
     this.platformAdmin = page.locator('#user-platform-admin');
-    this.twoFactor = page.locator('#user-two-factor');
     this.deactivate = page.locator('#account-deactivate');
     this.reactivate = page.locator('#account-reactivate');
     this.error = page.locator('#user-error');

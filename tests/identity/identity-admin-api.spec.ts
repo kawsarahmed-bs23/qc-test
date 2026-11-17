@@ -111,7 +111,7 @@ test.describe('Identity administration API (QC-738)', { tag: ['@regression', '@a
 
       const details = await api.get(`/users/${listed.userId}`);
       expect(details.status).toBe(200);
-      expect(details.body).toMatchObject({ userId: listed.userId, email: DEACTIVATION_USER, isActive: true, twoFactorEnabled: false });
+      expect(details.body).toMatchObject({ userId: listed.userId, email: DEACTIVATION_USER, isActive: true });
       for (const key of ['hosts', 'platformRoles', 'roles', 'organisationId']) {
         expect(details.body, `no ${key}`).not.toHaveProperty(key);
       }
