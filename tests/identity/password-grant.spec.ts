@@ -3,7 +3,7 @@ import { canUseIdentityDb, queryIdentityDb, restoreIdentityPassword, snapshotIde
 import { decodeJwt, PasswordGrantApi, type TokenResponse } from '@api/password-grant.api';
 import { IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage } from '@pages/identity-login.page';
 import { canReadIdentityLog } from '@utils/identityLog';
-import { canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '@utils/throwawayUsers';
+import { canSeedThrowawayUsers, removeIdentityUsers, removeQc876Users, seedIdentityUser, seedQc876User } from '@utils/throwawayUsers';
 import { env } from '@config/env.config';
 
 const ACCESS_TOKEN_SECONDS = 1800;
@@ -102,6 +102,23 @@ test.describe('Mobile password grant (QC-706)', { tag: ['@regression', '@auth'] 
       expect(replay.body.error).toBe('invalid_grant');
     });
   });
+
+  test(
+    'PWD-16 a user with an authenticator is not forced into two-step by a per-user flag: drivers.mobile has no two-step policy, so the password grant issues a token',
+    { tag: '@write' },
+    async ({ request }) => {
+      test.skip(!canSeedThrowawayUsers(), "Needs Identity's local database for a throwaway account with an authenticator.");
+      const user = seedQc876User('e2e.qc876.pwd16@quarryconnect.test', 'QC-626 Enrolled', { twoFactor: true });
+
+      try {
+        const result = await new PasswordGrantApi(request).passwordGrant(user.email, user.password);
+        expect(result.status, JSON.stringify(result.body)).toBe(200);
+        expect(result.body).not.toMatchObject(MFA_REQUIRED);
+      } finally {
+        removeQc876Users();
+      }
+    },
+  );
 
   test('PWD-04 an unknown email is refused without saying why', async ({ request }) => {
     const result = await new PasswordGrantApi(request).passwordGrant('nobody-pwd04@quarryconnect.test', 'Not-a-real-password-1');

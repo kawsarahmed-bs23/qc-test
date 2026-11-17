@@ -613,6 +613,7 @@ test.describe('Users (QC-739, Angular since QC-742; no host mappings since QC-77
     const detail = new UserDetailPage(page);
     await expect(detail.state).toHaveText('Account active');
     await expect(detail.platformAdmin).toHaveText('No');
+    await expect(detail.authenticator).toHaveText('Not set up');
     for (const id of ['#user-hosts', '#user-hosts-table', '#user-platform-roles']) {
       await expect(page.locator(id), id).toHaveCount(0);
     }
