@@ -7,7 +7,7 @@ import { test, expect } from '@fixtures/pageFixtures';
 import { env } from '@config/env.config';
 import { HostUserInvitesApi } from '@api/user-invites.api';
 import { canSeedLocalDb, querySingleValue, runSeedScript } from '@utils/localDb';
-import { NOT_SET_UP_MESSAGE, OLD_STATUS_WORDS, STATUS_WORDS } from '@pages/user-refinements.page';
+import { NOT_SET_UP_MESSAGE, OLD_STATUS_WORDS, PHONE_HINT_NO_TEXTS, STATUS_WORDS } from '@pages/user-refinements.page';
 
 const DOMAIN = '@example.com';
 const email = (name: string) => `e2e.qc983.${name}${DOMAIN}`;
@@ -100,7 +100,7 @@ test.describe('Manage Users refinements (QC-983)', { tag: ['@regression'] }, () 
     await form.open(userId('driver'));
     await form.expectHints();
     await form.open();
-    await form.expectHints();
+    await form.expectHints(PHONE_HINT_NO_TEXTS);
   });
 
   test('USRF-06 Create New User shows the Sign-In History card with "Save the user, then send the invite from here." and no Send button', async ({

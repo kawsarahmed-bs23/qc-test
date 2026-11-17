@@ -9,6 +9,7 @@ export const CONTACT_LOCKED_TEXT = 'Set by the Driver in the Driver App.';
 export const CONTACT_PROPOSED_TEXT = 'Sent to the Driver to approve in the Driver App.';
 export const TEXTS_ON_TEXT = 'Only the Driver can turn texts off, in the Driver App.';
 export const PHONE_HINT = '10-digit US number';
+export const ADMIN_USER_PHONE_HINT = 'Optional, 10-digit US number. Needed for text messages.';
 
 /** The QC-936 "Text messages" tick with its help line, inside the block the app marks with an id. */
 export class TextMessagesField {
@@ -66,11 +67,11 @@ async function expectTextsOnlyDriverCanTurnOff(textMessages: TextMessagesField, 
 }
 
 /** What both user forms show for a user the host still owns: the tick and the phone can be changed. */
-async function expectContactEditable(textMessages: TextMessagesField, phone: PhoneField): Promise<void> {
+async function expectContactEditable(textMessages: TextMessagesField, phone: PhoneField, phoneHint: string = PHONE_HINT): Promise<void> {
   await expect(textMessages.checkbox).toBeEnabled();
   await expect(textMessages.help(TEXT_MESSAGES_HELP)).toBeVisible();
   await expect(phone.input).toBeEditable();
-  await expect(phone.hint).toHaveText(PHONE_HINT);
+  await expect(phone.hint).toHaveText(phoneHint);
 }
 
 /** Manage Users create / edit (`#/admin/user`): the "Text messages" tick under Phone Number (`#user-notify-by-sms`), shown for Vendor and Driver roles. */
@@ -107,7 +108,7 @@ export class AdminUserTextMessagesPage extends AdminUserFormPage {
   }
 
   async expectContactEditable(): Promise<void> {
-    await expectContactEditable(this.textMessages, this.phone);
+    await expectContactEditable(this.textMessages, this.phone, ADMIN_USER_PHONE_HINT);
   }
 }
 

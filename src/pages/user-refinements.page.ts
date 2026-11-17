@@ -16,6 +16,7 @@ export const OLD_STATUS_WORDS = ['Not invited', 'Invited', 'Expired', 'Linked'];
 
 export const EMAIL_HINT = 'Email is the username and cannot be changed once user has Signed-In first time';
 export const PHONE_HINT = 'Optional, 10-digit US number. Needed for text messages.';
+export const PHONE_HINT_NO_TEXTS = 'Optional, 10-digit US number.';
 export const NOT_SET_UP_MESSAGE = "Invites aren't available for this account yet. Please contact support.";
 
 /** Create New User and Edit User of Manage Users (QC-983): blank role, card order, centred buttons and the Sign-In History card. */
@@ -105,9 +106,12 @@ export class UserRefinementsFormPage extends AdminUserFormPage {
     return this.formPage.locator('mat-hint, .mat-mdc-form-field-hint-wrapper').filter({ hasText: text }).first();
   }
 
-  async expectHints(): Promise<void> {
+  async expectHints(phoneHint: string = PHONE_HINT): Promise<void> {
     await expect(this.hint(EMAIL_HINT)).toBeVisible();
-    await expect(this.hint(PHONE_HINT)).toBeVisible();
+    await expect(this.hint(phoneHint)).toBeVisible();
+    if (phoneHint === PHONE_HINT_NO_TEXTS) {
+      await expect(this.formPage.getByText(PHONE_HINT)).toHaveCount(0);
+    }
   }
 
   async expectStatusWording(status: InviteStatus): Promise<void> {
