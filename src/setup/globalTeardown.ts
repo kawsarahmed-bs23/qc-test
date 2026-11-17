@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import { canUseMasterDb, removeChangeLogsSince, type ChangeLogMark } from '@utils/localDb';
-import { CHANGE_LOG_MARK } from '@setup/globalSetup';
+import { CHANGE_LOG_MARK, touchAdminCacheMark } from '@setup/globalSetup';
 import { adminAccount, canSeedPlatformAdmin, removePlatformAdmin } from '@utils/throwawayUsers';
 
 export default function globalTeardown(): void {
@@ -10,5 +10,8 @@ export default function globalTeardown(): void {
     if (admin) removeChangeLogsSince(mark, admin.email);
     fs.rmSync(CHANGE_LOG_MARK);
   }
-  if (canSeedPlatformAdmin()) removePlatformAdmin();
+  if (canSeedPlatformAdmin()) {
+    removePlatformAdmin();
+    touchAdminCacheMark();
+  }
 }
