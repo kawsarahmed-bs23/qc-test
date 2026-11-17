@@ -10,11 +10,11 @@ import type { InviteStatus } from '@api/user-invites.api';
 import type { ThrowawayUser } from '@utils/throwawayUsers';
 
 const BADGE_LABELS: Record<InviteStatus, string> = {
-  'not-invited': 'Not invited',
-  invited: 'Invited',
-  expired: 'Expired',
+  'not-invited': 'No Email Invite Sent',
+  invited: 'Email Invite Sent',
+  expired: 'Email Invite Expired',
   declined: 'Declined',
-  linked: 'Linked',
+  linked: 'Active',
 };
 
 function escapeRegExp(text: string): string {
@@ -286,7 +286,7 @@ export class UserListSignInColumn {
 
   constructor(private readonly page: Page) {
     this.search = page.getByPlaceholder('Search Anything');
-    this.header = page.getByRole('columnheader', { name: 'Sign-in', exact: true });
+    this.header = page.getByRole('columnheader', { name: 'Status', exact: true });
   }
 
   async open(list: 'admin' | 'vendor'): Promise<void> {

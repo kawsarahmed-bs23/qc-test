@@ -130,7 +130,7 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
 
     const create = await admin.api.userCreate('manageusers');
     expect(create.status, create.text).toBe(200);
-    expect(create.data, 'Create New User starts as Admin, so the tick is hidden but defaults on').toMatchObject({ notifyBySms: true, showNotifyBySms: false });
+    expect(create.data, 'Create New User starts with no role, so the tick is hidden but defaults on').toMatchObject({ notifyBySms: true, showNotifyBySms: false });
     const portalCreate = await vendor.api.userCreate('vendor');
     expect(portalCreate.status, portalCreate.text).toBe(200);
     expect(portalCreate.data).toMatchObject({ notifyBySms: true });
@@ -138,7 +138,7 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
     expect(setting(id.plain), 'reading the user adds no app.UserSettings row').toBeNull();
   });
 
-  test('SMSSET-02 Manage Users > Create New User hides Text messages for Admin and shows it ticked for Vendor and Driver, following the role as it changes', async () => {
+  test('SMSSET-02 Manage Users > Create New User hides Text messages until a Vendor or Driver role is chosen and shows it ticked for Vendor and Driver, following the role as it changes', async () => {
     for (const [role, shown] of [
       ['Admin', false],
       ['Sales', false],
@@ -152,7 +152,7 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
 
     const page = admin.adminUser;
     await page.open();
-    await expect(page.role).toContainText('Admin');
+    await expect(page.role).not.toContainText(/Admin|Sales|Vendor|Driver|Customer|Accounting/);
     await expect(page.textMessages.root).toHaveCount(0);
 
     await page.chooseRole('Vendor');

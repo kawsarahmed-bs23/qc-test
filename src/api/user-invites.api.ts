@@ -29,8 +29,9 @@ export const INVITE_EMAIL_TYPE = 'EmailUserInvite';
 export const CREATE_USER_EMAIL_TYPE = 'EmailCreateUser';
 export const AUDIT_EMAIL_TYPE = 'EmailUserCreatedAudit';
 export const INVITE_SENT_MESSAGE = 'Invite sent. The link works for 24 hours.';
-export const USER_CREATED_MESSAGE = 'User created. Send the invite from Sign-in when you are ready.';
-export const ALREADY_LINKED_MESSAGE = 'This user already signs in to Quarry Connect.';
+export const USER_CREATED_MESSAGE = 'User created. Send the invite from Sign-In History when you are ready.';
+export const VENDOR_USER_CREATED_MESSAGE = 'User created. Send the invite from Sign-in when you are ready.';
+export const ALREADY_LINKED_MESSAGE = 'This user is already active.';
 export const NOT_SENT_MESSAGE = 'The invite email could not be sent. Try again.';
 export const INACTIVE_MESSAGE = 'Make the user active before sending an invite.';
 export const INVALID_ANSWER_MESSAGE = 'This invite answer is not valid. Open the invite link from the email again.';
@@ -112,6 +113,14 @@ async function answer<T>(response: Awaited<ReturnType<APIRequestContext['get']>>
 }
 
 /** The host API's user and invite endpoints, called with the access token of a signed-in host session (APP_STATE by default). */
+export interface UserSearchRow {
+  userName: string;
+  roles?: string[];
+  companyId?: number;
+  companyName?: string | null;
+  companyType?: string | null;
+}
+
 export class HostUserInvitesApi {
   private token: string | null = null;
 
@@ -169,6 +178,60 @@ export class HostUserInvitesApi {
 
   async sendInvite(area: UserArea, userId: string): Promise<HostAnswer<InviteStatusModel>> {
     return answer(await this.request.post(`${hostApiUrl()}/api/${area}/user-edit/${encodeURIComponent(userId)}/invite`, { headers: this.headers() }));
+  }
+
+  /** user-create with an explicit role (the helper above always sends Sales); "" is what the blank Role of QC-983 sends. */
+  async createUserWithRole(user: NewHostUser, role: string): Promise<HostAnswer<string>> {
+    return answer(
+      await this.request.post(`${hostApiUrl()}/api/manageusers/user-create`, {
+        headers: this.headers(),
+        data: {
+          userName: user.userName,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          phoneNumber: '',
+          role,
+          isActive: true,
+          organisationId: 0,
+          organisationLocationId: 0,
+          canSetOrganisation: false,
+          isBillingContact: false,
+        },
+      }),
+    );
+  }
+
+  /** GET api/invite-readiness with the Admin service client's token (QC-983); null when the client is not set. */
+  async inviteReadiness(): Promise<HostAnswer<{ ready: boolean; missing: string[] }> | null> {
+    if (!env.adminApiClient) return null;
+    const token = await serviceToken(this.request, HOST_API_SCOPE);
+    if (token.status !== 200 || !token.body.access_token) {
+      throw new Error(`The Admin service client could not get a ${HOST_API_SCOPE} token: ${token.status}`);
+    }
+    return answer(await this.request.get(`${hostApiUrl()}/api/invite-readiness`, { headers: { Authorization: `Bearer ${token.body.access_token as string}` } }));
+  }
+
+  /** Status of GET api/manageusers/user-edit/{id}: 403 while the host API's cached list of the admin's organisations does not hold a new one yet. */
+  async userEditStatus(userId: string): Promise<number> {
+    return (await this.request.get(`${hostApiUrl()}/api/manageusers/user-edit/${encodeURIComponent(userId)}`, { headers: this.headers() })).status();
+  }
+
+  /** GET api/manageusers/user-search-companies/{role} (QC-983): the Company drop-down of the Users list. */
+  async userSearchCompanies(role: string): Promise<HostAnswer<unknown>> {
+    return answer(await this.request.get(`${hostApiUrl()}/api/manageusers/user-search-companies/${encodeURIComponent(role)}`, { headers: this.headers() }));
+  }
+
+  /** The user-search row of `email` found with `keywords` (QC-983 adds roles and the company fields to every row). */
+  async searchRow(keywords: string, email: string, filter: { role?: string; organisationId?: number } = {}): Promise<UserSearchRow | undefined> {
+    const result = await answer<{ data?: UserSearchRow[] } | UserSearchRow[]>(
+      await this.request.post(`${hostApiUrl()}/api/manageusers/user-search`, {
+        headers: this.headers(),
+        data: { searchKeywords: keywords, start: 0, length: 100, sortColumn: 'userName', sortDirection: 'asc', ...filter },
+      }),
+    );
+    if (result.status !== 200) throw new Error(`user-search answered ${result.status}: ${result.text}`);
+    const rows = Array.isArray(result.data) ? result.data : (result.data?.data ?? []);
+    return rows.find((r) => r.userName?.toLowerCase() === email.toLowerCase());
   }
 
   /** The list row of a user from POST .../user-search, with its `invite`. */

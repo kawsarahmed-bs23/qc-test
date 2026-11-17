@@ -39,6 +39,7 @@ import {
   Qc913Data,
   SIGN_IN_MODE_KEY,
   USER_CREATED_MESSAGE,
+  VENDOR_USER_CREATED_MESSAGE,
   identityAcceptsLink,
   inviteEmailTo,
   mailsTo,
@@ -179,7 +180,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     if (removed.drivers !== null) expect(removed.drivers).toMatch(/leftLinks=0/);
   });
 
-  test('UINV-01 Create New User has no password fields; Save opens the new user with "Not invited" and Send invite, stores no password and sends no EmailCreateUser', async ({
+  test('UINV-01 Create New User has no password fields; Save opens the new user with "No Email Invite Sent" and Send invite, stores no password and sends no EmailCreateUser', async ({
     adminUserFormPage,
   }) => {
     const since = MailSink.mark();
@@ -211,7 +212,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     expect(mailsTo(NEW_USER.email, since), 'no email reaches the new user').toEqual([]);
   });
 
-  test('UINV-02 Send invite shows Invited with sent and expiry dates and Resend invite, records the invite, and emails a Host-signed Accept invite link and a decline link', async ({
+  test('UINV-02 Send invite shows Email Invite Sent with sent and expiry dates and Resend invite, records the invite, and emails a Host-signed Accept invite link and a decline link', async ({
     adminUserFormPage,
   }) => {
     test.skip(!created.userId, 'UINV-01 did not create the user.');
@@ -267,7 +268,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     expect(Qc913Data.notificationCount(NEW_USER.email, CREATE_USER_EMAIL_TYPE)).toBe(0);
   });
 
-  test('UINV-03 accepting as a new login on Identity is recorded by the host: UserUUID = the Identity sub, invite accepted, Linked with no Send button, and the login signs in to the host app', async ({
+  test('UINV-03 accepting as a new login on Identity is recorded by the host: UserUUID = the Identity sub, invite accepted, Active with no Send button, and the login signs in to the host app', async ({
     browser,
     adminUserFormPage,
   }) => {
@@ -358,7 +359,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     expect((await api.editForm('manageusers', user.userId)).data?.invite).toMatchObject({ status: 'declined', canSend: true });
   });
 
-  test('UINV-06 an invite past ExpiresAt shows Expired; answering its link is refused by the host and Identity shows the expired text; Resend sends a new invite that replaces it', async ({
+  test('UINV-06 an invite past ExpiresAt shows Email Invite Expired; answering its link is refused by the host and Identity shows the expired text; Resend sends a new invite that replaces it', async ({
     browser,
     adminUserFormPage,
   }) => {
@@ -468,7 +469,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
       await portal.form.fillPerson(person.email, person.firstName, person.lastName);
       await portal.form.chooseTruck(truck.name);
       userId = await portal.form.saveNew();
-      await portal.form.expectToast(USER_CREATED_MESSAGE);
+      await portal.form.expectToast(VENDOR_USER_CREATED_MESSAGE);
       await portal.form.signIn.expectStatus('not-invited');
 
       const since = MailSink.mark();
@@ -561,7 +562,7 @@ test.describe('Host user invites from Manage Users and the Vendor Portal (QC-913
     }
   });
 
-  test('UINV-10 the Manage Users list shows the Sign-in badge of linked, declined and invited users, and the list API carries the same invite status', async ({
+  test('UINV-10 the Manage Users list shows the Status badge of linked, declined and invited users, and the list API carries the same invite status', async ({
     userListSignInColumn,
   }) => {
     test.skip(!created.sub, 'UINV-03 did not link the user.');

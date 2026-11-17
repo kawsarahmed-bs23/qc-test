@@ -22,6 +22,7 @@ import { AssignAvailabilityPage, AvailabilityComms, AvailabilityReplyPage } from
 import { AppSignInErrorView, AppTermsPage, HostAppHeader } from '@pages/sign-in-redirect.page';
 import { AdminUserEditPage, SignUserAgreementPage, UserEulaStatus, VendorUserEditPage } from '@pages/user-eula.page';
 import { AdminUserFormPage, UserInviteSection, UserListSignInColumn, VendorSidebar, VendorUserFormPage } from '@pages/user-invites.page';
+import { HostInviteLinePage, HostUsersListPage, UserRefinementsFormPage } from '@pages/user-refinements.page';
 import { HostSignInMode, HostUserInvitesApi } from '@api/user-invites.api';
 import { DriverSettingsApi } from '@api/driver-settings.api';
 import { AccountDeletionApi } from '@api/account-deletion.api';
@@ -120,6 +121,9 @@ type TestFixtures = {
   adminUserFormPage: AdminUserFormPage;
   vendorUserFormPage: VendorUserFormPage;
   userInviteSection: UserInviteSection;
+  userRefinementsFormPage: UserRefinementsFormPage;
+  hostUsersListPage: HostUsersListPage;
+  hostInviteLinePage: HostInviteLinePage;
   userListSignInColumn: UserListSignInColumn;
   vendorSidebar: VendorSidebar;
   adminUserEditPage: AdminUserEditPage;
@@ -325,6 +329,15 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   vendorUserFormPage: async ({ page }, use) => {
     await use(new VendorUserFormPage(page));
+  },
+  userRefinementsFormPage: async ({ page }, use) => {
+    await use(new UserRefinementsFormPage(page));
+  },
+  hostUsersListPage: async ({ page }, use) => {
+    await use(new HostUsersListPage(page));
+  },
+  hostInviteLinePage: async ({ page }, use) => {
+    await use(new HostInviteLinePage(page));
   },
   userInviteSection: async ({ page }, use) => {
     await use(new UserInviteSection(page));
