@@ -129,6 +129,13 @@ test.describe('Sign-in opens Identity directly (QC-826)', { tag: ['@regression',
       await login.expectVisible();
       expect(firstLocationAway(watch, env.appUrl!), 'the first navigation after the app document').toMatch(identityLogin);
 
+      // Two-step is policy-only and this host has no two-step policy, so the first sign-in is password only. The app's exchange is then
+      // refused for a host admin, and the app steps up once (acr_values=mfa): Identity asks again and this time requires the second factor.
+      await login.signIn(user);
+      await expect
+        .poll(() => watch.identityAuthorizes().filter((u) => u.searchParams.get('acr_values') === 'mfa').length, { message: 'the app steps up once', timeout: 30_000 })
+        .toBe(1);
+      await login.expectVisible();
       await login.signInWithTwoStep(user, user.authenticatorKey!);
       await expect(page).toHaveURL(appUrl(APP_DEEP_LINK), { timeout: 30_000 });
       await expect(appDeepLinkHeading(page)).toBeVisible({ timeout: 30_000 });
@@ -141,8 +148,8 @@ test.describe('Sign-in opens Identity directly (QC-826)', { tag: ['@regression',
       expect(watch.sawSignInPage, 'app-sign-in never attaches').toBe(false);
       expect(
         watch.identityAuthorizes().filter((u) => u.searchParams.get('acr_values') === 'mfa'),
-        'no step-up for a two-step sign-in',
-      ).toEqual([]);
+        'exactly one step-up for the host admin',
+      ).toHaveLength(1);
     });
 
     test('SIR-03 reloading while signed in stays in the app without asking Identity', async () => {
@@ -208,7 +215,7 @@ test.describe('Sign-in opens Identity directly (QC-826)', { tag: ['@regression',
       test.skip(!(await appIsUp()), `The host app is not running on ${env.appUrl}.`);
       const watch = await SignInWatch.attach(page);
       await page.goto(appUrl());
-      await new IdentityLoginPage(page).signInWithTwoStep(stranger, stranger.authenticatorKey!);
+      await new IdentityLoginPage(page).signIn(stranger);
 
       await expect(page).toHaveURL(appUrl('/authentication'), { timeout: 30_000 });
       const errorView = new AppSignInErrorView(page);

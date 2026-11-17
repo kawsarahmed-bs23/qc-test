@@ -67,17 +67,18 @@ export async function identityAccessToken(
   authenticatorKey: string | null = null,
 ): Promise<string> {
   const flow = new HostSignInFlow(page, env.hostClient!);
-  await flow.open();
+  // Two-step is policy-only: a host admin is sent back with acr_values=mfa (the host UI's step-up) when it has an authenticator.
+  await flow.open(authenticatorKey ? { acr_values: 'mfa' } : {});
   const identityOrigin = new URL(env.identityUrl).origin;
   if (page.url().startsWith(`${identityOrigin}/Account/Login`)) {
     await new IdentityLoginPage(page).signIn(credentials);
-    await page.waitForURL((url) => url.origin !== identityOrigin || /\/Account\/LoginWith2fa/i.test(url.pathname), { timeout: 30_000 }).catch(() => undefined);
-    if (/\/Account\/LoginWith2fa/i.test(new URL(page.url()).pathname)) {
-      if (!authenticatorKey) {
-        throw new Error(`Identity asks ${credentials.email} for two-step verification and no authenticator key is set.`);
-      }
-      await new IdentityTwoStepPage(page).verify(authenticatorKey);
+  }
+  await page.waitForURL((url) => url.origin !== identityOrigin || /\/Account\/LoginWith2fa/i.test(url.pathname), { timeout: 30_000 }).catch(() => undefined);
+  if (/\/Account\/LoginWith2fa/i.test(new URL(page.url()).pathname)) {
+    if (!authenticatorKey) {
+      throw new Error(`Identity asks ${credentials.email} for two-step verification and no authenticator key is set.`);
     }
+    await new IdentityTwoStepPage(page).verify(authenticatorKey);
   }
   return (await flow.tokens(request)).accessToken;
 }
