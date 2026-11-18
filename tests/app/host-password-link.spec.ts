@@ -143,7 +143,8 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: ['
     firstLink = passwordLinkIn(mail);
     expect(firstLink.email).toBe(ACTIVE);
     expect(firstLink.code).toMatch(/^[A-Za-z0-9_-]{20,}$/);
-    expect(new URL(firstLink.raw).pathname).toBe('/authentication/reset-password');
+    expect(new URL(firstLink.raw).pathname).toBe('/');
+    expect(new URL(firstLink.raw).hash).toMatch(/^#\/authentication\/reset-password\?/);
     expectNoPassword(mail, passwords.current);
 
     expect(Qc800HostUsers.password(ACTIVE)).toEqual(before);
@@ -303,7 +304,7 @@ test.describe('Host password emails carry a single-use link (QC-800)', { tag: ['
 
     const reset = new ResetPasswordPage(page);
     await reset.open({
-      raw: `http://localhost/authentication/reset-password?email=${encodeURIComponent(ACTIVE)}&code=bm90LWEtdG9rZW4`,
+      raw: `http://localhost/#/authentication/reset-password?email=${encodeURIComponent(ACTIVE)}&code=bm90LWEtdG9rZW4`,
       email: ACTIVE,
       code: 'bm90LWEtdG9rZW4',
     });

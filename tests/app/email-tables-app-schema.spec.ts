@@ -52,7 +52,9 @@ function expectPasswordLink(mail: Email, email: string, typedPassword: string): 
   const link = passwordLinkIn(mail);
   expect(link.email).toBe(email);
   expect(link.code).toMatch(/^[A-Za-z0-9_-]{20,}$/);
-  expect(new URL(link.raw).pathname).toBe('/authentication/reset-password');
+  const url = new URL(link.raw);
+  expect(url.pathname).toBe('/');
+  expect(url.hash.startsWith('#/authentication/reset-password?'), `the link opens the app route through the hash: ${url.hash.split('?')[0]}`).toBe(true);
   expect(mail.text).not.toContain(typedPassword);
   expect(mail.text).not.toMatch(/\{\{\s*Password\s*\}\}/i);
   expect(mail.text).not.toMatch(/(temporary|new)\s+password\s*(is)?\s*:/i);

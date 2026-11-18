@@ -134,13 +134,12 @@ export function passwordLinkIn(mail: Email): PasswordLinkUrl {
     /href="([^"]*\/authentication\/reset-password\?[^"]+)"/i.exec(mail.text) ?? /(https?:\/\/\S+\/authentication\/reset-password\?[^\s"<]+)/i.exec(mail.text);
   expect(match, `a reset-password link in ${mail.file}`).not.toBeNull();
   const raw = match![1].replace(/&amp;/g, '&');
-  const url = new URL(raw);
-  return { raw, email: url.searchParams.get('email') ?? '', code: url.searchParams.get('code') ?? '' };
+  const query = new URLSearchParams(new URL(raw).hash.split('?')[1] ?? '');
+  return { raw, email: query.get('email') ?? '', code: query.get('code') ?? '' };
 }
 
 export function appLinkFor(link: PasswordLinkUrl): string {
-  const url = new URL(link.raw);
-  return `${env.appUrl}/#${url.pathname}${url.search}`;
+  return `${env.appUrl}/${new URL(link.raw).hash}`;
 }
 
 export function tamper(code: string): string {

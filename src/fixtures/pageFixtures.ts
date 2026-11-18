@@ -5,6 +5,10 @@ import { ActivityPage, DashboardPage, HostNav } from '@pages/host.page';
 import { HostEnvironmentPage, HostFeaturesPage, HostFormPage, HostListPage, HostSignInSettingsPage, UserDetailPage } from '@pages/host-management.page';
 import { UserListPage } from '@pages/user-list.page';
 import { IdentityInvitePage } from '@pages/identity-invite.page';
+import { AppPasswordSignInPage, IdleWarningDialog, LockScreen, SessionStorageProbe, SessionTraffic } from '@pages/session-idle.page';
+import { HostSiteAddressPage } from '@pages/host-site-address.page';
+import { HostFaviconPage } from '@pages/host-favicon.page';
+import { JobDraftPage } from '@pages/job-draft.page';
 import { PlatformAdminsPage, PlatformSettingsPage } from '@pages/platform.page';
 import { HostReadinessCard, SettingTemplatePage } from '@pages/setting-template.page';
 import { IdentityBrandingView, IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage, IdentityTwoStepPage } from '@pages/identity-login.page';
@@ -94,6 +98,14 @@ type TestFixtures = {
   identityLogoutPage: IdentityLogoutPage;
   identityPasswordResetPage: IdentityPasswordResetPage;
   identityInvitePage: IdentityInvitePage;
+  appPasswordSignInPage: AppPasswordSignInPage;
+  idleWarningDialog: IdleWarningDialog;
+  lockScreen: LockScreen;
+  sessionStorageProbe: SessionStorageProbe;
+  sessionTraffic: SessionTraffic;
+  jobDraftPage: JobDraftPage;
+  hostFaviconPage: HostFaviconPage;
+  hostSiteAddressPage: HostSiteAddressPage;
   appSignInPage: AppSignInPage;
   planVsLivePage: PlanVsLivePage;
   ticketActivityPage: TicketActivityPage;
@@ -250,6 +262,30 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   identityInvitePage: async ({ page }, use) => {
     await use(new IdentityInvitePage(page));
+  },
+  appPasswordSignInPage: async ({ page }, use) => {
+    await use(new AppPasswordSignInPage(page));
+  },
+  idleWarningDialog: async ({ page }, use) => {
+    await use(new IdleWarningDialog(page));
+  },
+  lockScreen: async ({ page }, use) => {
+    await use(new LockScreen(page));
+  },
+  sessionStorageProbe: async ({ page }, use) => {
+    await use(new SessionStorageProbe(page));
+  },
+  sessionTraffic: async ({ page }, use) => {
+    await use(new SessionTraffic(page));
+  },
+  hostSiteAddressPage: async ({ page }, use) => {
+    await use(new HostSiteAddressPage(page));
+  },
+  hostFaviconPage: async ({ page }, use) => {
+    await use(new HostFaviconPage(page));
+  },
+  jobDraftPage: async ({ page }, use) => {
+    await use(new JobDraftPage(page));
   },
   appSignInPage: async ({ page }, use) => {
     await use(new AppSignInPage(page));
