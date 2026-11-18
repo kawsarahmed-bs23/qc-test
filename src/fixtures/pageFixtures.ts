@@ -56,6 +56,7 @@ import { NotifyBySmsApi } from '@api/notify-by-sms.api';
 import { ChangeProposalsApi, DriverChangesApi } from '@api/change-proposals.api';
 import { AddHostUuidPage } from '@pages/host-existing-uuid.page';
 import { HostExistingUuidApi } from '@api/host-existing-uuid.api';
+import { HostChangeSyncApi } from '@api/host-change-sync.api';
 
 export interface TargetHost {
   uuid: string;
@@ -174,6 +175,7 @@ type TestFixtures = {
   driverChangesApi: DriverChangesApi;
   addHostUuidPage: AddHostUuidPage;
   hostExistingUuidApi: HostExistingUuidApi;
+  hostChangeSyncApi: HostChangeSyncApi;
 };
 
 type WorkerFixtures = {
@@ -486,6 +488,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   hostExistingUuidApi: async ({ request }, use) => {
     await use(new HostExistingUuidApi(request));
+  },
+  hostChangeSyncApi: async ({ request }, use) => {
+    await use(new HostChangeSyncApi(request));
   },
 
   targetHost: [
