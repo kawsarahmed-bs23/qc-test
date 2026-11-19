@@ -360,12 +360,16 @@ test.describe('Driver flows: registration by invite and a three-load job hauled 
     });
   }
 
-  test('DFLOW-16 after the third load the host assignment stays Running (4) because Finish Day is not available yet (recorded)', async () => {
+  test('DFLOW-16 after the third load Finish Day is 202: the assignment is Complete (5) in DRIVERS and on the host', async () => {
     expect(job.trips.length, 'all loads were hauled').toBe(LOADS);
     await waitForQueues();
-    const status = assignmentStatus(job.id);
-    test.info().annotations.push({ type: 'host assignment status after 3 loads', description: String(status) });
-    expect(status, 'the assignment is not completed by end-haul; only Finish Day (409 stub) completes it').toBe(4);
+    expect(assignmentStatus(job.id), 'end-haul alone leaves the assignment Running').toBe(4);
+    const finished = await driver.finishDay(job.uuid, `${DFLOW_NOTES} done`);
+    expect(finished.status(), await finished.text()).toBe(202);
+    expect(driversValue(`SELECT Status FROM app.OrderAssignments WHERE OrderAssignmentUUID = '${job.uuid}'`), 'DRIVERS assignment').toBe('5');
+    await expect.poll(() => assignmentStatus(job.id), { message: 'DayFinished reaches the host', ...QUEUE }).toBe(5);
+    const again = await driver.finishDay(job.uuid);
+    expect(again.status(), 'finish-day on a Complete assignment').toBe(202);
   });
 
   test('DFLOW-17 my-tickets lists the three tickets and reprocess answers for a submitted ticket', async () => {
@@ -428,17 +432,13 @@ test.describe('Driver flows: registration by invite and a three-load job hauled 
     expect([200, 404]).toContain(eula.status());
   });
 
-  test('DFLOW-20 reopen-haul, finish-day and report-problem are not available yet: 409', async () => {
-    expect(job.trips.length).toBe(LOADS);
-    expect((await driver.reopenHaul(job.trips[0].uuid)).status(), 'reopen-haul').toBe(409);
-    expect((await driver.finishDay(job.uuid)).status(), 'finish-day').toBe(409);
-    expect((await driver.reportProblem(job.trips[0].uuid, DFLOW_NOTES)).status(), 'report-problem').toBe(409);
-  });
-
   const extra = {
     edit: { id: 0, uuid: '' },
     sync: { id: 0, uuid: '', tripUuid: '' },
     cancel: { id: 0, uuid: '' },
+    reopen: { id: 0, uuid: '', tripUuid: '' },
+    ops: { id: 0, uuid: '', tripUuid: '' },
+    late: { id: 0, uuid: '', first: '', last: '' },
   };
 
   const offerExtra = async (target: { id: number; uuid: string }, notes: string, loads: number) => {
@@ -462,6 +462,127 @@ test.describe('Driver flows: registration by invite and a three-load job hauled 
       })
       .toBe(`1|${loads}`);
   };
+
+  const haulLoad = async (target: { id: number; uuid: string }): Promise<string> => {
+    const tripUuid = randomUUID();
+    const begun = await driver.beginHaulWithTrip(target.uuid, tripUuid);
+    expect(begun.status(), await begun.text()).toBe(202);
+    await expect.poll(() => hostNumber(`SELECT COUNT(*) FROM app.Trips WHERE TripUUID = '${tripUuid}'`), { message: 'TripStarted creates the host trip', ...QUEUE }).toBe(1);
+    const ended = await driver.endHaul(tripUuid);
+    expect(ended.status(), await ended.text()).toBe(202);
+    await expect.poll(() => hostNumber(`SELECT Status FROM app.Trips WHERE TripUUID = '${tripUuid}'`), { message: 'TripCompleted reaches the host', ...QUEUE }).toBe(30);
+    return tripUuid;
+  };
+
+  const acceptExtra = async (target: { id: number; uuid: string }) => {
+    const accepted = await driver.accept(target.uuid);
+    expect(accepted.status(), await accepted.text()).toBe(202);
+    await expect.poll(() => assignmentStatus(target.id), { message: 'JobAccepted reaches the host', ...QUEUE }).toBe(2);
+  };
+
+  const driversTrip = (tripUuid: string) => driversNumber(`SELECT Status FROM app.Trips WHERE TripUUID = '${tripUuid}'`);
+  const hostTrip = (tripUuid: string) => hostNumber(`SELECT Status FROM app.Trips WHERE TripUUID = '${tripUuid}'`);
+  const commandCount = (type: string, key: string) => driversNumber(`SELECT COUNT(*) FROM app.DriverCommands WHERE CommandUUID = '${key}' AND CommandType = '${type}'`);
+  const problemNotes = (id: number) => hostNumber(`SELECT COUNT(*) FROM app.TripNotes WHERE OrderAssignmentID_FK = ${id} AND StatusType = 30 AND HowEntered = 20`);
+  const completionTimes = (tripUuid: string) =>
+    driversValue(`SELECT CONCAT(CONVERT(varchar(33), TripCompletedAt, 126), '|', ISNULL(CONVERT(varchar(33), ReopenUntil, 126), '')) FROM app.Trips WHERE TripUUID = '${tripUuid}'`)!;
+
+  test('DFLOW-20 reopen-haul makes the ended load Active, report-problem makes it Problem with a host note, and finish-day is 409 while a load is Active', async () => {
+    test.setTimeout(240_000);
+    await offerExtra(extra.reopen, 'reopen', 2);
+    await acceptExtra(extra.reopen);
+    extra.reopen.tripUuid = await haulLoad(extra.reopen);
+
+    const reopened = await driver.reopenHaul(extra.reopen.tripUuid);
+    expect(reopened.status(), await reopened.text()).toBe(202);
+    expect(driversTrip(extra.reopen.tripUuid), 'DRIVERS trip is Active').toBe(20);
+    await expect.poll(() => hostTrip(extra.reopen.tripUuid), { message: 'TripReopened reaches the host', ...QUEUE }).toBe(20);
+
+    const early = await driver.finishDay(extra.reopen.uuid);
+    expect(early.status(), await early.text()).toBe(409);
+    expect(await early.text()).toContain('End the load first.');
+    expect(driversValue(`SELECT Status FROM app.OrderAssignments WHERE OrderAssignmentUUID = '${extra.reopen.uuid}'`), 'the assignment is still Running').toBe('4');
+
+    const reported = await driver.reportProblem(extra.reopen.tripUuid, `${DFLOW_NOTES} problem`);
+    expect(reported.status(), await reported.text()).toBe(202);
+    expect(driversTrip(extra.reopen.tripUuid), 'DRIVERS trip is Problem').toBe(40);
+    await expect.poll(() => hostTrip(extra.reopen.tripUuid), { message: 'ProblemReported reaches the host', ...QUEUE }).toBe(40);
+    await expect.poll(() => problemNotes(extra.reopen.id), { message: 'the host keeps a Problem trip note', ...QUEUE }).toBe(1);
+
+    const closed = await driver.endHaul(extra.reopen.tripUuid);
+    expect(closed.status(), await closed.text()).toBe(202);
+    await expect.poll(() => hostTrip(extra.reopen.tripUuid), { message: 'the problem load ends on the host', ...QUEUE }).toBe(30);
+    await waitForQueues();
+  });
+
+  test('DFLOW-22 POST /sync reopen-haul, report-problem and finish-day are sent once and duplicate with the same key: one command per key and one host effect', async () => {
+    test.setTimeout(240_000);
+    await offerExtra(extra.ops, 'ops', 1);
+    await acceptExtra(extra.ops);
+    extra.ops.tripUuid = await haulLoad(extra.ops);
+
+    const reopenKey = randomUUID();
+    const reopenOp = { key: reopenKey, type: 'reopen-haul', targetUuid: extra.ops.tripUuid };
+    const [reopened] = await driver.syncOperations([reopenOp]);
+    expect(reopened, 'reopen-haul in /sync').toMatchObject({ key: reopenKey, status: 'sent' });
+    await expect.poll(() => hostTrip(extra.ops.tripUuid), { message: 'TripReopened reaches the host', ...QUEUE }).toBe(20);
+    const [reopenAgain] = await driver.syncOperations([reopenOp]);
+    expect(reopenAgain.status, 'the same reopen-haul key again').toBe('duplicate');
+
+    const problemKey = randomUUID();
+    const problemOp = { key: problemKey, type: 'report-problem', targetUuid: extra.ops.tripUuid, notes: `${DFLOW_NOTES} sync problem` };
+    const [reported] = await driver.syncOperations([problemOp]);
+    expect(reported, 'report-problem in /sync').toMatchObject({ key: problemKey, status: 'sent' });
+    await expect.poll(() => hostTrip(extra.ops.tripUuid), { message: 'ProblemReported reaches the host', ...QUEUE }).toBe(40);
+    const [problemAgain] = await driver.syncOperations([problemOp]);
+    expect(problemAgain.status, 'the same report-problem key again').toBe('duplicate');
+
+    const closed = await driver.endHaul(extra.ops.tripUuid);
+    expect(closed.status(), await closed.text()).toBe(202);
+    await expect.poll(() => hostTrip(extra.ops.tripUuid), { message: 'the problem load ends on the host', ...QUEUE }).toBe(30);
+
+    const finishKey = randomUUID();
+    const finishOp = { key: finishKey, type: 'finish-day', targetUuid: extra.ops.uuid, notes: `${DFLOW_NOTES} sync finish` };
+    const [finished] = await driver.syncOperations([finishOp]);
+    expect(finished, 'finish-day in /sync').toMatchObject({ key: finishKey, status: 'sent' });
+    await expect.poll(() => assignmentStatus(extra.ops.id), { message: 'DayFinished reaches the host', ...QUEUE }).toBe(5);
+    const [finishAgain] = await driver.syncOperations([finishOp]);
+    expect(finishAgain.status, 'the same finish-day key again').toBe('duplicate');
+
+    await waitForQueues();
+    expect(commandCount('reopen-haul', reopenKey), 'one reopen-haul command').toBe(1);
+    expect(commandCount('report-problem', problemKey), 'one report-problem command').toBe(1);
+    expect(commandCount('finish-day', finishKey), 'one finish-day command').toBe(1);
+    expect(problemNotes(extra.ops.id), 'one host Problem note after the replays').toBe(1);
+    expect(hostNumber(`SELECT COUNT(*) FROM app.Trips WHERE OrderAssignmentID_FK = ${extra.ops.id}`), 'one host trip').toBe(1);
+  });
+
+  test('DFLOW-23 reopen-haul is 409 on a load that has a later load and on a load ended more than 15 minutes ago, and nothing changes', async () => {
+    test.setTimeout(240_000);
+    await offerExtra(extra.late, 'late', 2);
+    await acceptExtra(extra.late);
+    extra.late.first = await haulLoad(extra.late);
+    extra.late.last = await haulLoad(extra.late);
+
+    const later = await driver.reopenHaul(extra.late.first);
+    expect(later.status(), await later.text()).toBe(409);
+    expect(await later.text()).toContain('has already started');
+    expect(driversTrip(extra.late.first), 'the first load stays Complete').toBe(30);
+
+    const original = completionTimes(extra.late.last);
+    const [completedAt, reopenUntil] = original.split('|');
+    try {
+      driversValue(`UPDATE app.Trips SET TripCompletedAt = DATEADD(minute, -20, TripCompletedAt), ReopenUntil = CASE WHEN ReopenUntil IS NULL THEN NULL ELSE DATEADD(minute, -20, ReopenUntil) END WHERE TripUUID = '${extra.late.last}'`);
+      const expired = await driver.reopenHaul(extra.late.last);
+      expect(expired.status(), await expired.text()).toBe(409);
+      expect(await expired.text()).toContain('more than 15 minutes ago');
+      expect(driversTrip(extra.late.last), 'the last load stays Complete').toBe(30);
+    } finally {
+      driversValue(`UPDATE app.Trips SET TripCompletedAt = '${completedAt}', ReopenUntil = ${reopenUntil ? `'${reopenUntil}'` : 'NULL'} WHERE TripUUID = '${extra.late.last}'`);
+    }
+    expect(completionTimes(extra.late.last), 'the completion time is restored').toBe(original);
+    expect(hostTrip(extra.late.last), 'the host trip stays Complete').toBe(30);
+  });
 
   test('DFLOW-30 a Host edit of the assignment (PUT api/assignment/{id}, loads 1 to 2) reaches DRIVERS and the driver app', async () => {
     expect(person.sub, 'flow 1 ran').not.toBe('');

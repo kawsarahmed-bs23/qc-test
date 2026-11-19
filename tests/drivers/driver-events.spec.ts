@@ -371,7 +371,7 @@ test.describe('Host and Drivers API exchange named Wolverine events instead of t
       .not.toBe(version);
   });
 
-  test('DEVT-11 the host api/driver-sync is back for the Driver App until the Drivers API is ready (not 404), and the Drivers API answers 409 only for reopen, finish day and report problem; ticket upload, reprocess, review and seen work since QC-873', async () => {
+  test('DEVT-11 the host api/driver-sync is back for the Driver App until the Drivers API is ready (not 404), and the Drivers API refuses a problem report on a complete load (409); ticket upload, reprocess, review and seen work since QC-873', async () => {
     expect(work.tripUuid, 'DEVT-03 began a load').not.toBe('');
     expect((await host.driverSync('GET')).status(), 'GET api/driver-sync').not.toBe(404);
     expect((await host.driverSync('POST')).status(), 'POST api/driver-sync').not.toBe(404);
@@ -379,8 +379,6 @@ test.describe('Host and Drivers API exchange named Wolverine events instead of t
     const trip = work.tripUuid;
     const file = { name: `${MARKER}-ticket.jpg`, mimeType: 'image/jpeg', buffer: fs.readFileSync(TICKET_JPEG) };
     const answers: Record<string, number> = {
-      'reopen-haul': (await driver.reopenHaul(trip)).status(),
-      'finish-day': (await driver.finishDay(work.uuid, MARKER)).status(),
       'report-problem': (await driver.reportProblem(trip, MARKER)).status(),
       'ticket upload': (await driver.uploadTicket(trip, file)).status(),
       reprocess: (await driver.reprocessTicket(trip)).status(),
@@ -388,8 +386,6 @@ test.describe('Host and Drivers API exchange named Wolverine events instead of t
       'threads seen': (await driver.markSeen(work.uuid)).status(),
     };
     expect(answers).toEqual({
-      'reopen-haul': 409,
-      'finish-day': 409,
       'report-problem': 409,
       'ticket upload': 202,
       reprocess: 202,

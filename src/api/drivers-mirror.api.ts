@@ -65,6 +65,7 @@ export interface DriverWorkRoute {
   method: 'GET' | 'POST' | 'PUT';
   path: string;
   data?: unknown;
+  idempotencyKey?: string;
 }
 
 export interface LocationPing {
@@ -130,16 +131,16 @@ export class DriversMirrorApi {
     return this.send({ method: 'POST', path: `/driver-assignment/reject-assignment/${orderAssignmentUuid}`, data: { note } });
   }
 
-  reopenHaul(tripUuid: string): Promise<APIResponse> {
-    return this.send({ method: 'PUT', path: `/driver/trips/${tripUuid}/reopen-haul` });
+  reopenHaul(tripUuid: string, idempotencyKey?: string): Promise<APIResponse> {
+    return this.send({ method: 'PUT', path: `/driver/trips/${tripUuid}/reopen-haul`, idempotencyKey });
   }
 
-  reportProblem(tripUuid: string, notes: string): Promise<APIResponse> {
-    return this.send({ method: 'POST', path: `/driver/trips/${tripUuid}/report-problem`, data: { notes } });
+  reportProblem(tripUuid: string, notes?: string, idempotencyKey?: string): Promise<APIResponse> {
+    return this.send({ method: 'POST', path: `/driver/trips/${tripUuid}/report-problem`, data: { notes }, idempotencyKey });
   }
 
-  finishDay(orderAssignmentUuid: string, notes?: string): Promise<APIResponse> {
-    return this.send({ method: 'POST', path: `/driver/assignments/${orderAssignmentUuid}/finish-day`, data: { notes, isOfflineSync: false } });
+  finishDay(orderAssignmentUuid: string, notes?: string, idempotencyKey?: string): Promise<APIResponse> {
+    return this.send({ method: 'POST', path: `/driver/assignments/${orderAssignmentUuid}/finish-day`, data: { notes, isOfflineSync: false }, idempotencyKey });
   }
 
   reprocessTicket(tripUuid: string): Promise<APIResponse> {
@@ -197,7 +198,7 @@ export class DriversMirrorApi {
   send(route: DriverWorkRoute, hostHeader: string | null = null): Promise<APIResponse> {
     return this.request.fetch(`${baseUrl()}${route.path}`, {
       method: route.method,
-      headers: this.headers(hostHeader),
+      headers: { ...this.headers(hostHeader), ...(route.idempotencyKey ? { 'Idempotency-Key': route.idempotencyKey } : {}) },
       data: route.data,
     });
   }

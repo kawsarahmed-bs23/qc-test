@@ -23,7 +23,6 @@ const OCR = { timeout: 90_000, intervals: [2_000, 5_000] };
 const RECEIVED = { timeout: 60_000, intervals: [1_000, 2_000, 5_000] };
 const TICKET_JPEG = path.join(TEST_DATA_DIR, 'qc803', 'logo-solid.jpg');
 const RUNNING_HAUL = 'This load is running. Ask the Driver to End Haul first.';
-const APP_UPDATE = 'This action is not available until the Driver App update.';
 
 function sqlText(value: string): string {
   return `N'${value.replace(/'/g, "''")}'`;
@@ -501,7 +500,7 @@ test.describe(
       ).toBe(1);
     });
 
-    test('TSUB-14 POST /sync applies mark-thread-seen, and reopen-haul, finish-day and report-problem stay conflict (409 on their routes) until the Driver App update', async () => {
+    test('TSUB-14 POST /sync applies mark-thread-seen, and report-problem on a complete load is conflict (409 on its route)', async () => {
       expect(work.tripUuid, 'TSUB-01 began a load').not.toBe('');
       const body = `${MARKER} sync seen ${Date.now()}`;
       expect((await host.sendDispatchMessage(driverId, work.id, body)).status()).toBe(200);
@@ -513,27 +512,18 @@ test.describe(
 
       const results = await driver.syncOperations([
         { key: randomUUID(), type: 'mark-thread-seen', targetUuid: work.uuid },
-        { key: randomUUID(), type: 'reopen-haul', targetUuid: work.tripUuid },
-        { key: randomUUID(), type: 'finish-day', targetUuid: work.uuid, notes: MARKER },
         { key: randomUUID(), type: 'report-problem', targetUuid: work.tripUuid, notes: MARKER },
       ]);
       expect(results.map((r) => `${r.type}:${r.status}`)).toEqual([
         'mark-thread-seen:sent',
-        'reopen-haul:conflict',
-        'finish-day:conflict',
         'report-problem:conflict',
       ]);
-      expect(results.slice(1).map((r) => r.error)).toEqual([APP_UPDATE, APP_UPDATE, APP_UPDATE]);
+      expect(results[1].error).toContain('already complete');
       expect(unseen(), 'mark-thread-seen marked the message').toBe(0);
 
-      for (const response of [
-        await driver.reopenHaul(work.tripUuid),
-        await driver.finishDay(work.uuid, MARKER),
-        await driver.reportProblem(work.tripUuid, MARKER),
-      ]) {
-        expect(response.status(), response.url()).toBe(409);
-        expect(await response.text(), response.url()).toContain(APP_UPDATE);
-      }
+      const refused = await driver.reportProblem(work.tripUuid, MARKER);
+      expect(refused.status(), refused.url()).toBe(409);
+      expect(await refused.text(), refused.url()).toContain('already complete');
       expect(driversTripStatus(work.tripUuid), 'the trip is unchanged').toBe(30);
     });
 
