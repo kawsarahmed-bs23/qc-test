@@ -34,7 +34,7 @@ test.describe('Dashboard and navigation (QC-742)', { tag: ['@regression'] }, () 
     }
   });
 
-  test('DASH-03 sidebar menu is Dashboard, Hosts, Settings template, Users, Activity, Admins, Settings and reaches each one (QC-745)', async ({
+  test('DASH-03 sidebar menu is Dashboard, Hosts, Settings template, Users, Activity, Admins, Settings, Service settings and reaches each one (QC-745, QC-1000)', async ({
     page,
     shell,
   }) => {
@@ -47,6 +47,7 @@ test.describe('Dashboard and navigation (QC-742)', { tag: ['@regression'] }, () 
       'Activity',
       'Admins',
       'Settings',
+      'Service settings',
     ]);
     await expect(shell.nav('dashboard')).toHaveClass(/active/);
 
@@ -71,6 +72,12 @@ test.describe('Dashboard and navigation (QC-742)', { tag: ['@regression'] }, () 
     await shell.nav('settings').click();
     await expect(page).toHaveURL(adminUrl('/settings'));
     await expect(shell.heading).toHaveText('Settings');
+
+    await shell.nav('service-settings').click();
+    await expect(page).toHaveURL(adminUrl('/settings/services'));
+    await expect(shell.heading).toHaveText('Service settings');
+    await expect(shell.nav('service-settings')).toHaveClass(/active/);
+    await expect(shell.nav('settings')).not.toHaveClass(/active/);
 
     await shell.nav('dashboard').click();
     await expect(page.locator('#kpis')).toBeVisible();
