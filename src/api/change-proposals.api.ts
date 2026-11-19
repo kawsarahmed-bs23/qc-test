@@ -141,11 +141,11 @@ export class DriverChangesApi {
     );
   }
 
-  saveTruckNumber(accessToken: string, truckNumber: string): Promise<DriversResult<{ TruckNumber: string | null }>> {
-    return this.read(this.request.put(`${baseUrl()}/me/settings`, { headers: headers(accessToken), data: { TruckNumber: truckNumber } }));
+  saveTruckNumber(accessToken: string, truckNumber: string): Promise<DriversResult<{ truckNumber: string | null }>> {
+    return this.read(this.request.put(`${baseUrl()}/me/settings`, { headers: headers(accessToken), data: { truckNumber } }));
   }
 
-  settings(accessToken: string): Promise<DriversResult<{ TruckNumber: string | null; NotifyBySms?: boolean | null }>> {
+  settings(accessToken: string): Promise<DriversResult<{ truckNumber: string | null; notifyBySms?: boolean | null }>> {
     return this.read(this.request.get(`${baseUrl()}/me/settings`, { headers: headers(accessToken) }));
   }
 

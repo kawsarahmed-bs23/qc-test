@@ -4,8 +4,8 @@ import { env } from '@config/env.config';
 export const TRUCK_NUMBER_MAX = 100;
 
 export interface DriverSettings {
-  TruckNumber: string | null;
-  NotifyBySms?: boolean | null;
+  truckNumber: string | null;
+  notifyBySms?: boolean | null;
 }
 
 export interface DriversEnvelope<T> {

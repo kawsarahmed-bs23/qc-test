@@ -136,7 +136,7 @@ test.describe('Driver settings and the as-hauled assignment copy in DRIVERS (QC-
 
   test('DSET-01 GET and PUT /me/settings without a token are 401', async ({ driverSettingsApi }) => {
     expect((await driverSettingsApi.settings(null)).status).toBe(401);
-    expect((await driverSettingsApi.saveSettings(null, { TruckNumber: 'T-902' })).status).toBe(401);
+    expect((await driverSettingsApi.saveSettings(null, { truckNumber: 'T-902' })).status).toBe(401);
   });
 
   test('DSET-02 a driver with no Driver account gets 404 with an error from GET and PUT /me/settings, and nothing is created', async ({
@@ -146,7 +146,7 @@ test.describe('Driver settings and the as-hauled assignment copy in DRIVERS (QC-
     expect(read.status).toBe(404);
     expect(read.body.errors?.length ?? 0).toBeGreaterThan(0);
 
-    const save = await driverSettingsApi.saveSettings(accessToken, { TruckNumber: 'T-902' });
+    const save = await driverSettingsApi.saveSettings(accessToken, { truckNumber: 'T-902' });
     expect(save.status).toBe(404);
     expect(save.body.errors?.length ?? 0).toBeGreaterThan(0);
     expect(accountRows(sub)).toBe(0);
@@ -163,38 +163,38 @@ test.describe('Driver settings and the as-hauled assignment copy in DRIVERS (QC-
     ensureAccount();
     const empty = await driverSettingsApi.settings(accessToken);
     expect(empty.status).toBe(200);
-    expect(empty.body.data?.TruckNumber ?? null).toBeNull();
+    expect(empty.body.data?.truckNumber ?? null).toBeNull();
 
-    const save = await driverSettingsApi.saveSettings(accessToken, { TruckNumber: '  T-902  ' });
+    const save = await driverSettingsApi.saveSettings(accessToken, { truckNumber: '  T-902  ' });
     expect(save.status, JSON.stringify(save.body)).toBe(200);
-    expect(save.body.data?.TruckNumber).toBe('T-902');
+    expect(save.body.data?.truckNumber).toBe('T-902');
 
     const read = await driverSettingsApi.settings(accessToken);
     expect(read.status).toBe(200);
-    expect(read.body.data?.TruckNumber).toBe('T-902');
+    expect(read.body.data?.truckNumber).toBe('T-902');
     expect(storedTruckNumber(sub)).toBe('T-902');
   });
 
   test('DSET-05 a blank truck number is stored as null', async ({ driverSettingsApi }) => {
     ensureAccount();
-    const save = await driverSettingsApi.saveSettings(accessToken, { TruckNumber: '   ' });
+    const save = await driverSettingsApi.saveSettings(accessToken, { truckNumber: '   ' });
     expect(save.status, JSON.stringify(save.body)).toBe(200);
-    expect(save.body.data?.TruckNumber ?? null).toBeNull();
-    expect((await driverSettingsApi.settings(accessToken)).body.data?.TruckNumber ?? null).toBeNull();
+    expect(save.body.data?.truckNumber ?? null).toBeNull();
+    expect((await driverSettingsApi.settings(accessToken)).body.data?.truckNumber ?? null).toBeNull();
     expect(storedTruckNumber(sub)).toBe('<null>');
   });
 
   test('DSET-06 a truck number over 100 characters is 400 on TruckNumber and changes nothing; exactly 100 is saved', async ({ driverSettingsApi }) => {
     ensureAccount();
-    expect((await driverSettingsApi.saveSettings(accessToken, { TruckNumber: 'T-902' })).status).toBe(200);
+    expect((await driverSettingsApi.saveSettings(accessToken, { truckNumber: 'T-902' })).status).toBe(200);
 
-    const tooLong = await driverSettingsApi.saveSettings(accessToken, { TruckNumber: 'X'.repeat(TRUCK_NUMBER_MAX + 1) });
+    const tooLong = await driverSettingsApi.saveSettings(accessToken, { truckNumber: 'X'.repeat(TRUCK_NUMBER_MAX + 1) });
     expect(tooLong.status, JSON.stringify(tooLong.body)).toBe(400);
     expect(tooLong.body.validationErrors?.TruckNumber?.length ?? 0).toBeGreaterThan(0);
     expect(storedTruckNumber(sub)).toBe('T-902');
 
     const longest = 'Y'.repeat(TRUCK_NUMBER_MAX);
-    const save = await driverSettingsApi.saveSettings(accessToken, { TruckNumber: longest });
+    const save = await driverSettingsApi.saveSettings(accessToken, { truckNumber: longest });
     expect(save.status, JSON.stringify(save.body)).toBe(200);
     expect(storedTruckNumber(sub)).toBe(longest);
   });
@@ -226,7 +226,7 @@ test.describe('Driver settings and the as-hauled assignment copy in DRIVERS (QC-
     driverSettingsApi,
   }) => {
     ensureAccount();
-    expect((await driverSettingsApi.saveSettings(accessToken, { TruckNumber: 'T-902' })).status).toBe(200);
+    expect((await driverSettingsApi.saveSettings(accessToken, { truckNumber: 'T-902' })).status).toBe(200);
 
     const list = await driverSettingsApi.threads(accessToken);
     expect(list.status, JSON.stringify(list.body)).toBe(200);
@@ -235,5 +235,21 @@ test.describe('Driver settings and the as-hauled assignment copy in DRIVERS (QC-
     const thread = await driverSettingsApi.thread(accessToken, assignmentUuid);
     expect(thread.status, JSON.stringify(thread.body)).toBe(200);
     expect(thread.body.data?.truckNumber).toBe(AS_HAULED.truckNumber);
+  });
+
+  test('DSET-09 GET and PUT /me/settings answer in camelCase (truckNumber, notifyBySms) and PUT takes a camelCase body (QC-1016)', async ({
+    driverSettingsApi,
+  }) => {
+    ensureAccount();
+    const save = await driverSettingsApi.saveSettings(accessToken, { truckNumber: 'T-1016' });
+    expect(save.status, JSON.stringify(save.body)).toBe(200);
+    expect(Object.keys(save.body.data ?? {}).sort()).toEqual(['notifyBySms', 'truckNumber']);
+    expect(save.body.data?.truckNumber).toBe('T-1016');
+
+    const read = await driverSettingsApi.settings(accessToken);
+    expect(read.status).toBe(200);
+    expect(Object.keys(read.body.data ?? {}).sort()).toEqual(['notifyBySms', 'truckNumber']);
+    expect(read.body.data?.truckNumber).toBe('T-1016');
+    expect(storedTruckNumber(sub)).toBe('T-1016');
   });
 });

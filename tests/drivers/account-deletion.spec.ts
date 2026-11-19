@@ -234,7 +234,7 @@ test.describe('Driver account deletion with a 30-day restore window and the purg
     for (const answer of [
       await accountDeletionApi.hosts(accessToken),
       await accountDeletionApi.settings(accessToken),
-      await accountDeletionApi.saveSettings(accessToken, { TruckNumber: 'DEL-902' }),
+      await accountDeletionApi.saveSettings(accessToken, { truckNumber: 'DEL-902' }),
     ]) {
       expect(answer.status, JSON.stringify(answer.body)).toBe(403);
       expectPendingDeletion(answer.body, requested!);

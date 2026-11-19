@@ -416,15 +416,15 @@ test.describe('Driver flows: registration by invite and a three-load job hauled 
     expect(read.status(), await read.text()).toBe(200);
     const readBody = await read.text();
     test.info().annotations.push({ type: 'GET /me/settings body', description: readBody.slice(0, 300) });
-    const original = JSON.parse(readBody).data as { NotifyBySms?: boolean; TruckNumber?: string | null };
-    const flipped = !(original.NotifyBySms ?? false);
+    const original = JSON.parse(readBody).data as { notifyBySms?: boolean; truckNumber?: string | null };
+    const flipped = !(original.notifyBySms ?? false);
     try {
       const written = await driver.send({ method: 'PUT', path: '/me/settings', data: { notifyBySms: flipped } });
       expect(written.status(), await written.text()).toBe(200);
       const writtenBody = await written.text();
-      expect((JSON.parse(writtenBody).data as { NotifyBySms?: boolean }).NotifyBySms, `PUT answer: ${writtenBody.slice(0, 300)}`).toBe(flipped);
+      expect((JSON.parse(writtenBody).data as { notifyBySms?: boolean }).notifyBySms, `PUT answer: ${writtenBody.slice(0, 300)}`).toBe(flipped);
     } finally {
-      const restored = await driver.send({ method: 'PUT', path: '/me/settings', data: { notifyBySms: original.NotifyBySms ?? false } });
+      const restored = await driver.send({ method: 'PUT', path: '/me/settings', data: { notifyBySms: original.notifyBySms ?? false } });
       expect(restored.status(), await restored.text()).toBe(200);
     }
     const eula = await driver.send({ method: 'GET', path: '/eula' });

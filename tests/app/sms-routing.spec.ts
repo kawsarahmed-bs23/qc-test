@@ -325,7 +325,7 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
     await expect.poll(() => driversMessageExists(row[2]), { message: 'MessageSent reaches DRIVERS', ...QUEUE }).toBe(true);
   });
 
-  test('SMSRT-05 PUT me/settings { NotifyBySms: false } sets DRIVERS NotifyBySms 0 and raises ContactVersion; DriverContactChanged turns the host Text messages off without wiping the host phone', async ({
+  test('SMSRT-05 PUT me/settings { notifyBySms: false } sets DRIVERS NotifyBySms 0 and raises ContactVersion; DriverContactChanged turns the host Text messages off without wiping the host phone', async ({
     passwordGrantApi,
     driverSettingsApi,
   }) => {
@@ -343,11 +343,11 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
     try {
       const read = await driverSettingsApi.settings(accessToken);
       expect(read.status, JSON.stringify(read.body)).toBe(200);
-      expect(read.body.data).toMatchObject({ NotifyBySms: true });
+      expect(read.body.data).toMatchObject({ notifyBySms: true });
 
-      const off = await driverSettingsApi.saveSettings(accessToken, { NotifyBySms: false });
+      const off = await driverSettingsApi.saveSettings(accessToken, { notifyBySms: false });
       expect(off.status, JSON.stringify(off.body)).toBe(200);
-      expect(off.body.data).toMatchObject({ NotifyBySms: false });
+      expect(off.body.data).toMatchObject({ notifyBySms: false });
       const turnedOff = driversTextSettingOf(linkedUuid);
       expect(turnedOff).toEqual({ notifyBySms: 0, contactVersion: (before.contactVersion ?? 0) + 1 });
 
@@ -357,7 +357,7 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
       expect(hostAfter.mobilePhone, 'a blank MobilePhone keeps the host setting phone').toBe(PHONE.linked);
       expect(hostPhoneOf(ids.linked), 'a blank MobilePhone keeps the host user phone').toBe(hostPhone);
     } finally {
-      const on = await driverSettingsApi.saveSettings(accessToken, { NotifyBySms: true });
+      const on = await driverSettingsApi.saveSettings(accessToken, { notifyBySms: true });
       expect(on.status, JSON.stringify(on.body)).toBe(200);
       setDriversPhone(linkedUuid, driversPhone);
     }
@@ -437,12 +437,12 @@ test.describe('Texts for linked Drivers come from the Drivers API; the Send SMS 
     expect(driverToken, 'SMSRT-05 got a Drivers API token').not.toBe('');
     setHostLanguageAndPush(ids.linked, 'es', 0);
     try {
-      const off = await driverSettingsApi.saveSettings(driverToken, { NotifyBySms: false });
+      const off = await driverSettingsApi.saveSettings(driverToken, { notifyBySms: false });
       expect(off.status, JSON.stringify(off.body)).toBe(200);
       await expect.poll(() => hostUserSettingOf(ids.linked).notifyBySms, { message: 'DriverContactChanged reaches the host', ...QUEUE }).toBe(0);
       expect(hostUserSettingOf(ids.linked)).toMatchObject({ languageCode: 'es', notifyByPush: 1 });
     } finally {
-      const on = await driverSettingsApi.saveSettings(driverToken, { NotifyBySms: true });
+      const on = await driverSettingsApi.saveSettings(driverToken, { notifyBySms: true });
       expect(on.status, JSON.stringify(on.body)).toBe(200);
     }
     expect(driversTextSettingOf(linkedUuid).notifyBySms).toBe(1);

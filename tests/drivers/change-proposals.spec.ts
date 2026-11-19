@@ -202,7 +202,7 @@ test.describe('Change proposals, Driver side: approving, declining and the rules
     const answered = await driverChangesApi.answer(world.driver.token, pending.changeUuid, 'approved');
     expect(answered.status, JSON.stringify(answered.body)).toBe(200);
     expect(driversUser(world.driver.sub).truckNumber, 'approving sets DriverSettings.TruckNumber').toBe('E2E933-A2');
-    expect((await driverChangesApi.settings(world.driver.token)).body.data?.TruckNumber).toBe('E2E933-A2');
+    expect((await driverChangesApi.settings(world.driver.token)).body.data?.truckNumber).toBe('E2E933-A2');
     await expect.poll(() => hostProposals(world.driver.hostUserId)[0]?.status, { message: 'ChangeAnswered reaches the Host', ...POLL }).toBe(STATUS.approved);
 
     await waitForQueues();
