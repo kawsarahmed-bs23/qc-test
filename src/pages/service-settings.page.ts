@@ -79,35 +79,23 @@ export class ServiceSettingsApi {
 }
 
 export class ServiceSettingsPage extends BasePage {
-  protected readonly path = '/#/settings/services';
+  protected readonly path = '/#/settings/drivers-api';
   readonly root: Locator;
-  readonly tabs: Locator;
   readonly groups: Locator;
   readonly confirmDialog: ConfirmDialog;
 
   constructor(page: Page) {
     super(page);
     this.root = page.locator('#service-settings-page');
-    this.tabs = page.locator('#service-settings-tabs');
     this.groups = page.locator('[data-settings-group]');
     this.confirmDialog = new ConfirmDialog(page);
   }
 
   async open(service: ServiceSlug = 'drivers-api'): Promise<void> {
-    await openAdmin(this.page, `/settings/services?service=${service}`);
+    await openAdmin(this.page, `/settings/${service}`);
     await expect(this.root).toBeVisible({ timeout: SIGN_IN_REDIRECT_TIMEOUT });
     await expect(this.root).toHaveAttribute('data-service', service);
     await waitForIdle(this.page);
-    await expect(this.groups.first()).toBeVisible();
-  }
-
-  tab(label: string): Locator {
-    return this.tabs.getByRole('tab', { name: label });
-  }
-
-  async selectTab(label: string, service: ServiceSlug): Promise<void> {
-    await this.tab(label).click();
-    await expect(this.root).toHaveAttribute('data-service', service);
     await expect(this.groups.first()).toBeVisible();
   }
 

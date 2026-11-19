@@ -41,14 +41,15 @@ function activity(service: ServiceSlug, since: number): { summary: string; creat
 test.describe('Service settings for the Drivers API and Identity (QC-1000)', { tag: ['@regression'] }, () => {
   test.skip(!canUseAdminApi(), 'ADMIN_API_URL is not set.');
 
-  test('SSET-01 the sidebar opens Service settings on the Drivers API tab with its groups in catalog order, and the Identity tab shows its own groups and keeps the choice in the URL', async ({
+  test('SSET-01 the sidebar opens the Drivers API settings page with its groups in catalog order, and the Identity settings page shows its own groups, each on its own address', async ({
     page,
     shell,
   }) => {
     const settings = new ServiceSettingsPage(page);
     await page.goto(adminUrl('/'));
-    await shell.nav('service-settings').click();
-    await expect(page).toHaveURL(adminUrl('/settings/services'));
+    await shell.nav('drivers-api-settings').click();
+    await expect(page).toHaveURL(adminUrl('/settings/drivers-api'));
+    await expect(shell.heading).toHaveText('Drivers API settings');
     await expect(settings.root).toHaveAttribute('data-service', 'drivers-api');
     await expect(settings.groups.first()).toBeVisible();
     expect(await settings.groupNames()).toEqual(SERVICE_SETTING_GROUPS['drivers-api']);
@@ -56,15 +57,19 @@ test.describe('Service settings for the Drivers API and Identity (QC-1000)', { t
     await expect(settings.header('Messaging')).toContainText('10 settings');
     await expect(settings.header('Messaging')).toContainText('need a restart');
     await expect(settings.root.locator('[data-setting-key]')).toHaveCount(SERVICE_SETTING_COUNTS['drivers-api'].total);
+    await expect(page.getByRole('tab')).toHaveCount(0);
 
-    await settings.selectTab('Identity', 'identity');
-    await expect(page).toHaveURL(/service=identity/);
+    await shell.nav('identity-settings').click();
+    await expect(page).toHaveURL(adminUrl('/settings/identity'));
+    await expect(shell.heading).toHaveText('Identity settings');
+    await expect(settings.root).toHaveAttribute('data-service', 'identity');
+    await expect(settings.groups.first()).toBeVisible();
     expect(await settings.groupNames()).toEqual(SERVICE_SETTING_GROUPS.identity);
     await expect(settings.root.locator('[data-setting-key]')).toHaveCount(SERVICE_SETTING_COUNTS.identity.total);
 
     await page.reload();
     await expect(settings.root).toHaveAttribute('data-service', 'identity');
-    await expect(settings.tab('Identity')).toHaveAttribute('aria-selected', 'true');
+    await expect(shell.heading).toHaveText('Identity settings');
   });
 
   test('SSET-02 GET api/service-settings returns every key with its flags, sends no secret value, and an unknown service is 404', async ({ request }) => {
