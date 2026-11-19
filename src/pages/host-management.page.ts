@@ -471,8 +471,12 @@ export class HostSignInSettingsPage {
   readonly inviteKeyAdd: Locator;
   readonly inviteKeysError: Locator;
   readonly inviteKeyFieldError: Locator;
+  readonly inviteKeyHostStatus: Locator;
+  readonly inviteKeyRegister: Locator;
 
   constructor(private readonly page: Page) {
+    this.inviteKeyHostStatus = page.locator('#invite-key-host-status');
+    this.inviteKeyRegister = page.locator('#invite-key-register');
     this.inviteKeysCard = page.locator('#invite-keys-card');
     this.inviteKeysHint = page.locator('#invite-keys-hint');
     this.inviteKeysList = page.locator('#invite-keys-list');
@@ -512,6 +516,12 @@ export class HostSignInSettingsPage {
 
   inviteKeyRemove(kid: string): Locator {
     return this.page.locator(`[id="invite-key-remove-${kid}"]`);
+  }
+
+  async registerHostInviteKey(): Promise<number> {
+    const saved = this.page.waitForResponse((r) => r.request().method() === 'POST' && /\/invite-keys\/register$/.test(new URL(r.url()).pathname));
+    await this.inviteKeyRegister.click();
+    return (await saved).status();
   }
 
   /** Pastes a JWK and presses Add key; returns the status of the PUT .../invite-keys. */

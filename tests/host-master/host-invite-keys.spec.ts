@@ -9,8 +9,27 @@ import { env } from '@config/env.config';
 import { canUseMasterDb } from '@utils/localDb';
 import { AdminApi, canUseAdminApi } from '@api/admin.api';
 import { newInviteKeyPair, signInviteLink } from '@utils/inviteLinks';
+import { MailSink } from '@pages/host-password-link.page';
+import { DflowHostAdminApi } from '@api/driver-flows.api';
 import {
+  HOST_KEY_ALREADY_REGISTERED,
+  activeInviteKeyCount,
+  createOrganisationUser,
+  hostOrganisationId,
+  hostInviteKid,
+  hostKeyStatus,
+  hostServiceToken,
+  readinessKey,
+  registerHostKey,
+} from '@api/invite-readiness.api';
+import {
+  HostUserInvitesApi,
+  Qc913Data,
+  identityAcceptsLink,
+  inviteEmailTo,
+  removeQc913Data,
   INVITE_KEYS_SAVED,
+  NOT_SENT_MESSAGE,
   PRIVATE_KEY_PAGE_MESSAGE,
   PRIVATE_KEY_REFUSED,
   masterHasInviteKeys,
@@ -147,4 +166,141 @@ test.describe('Host invite signing keys in HOST_MASTER (QC-915)', { tag: ['@regr
       }
     },
   );
+
+  test('HIK-05 a host that signs with a key HOST_MASTER does not hold is reported NOT registered by the API and on the card, with a Register button', async ({
+    hostSignInSettingsPage,
+    request,
+    targetHost,
+  }) => {
+    test.skip(!env.appApiUrl || !env.adminApiClient, 'Needs APP_API_URL and the Admin service client (ADMIN_API_CLIENT_ID/SECRET).');
+    removeTestInviteKeys();
+    const kid = await hostInviteKid(request);
+    test.skip(!kid, 'The host API has no invite signing key.');
+    const status = await hostKeyStatus(request, targetHost.uuid);
+    test.skip(status.state !== 'not-registered', `The host's key ${kid} is a permanent registered key (state ${status.state}); start the host API with a throwaway Invites:SigningKey.`);
+    expect(status).toEqual({ state: 'not-registered', kid });
+
+    await hostSignInSettingsPage.open(targetHost.uuid);
+    await expect(hostSignInSettingsPage.inviteKeyHostStatus).toHaveAttribute('data-state', 'not-registered');
+    await expect(hostSignInSettingsPage.inviteKeyHostStatus).toContainText(`Host signs with ${kid}`);
+    await expect(hostSignInSettingsPage.inviteKeyHostStatus).toContainText('NOT registered');
+    await expect(hostSignInSettingsPage.inviteKeyRegister).toBeVisible();
+    await expect(hostSignInSettingsPage.inviteKey(kid!)).toHaveCount(0);
+  });
+
+  test(
+    'HIK-06 Register adds the host key to HOST_MASTER once (a second call changes nothing), the card turns Registered, and Identity then takes a real invite the host sent',
+    { tag: '@write' },
+    async ({ hostSignInSettingsPage, request, targetHost }) => {
+      test.skip(!env.appApiUrl || !env.adminApiClient || !env.appAdmin, 'Needs APP_API_URL, the Admin service client and APP_ADMIN_EMAIL / APP_ADMIN_PASSWORD.');
+      test.skip(!(await MailSink.isListening()), `The SMTP sink is not listening on 127.0.0.1:${env.smtpSinkPort}.`);
+      test.skip(!Qc913Data.sinkIsConfigured(), 'EmailSettings MailServer/MailPort do not point at the SMTP sink.');
+      test.setTimeout(cacheWindow() + 240_000);
+      const kid = await hostInviteKid(request);
+      test.skip(!kid, 'The host API has no invite signing key.');
+      test.skip(!kid!.startsWith('e2e-qc913-'), `The host's key ${kid} is a permanent key, so this case does not register or remove it.`);
+      removeTestInviteKeys();
+      const before = masterInviteKeys(targetHost.uuid);
+      const email = qc913Email('hik-register');
+
+      try {
+        const admin = new DflowHostAdminApi(request);
+        expect(await admin.signIn(env.appAdmin!.email, env.appAdmin!.password), 'the host admin signs in').toBe(200);
+        const invites = new HostUserInvitesApi(request).withToken(admin.bearer());
+        removeQc913Data();
+        const created = await createOrganisationUser(request, admin.bearer(), email, hostOrganisationId());
+        expect(created.status, created.text).toBe(201);
+        const since = MailSink.mark();
+        const sent = await invites.sendInvite('manageusers', created.id!);
+        const mailBlocked = sent.status === 400 && sent.text.includes(NOT_SENT_MESSAGE);
+        if (!mailBlocked) expect(sent.status, sent.text).toBe(200);
+        const token = mailBlocked ? null : new URL((await inviteEmailTo(email, since)).acceptUrl).searchParams.get('t')!;
+
+        await hostSignInSettingsPage.open(targetHost.uuid);
+        await expect(hostSignInSettingsPage.inviteKeyHostStatus).toHaveAttribute('data-state', 'not-registered');
+        expect(await hostSignInSettingsPage.registerHostInviteKey()).toBe(200);
+        await expect(hostSignInSettingsPage.inviteKeyHostStatus).toHaveAttribute('data-state', 'registered');
+        await expect(hostSignInSettingsPage.inviteKeyHostStatus).toContainText('Registered');
+        await expect(hostSignInSettingsPage.inviteKeyRegister).toHaveCount(0);
+        await expect(hostSignInSettingsPage.inviteKey(kid!)).toContainText(/EC P-256, added/);
+        expect(activeInviteKeyCount(targetHost.uuid, kid!)).toBe(1);
+        expect(masterInviteKeys(targetHost.uuid).filter((k) => k.kid !== kid)).toEqual(before);
+
+        const again = await registerHostKey(request, targetHost.uuid);
+        expect(again.status, again.text).toBe(200);
+        expect(again.text).toContain(HOST_KEY_ALREADY_REGISTERED);
+        expect(activeInviteKeyCount(targetHost.uuid, kid!)).toBe(1);
+        expect(masterInviteKeys(targetHost.uuid)).toHaveLength(before.length + 1);
+        expect(await hostKeyStatus(request, targetHost.uuid)).toEqual({ state: 'registered', kid });
+
+        if (token === null) {
+          test.info().annotations.push({
+            type: 'skipped check',
+            description: 'The host API could not send the invite email (its SMTP client was built with credentials and needs TLS, the sink has none), so Identity was not asked to take a real invite.',
+          });
+        } else {
+          await expect
+            .poll(() => identityAcceptsLink(request, token), {
+              message: 'Identity reads the registered key within its cache window and takes the host invite',
+              timeout: cacheWindow(),
+              intervals: [5_000, 10_000, 15_000],
+            })
+            .toBe(true);
+        }
+      } finally {
+        removeQc913Data();
+        removeTestInviteKeys();
+        const after = masterInviteKeys(targetHost.uuid);
+        expect(after, 'the permanent host keys are as they were').toEqual(before);
+        for (const key of after.filter((k) => k.active)) expect(key.kid.startsWith('e2e-qc913-')).toBe(false);
+      }
+    },
+  );
+
+  test(
+    'HIK-07 a host with no invite key shows "Invites not set up" with no Register button, and Register is refused with 400 on the keys field',
+    { tag: '@write' },
+    async ({ hostSignInSettingsPage, request, targetHost }) => {
+      const status = await hostKeyStatus(request, targetHost.uuid);
+      test.skip(status.state !== 'not-set-up', `The host API has an invite key (state ${status.state}); this case needs a host API started without Invites:SigningKey.`);
+      const before = masterInviteKeys(targetHost.uuid);
+      expect(status.kid).toBeNull();
+
+      await hostSignInSettingsPage.open(targetHost.uuid);
+      await expect(hostSignInSettingsPage.inviteKeyHostStatus).toHaveAttribute('data-state', 'not-set-up');
+      await expect(hostSignInSettingsPage.inviteKeyHostStatus).toContainText('Invites not set up');
+      await expect(hostSignInSettingsPage.inviteKeyRegister).toHaveCount(0);
+
+      const refused = await registerHostKey(request, targetHost.uuid);
+      expect(refused.status, refused.text).toBe(400);
+      expect(refused.text).toMatch(/"keys"/i);
+      expect(masterInviteKeys(targetHost.uuid), 'HOST_MASTER is unchanged').toEqual(before);
+    },
+  );
+
+  test('HIK-08 GET api/invite-readiness/key on the host answers the public key to the Admin service token only: kid, kty, crv, x and y with no d; 401 with no token, 401 or 403 for a driver token', async ({
+    passwordGrantApi,
+    request,
+    targetHost,
+  }) => {
+    test.skip(!env.appApiUrl || !env.adminApiClient, 'Needs APP_API_URL and the Admin service client (ADMIN_API_CLIENT_ID/SECRET).');
+    const served = await readinessKey(request, await hostServiceToken(request));
+    expect(served.status, served.text).toBe(200);
+    expect(served.key).toMatchObject({ kty: 'EC', crv: 'P-256' });
+    expect(served.key!.kid).toBeTruthy();
+    expect(served.key!.x).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(served.key!.y).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(served.text, 'no private part is ever answered').not.toMatch(/"d"\s*:/);
+    expect((await hostKeyStatus(request, targetHost.uuid)).kid).toBe(served.key!.kid);
+
+    expect((await readinessKey(request, null)).status).toBe(401);
+
+    if (env.driver) {
+      const driver = await passwordGrantApi.passwordGrant(env.driver.email, env.driver.password);
+      expect(driver.status, 'the driver signs in').toBe(200);
+      expect([401, 403]).toContain((await readinessKey(request, driver.body.access_token!)).status);
+    } else {
+      test.info().annotations.push({ type: 'skipped check', description: 'DRIVER_EMAIL / DRIVER_PASSWORD are not set, so the driver token was not tried.' });
+    }
+  });
 });
