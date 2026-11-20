@@ -14,6 +14,7 @@ import { HostReadinessCard, SettingTemplatePage } from '@pages/setting-template.
 import { IdentityBrandingView, IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage, IdentityTwoStepPage } from '@pages/identity-login.page';
 import { AppSignInPage, CommsPage, DispatchOrdersPage, PlanVsLivePage, TicketActivityPage } from '@pages/app.page';
 import { CommsDayPage } from '@pages/comms-day.page';
+import { DispatchCustomerFilterPage } from '@pages/customer-filter.page';
 import { CommsComposer } from '@pages/comms-send-gate.page';
 import { ForgotPasswordPage, ResetPasswordPage } from '@pages/host-password-link.page';
 import { HostNotFoundPage, HostRootApi, HostSidebar } from '@pages/host-root-removed.page';
@@ -112,6 +113,7 @@ type TestFixtures = {
   ticketActivityPage: TicketActivityPage;
   commsPage: CommsPage;
   dispatchOrdersPage: DispatchOrdersPage;
+  dispatchCustomerFilterPage: DispatchCustomerFilterPage;
   commsDayPage: CommsDayPage;
   commsComposer: CommsComposer;
   forgotPasswordPage: ForgotPasswordPage;
@@ -294,6 +296,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
   },
   planVsLivePage: async ({ page }, use) => {
     await use(new PlanVsLivePage(page));
+  },
+  dispatchCustomerFilterPage: async ({ page }, use) => {
+    await use(new DispatchCustomerFilterPage(page));
   },
   ticketActivityPage: async ({ page }, use) => {
     await use(new TicketActivityPage(page));
