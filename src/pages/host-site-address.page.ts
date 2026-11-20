@@ -38,8 +38,8 @@ export class HostSiteAddressPage extends BasePage {
     this.completeLoginLink = page.locator('#invite-host-sign-in a');
     this.card = page.locator('.daxa-form');
     this.languageSwitch = this.card.locator('.qc-language');
-    this.english = this.languageSwitch.getByRole('link', { name: 'English', exact: true });
-    this.spanish = this.languageSwitch.getByRole('link', { name: 'Español', exact: true });
+    this.english = this.languageSwitch.getByRole('button', { name: 'English', exact: true });
+    this.spanish = this.languageSwitch.getByRole('button', { name: 'Español', exact: true });
   }
 
   async openLoginForHostClient(): Promise<void> {
@@ -79,7 +79,8 @@ export class HostSiteAddressPage extends BasePage {
     await expect(this.page.locator('.qc-language')).toHaveCount(1);
     await expect(this.languageSwitch).toBeVisible();
     await expect(this.languageSwitch).not.toHaveCSS('position', 'fixed');
-    const tiles = this.languageSwitch.getByRole('link');
+    await expect(this.languageSwitch).toHaveAttribute('method', /^post$/i);
+    const tiles = this.languageSwitch.getByRole('button');
     await expect(tiles).toHaveCount(2);
     await expect(tiles).toHaveText(['', '']);
     await expect(tiles.nth(0)).toHaveAccessibleName('English');
@@ -107,8 +108,8 @@ export class HostSiteAddressPage extends BasePage {
   async expectLanguage(language: 'en' | 'es'): Promise<void> {
     const [selected, other] = language === 'en' ? [this.english, this.spanish] : [this.spanish, this.english];
     await expect(this.page.locator('html')).toHaveAttribute('lang', language);
-    await expect(selected).toHaveAttribute('aria-current', 'true');
-    await expect(other).toHaveAttribute('aria-current', 'false');
+    await expect(selected).toHaveAttribute('aria-pressed', 'true');
+    await expect(other).toHaveAttribute('aria-pressed', 'false');
     await expect(selected).not.toHaveCSS('border-top-color', GREY_BORDER);
     await expect(selected).not.toHaveCSS('background-color', WHITE);
     await expect(other).toHaveCSS('border-top-color', GREY_BORDER);
