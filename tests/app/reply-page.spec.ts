@@ -12,6 +12,7 @@ import {
   REPLY_PAGE_EN,
   REPLY_PAGE_ES,
   REPLY_PAGE_MARKER,
+  REPLY_PAGE_THEME as THEME,
   assignmentStatusOf,
   driversHostName,
   driversHostUuid,
@@ -37,6 +38,7 @@ import {
 import { DriversMirrorApi } from '@api/drivers-mirror.api';
 
 const POSITION = { latitude: 30.2672, longitude: -97.7431 };
+const PHONE = { width: 390, height: 844 };
 const SID_PREFIX = `SME947${Date.now()}`;
 const THROWAWAY_DRIVER_EMAIL = 'e2e.qc947.driver@quarryconnect.test';
 const THROWAWAY_DRIVER_PHONE = '5125559947';
@@ -79,6 +81,7 @@ test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: [
       { slot: 'withdrawn', type: 10, state: 'withdrawn' },
       { slot: 'app', type: 10, state: 'app' },
       { slot: 'concurrent', type: 10, state: 'open' },
+      { slot: 'theme', type: 10, state: 'open' },
     ]);
   });
 
@@ -241,6 +244,85 @@ test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: [
     expect(assignmentStatusOf(s.concurrent.assignmentId)).toBe(winner === 'accept' ? ASSIGNMENT_STATUS.Accepted : ASSIGNMENT_STATUS.Rejected);
     expect(repliesTo(s.concurrent.messageId), 'only the winning answer is stored').toHaveLength(1);
     await expectDriversAnswer(s.concurrent.messageUuid, winner === 'accept' ? 'accept' : 'reject', 'web');
+  });
+
+  test.describe('Host UI theme and flag language switch on a phone (QC-1005)', () => {
+    test.use({ viewport: PHONE });
+
+    test('RPAGE-14 the language switch is a US then a Mexico flag tile named English and Español, with no words; the selected tile has the primary border and a tint, the other a grey border; pressing a flag switches the language and keeps it after a reload', async ({
+      replyPage,
+    }) => {
+      await replyPage.open(s.theme.code);
+      const tiles = replyPage.languageSwitch.getByRole('button');
+      await expect(tiles).toHaveCount(2);
+      await expect(tiles.nth(0)).toHaveAccessibleName('English');
+      await expect(tiles.nth(1)).toHaveAccessibleName('Español');
+      await expect(tiles).toHaveText(['', '']);
+      await expect(replyPage.english.locator('img')).toHaveAttribute('src', /flag-us\.png$/);
+      await expect(replyPage.spanish.locator('img')).toHaveAttribute('src', /flag-mx\.png$/);
+      for (const img of await replyPage.languageSwitch.locator('img').all()) {
+        expect(await img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth > 0), 'the flag image loads').toBe(true);
+      }
+
+      await replyPage.expectFlagSelected('en');
+      await replyPage.spanish.click();
+      await expect(replyPage.title).toHaveText(REPLY_PAGE_ES.jobOffer);
+      await replyPage.expectFlagSelected('es');
+      await replyPage.attachScreenshot('reply-page-phone-es-flags');
+
+      await replyPage.open(s.theme.code);
+      await expect(replyPage.title).toHaveText(REPLY_PAGE_ES.jobOffer);
+      await replyPage.expectFlagSelected('es');
+      await replyPage.english.click();
+      await expect(replyPage.title).toHaveText(REPLY_PAGE_EN.jobOffer);
+      await replyPage.expectFlagSelected('en');
+      expect(hostLinkAnswer(s.theme.messageId).option, 'switching language answers nothing').toBeNull();
+    });
+
+    test('RPAGE-15 in English and Spanish the open offer, comment form, answered, expired, withdrawn and not-found states use the Host UI theme: Sign In blue buttons at least 52px high, theme text, success and warning colours', async ({
+      replyPage,
+    }) => {
+      for (const language of ['en', 'es'] as const) {
+        const t = language === 'en' ? REPLY_PAGE_EN : REPLY_PAGE_ES;
+
+        await replyPage.open(s.theme.code);
+        if (language === 'es') await replyPage.spanish.click();
+        await expect(replyPage.title).toHaveText(t.jobOffer);
+        await replyPage.expectThemeVariables();
+        await expect(replyPage.title).toHaveCSS('color', THEME.text);
+        await expect(replyPage.option('accept')).toHaveCSS('background-color', THEME.primary);
+        await expect(replyPage.option('accept')).toHaveCSS('color', THEME.white);
+        await expect(replyPage.option('cant')).toHaveCSS('color', THEME.primary);
+        await expect(replyPage.option('cant')).toHaveCSS('border-top-color', THEME.primary);
+        expect((await replyPage.option('accept').boundingBox())!.height).toBeGreaterThanOrEqual(52);
+        await replyPage.attachScreenshot(`reply-page-phone-${language}-open`);
+
+        await replyPage.option('question').click();
+        await expect(replyPage.send).toBeVisible();
+        await expect(replyPage.send).toHaveCSS('background-color', THEME.primary);
+        expect((await replyPage.send.boundingBox())!.height).toBeGreaterThanOrEqual(52);
+        await replyPage.attachScreenshot(`reply-page-phone-${language}-comment`);
+
+        await replyPage.open(s.app.code);
+        await expect(replyPage.answer).toBeVisible();
+        await expect(replyPage.answer).toHaveCSS('color', THEME.success);
+        await replyPage.attachScreenshot(`reply-page-phone-${language}-answered`);
+
+        for (const slot of [s.expired, s.withdrawn]) {
+          await replyPage.open(slot.code);
+          await expect(replyPage.closed).toBeVisible();
+          await expect(replyPage.closed).toHaveCSS('color', THEME.warningText);
+          await expect(replyPage.closed).toHaveCSS('background-color', THEME.warningBackground);
+          await replyPage.attachScreenshot(`reply-page-phone-${language}-${slot === s.expired ? 'expired' : 'withdrawn'}`);
+        }
+
+        await replyPage.open('Zz9QC1005x');
+        await expect(replyPage.notFound).toBeVisible();
+        await expect(replyPage.notFound).toHaveCSS('color', THEME.label);
+        await replyPage.attachScreenshot(`reply-page-phone-${language}-not-found`);
+      }
+      expect(hostLinkAnswer(s.theme.messageId).option, 'opening the comment form answers nothing').toBeNull();
+    });
   });
 
   test.describe('SMS STOP and START (QC-947, QC-948)', () => {

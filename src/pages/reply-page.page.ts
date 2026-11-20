@@ -7,6 +7,24 @@ import { BasePage } from './base.page';
 
 export const REPLY_PAGE_MARKER = 'E2E-QC947-RP';
 
+export const REPLY_PAGE_THEME_VARIABLES = {
+  '--daxaColor': '#0f79f3',
+  '--blackColor': '#475569',
+  '--bodyColor': '#919aa3',
+  '--whiteColor': '#ffffff',
+} as const;
+
+export const REPLY_PAGE_THEME = {
+  primary: 'rgb(15, 121, 243)',
+  white: 'rgb(255, 255, 255)',
+  text: 'rgb(71, 85, 105)',
+  label: 'rgb(145, 154, 163)',
+  border: 'rgb(224, 224, 224)',
+  success: 'rgb(26, 127, 90)',
+  warningText: 'rgb(133, 100, 4)',
+  warningBackground: 'rgb(255, 243, 205)',
+} as const;
+
 export const ANSWERED_CHANNEL = { Sms: 10, InApp: 20, Web: 30 } as const;
 
 export const REPLY_PAGE_EN = {
@@ -69,6 +87,7 @@ export class ReplyPage extends BasePage {
   readonly notFound: Locator;
   readonly english: Locator;
   readonly spanish: Locator;
+  readonly languageSwitch: Locator;
 
   constructor(page: Page) {
     super(page);
@@ -86,6 +105,7 @@ export class ReplyPage extends BasePage {
     this.notFound = page.getByTestId('reply-not-found');
     this.english = page.getByTestId('reply-lang-en');
     this.spanish = page.getByTestId('reply-lang-es');
+    this.languageSwitch = page.getByRole('group', { name: 'Language' });
   }
 
   async open(code: string): Promise<void> {
@@ -127,6 +147,23 @@ export class ReplyPage extends BasePage {
   async expectAnswered(label: string, where: 'on the web' | 'by text' | 'in the app'): Promise<void> {
     await expect(this.answer).toHaveText(new RegExp(`^You replied ${label} ${where} at \\d{1,2}:\\d{2} (AM|PM)$`));
     await expect(this.options).toHaveCount(0);
+  }
+
+  async expectFlagSelected(language: 'en' | 'es'): Promise<void> {
+    const [selected, other] = language === 'en' ? [this.english, this.spanish] : [this.spanish, this.english];
+    await expect(selected).toHaveAttribute('aria-pressed', 'true');
+    await expect(other).toHaveAttribute('aria-pressed', 'false');
+    await expect(selected).toHaveCSS('border-top-color', REPLY_PAGE_THEME.primary);
+    await expect(selected).not.toHaveCSS('background-color', REPLY_PAGE_THEME.white);
+    await expect(other).toHaveCSS('border-top-color', REPLY_PAGE_THEME.border);
+    await expect(other).toHaveCSS('background-color', REPLY_PAGE_THEME.white);
+  }
+
+  async expectThemeVariables(): Promise<void> {
+    const root = this.page.locator(':root');
+    for (const [name, value] of Object.entries(REPLY_PAGE_THEME_VARIABLES)) {
+      await expect(root).toHaveCSS(name, value);
+    }
   }
 }
 
