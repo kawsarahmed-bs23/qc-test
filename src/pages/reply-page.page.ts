@@ -23,6 +23,7 @@ export const REPLY_PAGE_THEME = {
   success: 'rgb(26, 127, 90)',
   warningText: 'rgb(133, 100, 4)',
   warningBackground: 'rgb(255, 243, 205)',
+  darkText: 'rgb(217, 217, 217)',
 } as const;
 
 export const ANSWERED_CHANNEL = { Sms: 10, InApp: 20, Web: 30 } as const;
@@ -157,6 +158,22 @@ export class ReplyPage extends BasePage {
     await expect(selected).not.toHaveCSS('background-color', REPLY_PAGE_THEME.white);
     await expect(other).toHaveCSS('border-top-color', REPLY_PAGE_THEME.border);
     await expect(other).toHaveCSS('background-color', REPLY_PAGE_THEME.white);
+  }
+
+  async useDarkTheme(): Promise<void> {
+    await this.page.addInitScript(() => window.localStorage.setItem('isDarkTheme', 'true'));
+  }
+
+  async expectDarkTheme(): Promise<void> {
+    await expect(this.page.locator('body')).toHaveClass(/\bdark-theme\b/);
+    await expect(this.card).not.toHaveCSS('background-color', REPLY_PAGE_THEME.white);
+    await expect(this.title).toHaveCSS('color', REPLY_PAGE_THEME.darkText);
+    await expect(this.page.locator('.reply-host')).toHaveCSS('color', REPLY_PAGE_THEME.darkText);
+    for (const flag of [this.english, this.spanish]) {
+      await expect(flag).not.toHaveCSS('background-color', REPLY_PAGE_THEME.white);
+    }
+    const text = this.page.getByTestId('reply-text');
+    if (await text.count()) await expect(text).toHaveCSS('color', REPLY_PAGE_THEME.darkText);
   }
 
   async expectThemeVariables(): Promise<void> {

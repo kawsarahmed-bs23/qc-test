@@ -323,6 +323,25 @@ test.describe('Driver reply page at the host address (QC-947, QC-948)', { tag: [
       }
       expect(hostLinkAnswer(s.theme.messageId).option, 'opening the comment form answers nothing').toBeNull();
     });
+
+    test('RPAGE-16 with the Host UI dark theme on, the card, message, answer, closed notice and header stay readable: a dark card with light text instead of a white card with dark-theme tokens', async ({
+      replyPage,
+    }) => {
+      await replyPage.useDarkTheme();
+      for (const slot of [s.theme, s.app, s.expired]) {
+        await replyPage.open(slot.code);
+        await replyPage.expectDarkTheme();
+      }
+      await replyPage.open(s.theme.code);
+      await replyPage.option('question').click();
+      await expect(replyPage.commentText).toHaveCSS('color', THEME.darkText);
+      await expect(replyPage.commentText).not.toHaveCSS('background-color', THEME.white);
+      await replyPage.attachScreenshot('reply-page-phone-dark-comment');
+      await replyPage.open(s.app.code);
+      await replyPage.attachScreenshot('reply-page-phone-dark-answered');
+      await replyPage.open(s.expired.code);
+      await replyPage.attachScreenshot('reply-page-phone-dark-expired');
+    });
   });
 
   test.describe('SMS STOP and START (QC-947, QC-948)', () => {
