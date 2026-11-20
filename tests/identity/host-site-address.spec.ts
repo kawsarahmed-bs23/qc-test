@@ -23,10 +23,12 @@ test.describe("Identity pages use the host's own site address (QC-992 / QC-993)"
     await hostSiteAddressPage.expectContinueTo(new URL(hostSiteUrl()).host);
   });
 
-  test('SITE-02 the Terms and Privacy links in the sign-in footer open the host site legal routes', async ({ hostSiteAddressPage }) => {
+  test('SITE-02 the Terms and Privacy links in the sign-in footer open www.quarryconnect.com/terms and /privacy in a new tab, not the host site (QC-1006)', async ({
+    hostSiteAddressPage,
+  }) => {
     await hostSiteAddressPage.openLoginForHostClient();
 
-    await hostSiteAddressPage.expectFooterLinks(hostSiteUrl());
+    await hostSiteAddressPage.expectFooterLinks();
   });
 
   test.describe('Setup Complete after an invite', () => {
@@ -96,7 +98,7 @@ test.describe("Identity pages use the host's own site address (QC-992 / QC-993)"
       await identityInvitePage.openComplete(result);
 
       await hostSiteAddressPage.expectCompleteLoginLink(hostSiteUrl());
-      await hostSiteAddressPage.expectFooterLinks(hostSiteUrl());
+      await hostSiteAddressPage.expectFooterLinks();
     });
   });
 });
