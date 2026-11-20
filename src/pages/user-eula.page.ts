@@ -161,7 +161,9 @@ export class AppUserSession {
     const context = await newAppContext(browser);
     const page = await context.newPage();
     await openIdentitySignInFromApp(page);
-    await new IdentityLoginPage(page).signInWithTwoStep(user, user.authenticatorKey!);
+    const identity = new IdentityLoginPage(page);
+    if (user.authenticatorKey) await identity.signInWithTwoStep(user, user.authenticatorKey);
+    else await identity.signIn(user);
     await page.waitForURL((url) => url.origin === new URL(env.appUrl!).origin, { timeout: 30_000 });
     return new AppUserSession(context, page);
   }

@@ -85,6 +85,7 @@ export interface NewHostUser {
   firstName: string;
   lastName: string;
   isActive?: boolean;
+  organisationId?: number;
   password?: string;
   confirmPassword?: string;
 }
@@ -153,7 +154,7 @@ export class HostUserInvitesApi {
           phoneNumber: '',
           role: 'Sales',
           isActive: user.isActive ?? true,
-          organisationId: 0,
+          organisationId: user.organisationId ?? 0,
           organisationLocationId: 0,
           canSetOrganisation: false,
           isBillingContact: false,
@@ -178,6 +179,14 @@ export class HostUserInvitesApi {
 
   async sendInvite(area: UserArea, userId: string): Promise<HostAnswer<InviteStatusModel>> {
     return answer(await this.request.post(`${hostApiUrl()}/api/${area}/user-edit/${encodeURIComponent(userId)}/invite`, { headers: this.headers() }));
+  }
+
+  async sendPasswordReset(area: UserArea, userId: string): Promise<HostAnswer<{ sent: boolean; email: string | null; message: string }>> {
+    return answer(await this.request.post(`${hostApiUrl()}/api/${area}/user-edit/${encodeURIComponent(userId)}/password-reset`, { headers: this.headers() }));
+  }
+
+  async emailLog(area: UserArea, userId: string): Promise<HostAnswer<{ items: { kind: string; outcome: string; text: string; at: string }[]; identityAvailable: boolean }>> {
+    return answer(await this.request.get(`${hostApiUrl()}/api/${area}/user-edit/${encodeURIComponent(userId)}/email-log`, { headers: this.headers() }));
   }
 
   /** user-create with an explicit role (the helper above always sends Sales); "" is what the blank Role of QC-983 sends. */

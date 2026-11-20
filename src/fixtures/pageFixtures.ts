@@ -28,6 +28,7 @@ import { AdminUserEditPage, SignUserAgreementPage, UserEulaStatus, VendorUserEdi
 import { AdminUserFormPage, UserInviteSection, UserListSignInColumn, VendorSidebar, VendorUserFormPage } from '@pages/user-invites.page';
 import { HostInviteLinePage, HostUsersListPage, UserRefinementsFormPage } from '@pages/user-refinements.page';
 import { HostSignInMode, HostUserInvitesApi } from '@api/user-invites.api';
+import { IdentityHostApi } from '@api/user-signin-emails.api';
 import { DriverSettingsApi } from '@api/driver-settings.api';
 import { AccountDeletionApi } from '@api/account-deletion.api';
 import { HostDriverEventsApi } from '@api/driver-events.api';
@@ -163,6 +164,7 @@ type TestFixtures = {
 
   // API clients, built from `request`.
   hostUserInvitesApi: HostUserInvitesApi;
+  identityHostApi: IdentityHostApi;
   hostSignInMode: HostSignInMode;
   hostApi: HostApi;
   hostAccountApi: HostAccountApi;
@@ -415,6 +417,9 @@ export const test = base.extend<TestFixtures, WorkerFixtures>({
     await use(new HostUserInvitesApi(request));
   },
   hostSignInMode: async ({ request }, use) => {
+  identityHostApi: async ({ request }, use) => {
+    await use(new IdentityHostApi(request));
+  },
     await use(new HostSignInMode(request));
   },
   hostApi: async ({ request }, use) => {

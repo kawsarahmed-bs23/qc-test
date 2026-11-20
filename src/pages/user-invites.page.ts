@@ -5,6 +5,7 @@ import { env, type Credentials } from '@config/env.config';
 import { BasePage } from '@pages/base.page';
 import { IdentityInvitePage } from '@pages/identity-invite.page';
 import { IdentityLoginPage } from '@pages/identity-login.page';
+import { UserSigninEmailsSection } from '@pages/user-signin-emails.page';
 import { AppUserSession, openIdentitySignInFromApp } from '@pages/user-eula.page';
 import type { InviteStatus } from '@api/user-invites.api';
 import type { ThrowawayUser } from '@utils/throwawayUsers';
@@ -158,6 +159,7 @@ abstract class HostUserFormPage extends BasePage {
   readonly save: Locator;
   readonly toast: Locator;
   readonly signIn: UserInviteSection;
+  readonly emails: UserSigninEmailsSection;
 
   constructor(page: Page) {
     super(page);
@@ -173,6 +175,7 @@ abstract class HostUserFormPage extends BasePage {
     this.save = page.getByRole('button', { name: 'Save', exact: true });
     this.toast = page.locator('.success-snackbar');
     this.signIn = new UserInviteSection(page);
+    this.emails = new UserSigninEmailsSection(page);
   }
 
   /**
