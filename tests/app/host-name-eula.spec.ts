@@ -4,33 +4,24 @@
 // Local only. Host cases (TERMS-*) are API-level against APP_API_URL and run as e2e.qc909.* throwaway host admins seeded
 // by seed/identity-qc909-user.apply.sql + seed/host-qc909-user.apply.sql and removed with every acceptance they make.
 // They need the QC-986 Version 2 migration (an earlier, no longer live version must exist).
-// QC-909 Driver cases (DEULA-*) run as DRIVER_EMAIL against DRIVERS_API_URL; they only run when that driver has no
-// app.DriverSignedEulas row, and remove every row they add. They change with QC-988.
+// The Driver App cases (DEULA-*) moved to tests/drivers/driver-terms.spec.ts (DTERMS-*, QC-988).
 import { test, expect } from '@fixtures/pageFixtures';
 import { env } from '@config/env.config';
-import { canSeedLocalDb, canUseDriversDb, canUseIdentityDb } from '@utils/localDb';
+import { canSeedLocalDb, canUseIdentityDb } from '@utils/localDb';
 import type { ThrowawayUser } from '@utils/throwawayUsers';
 import { HostAccountApi, identityAccessToken } from '@api/host-account.api';
-import { decodeJwt, isDriversApiReachable, PasswordGrantApi } from '@api/password-grant.api';
 import {
-  DRIVER_APP_HOST_NAME,
-  DriverEulaApi,
-  HOST_NAME_TOKEN,
   HostEulaApi,
-  driverEulaRows,
   hostSignedEulas,
-  liveDriverEula,
   liveHostEula,
   liveHostTerms,
   moveAcceptanceToVersion,
   previousHostTerms,
   remainingQc909Rows,
-  removeDriverEulaAcceptances,
   removeQc909HostUsers,
   seedQc909HostUser,
   type HostTermsVersion,
 } from '@api/host-name-eula.api';
-import { newDriverUiSession } from '@pages/driver-eula.page';
 
 test.describe('Host Terms of Use and Privacy Policy: version check, no agreement text (QC-986)', { tag: ['@write', '@regression'] }, () => {
   test.describe.configure({ mode: 'serial' });
@@ -154,110 +145,4 @@ test.describe('Host Terms of Use and Privacy Policy: version check, no agreement
       }
     });
   }
-});
-
-test.describe('Driver App EULA from the drivers API (QC-909)', { tag: ['@write', '@regression'] }, () => {
-  test.describe.configure({ mode: 'serial' });
-  test.skip(
-    !canUseDriversDb() || !env.driver || !env.driversApiUrl || !env.mobileClientId,
-    'Needs DRIVERS_SQL_DATABASE, DRIVER_EMAIL / DRIVER_PASSWORD, DRIVERS_API_URL and MOBILE_CLIENT_ID.',
-  );
-
-  let api: DriverEulaApi;
-  let accessToken = '';
-  let driverId = '';
-  let live: { eulaUuid: string; version: string };
-
-  test.beforeAll(async ({ playwright }) => {
-    const request = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
-    test.skip(!(await isDriversApiReachable(request)), 'The drivers API (DRIVERS_API_URL) is not running.');
-    api = new DriverEulaApi(request);
-    live = liveDriverEula();
-
-    const grant = await new PasswordGrantApi(request).passwordGrant(env.driver!.email, env.driver!.password);
-    expect(grant.status, grant.body.error ?? '').toBe(200);
-    accessToken = grant.body.access_token!;
-    driverId = String(decodeJwt(accessToken).claims['sub']);
-    test.skip(driverEulaRows(driverId).count !== 0, 'The test driver already has a Driver App EULA acceptance that these cases did not make.');
-  });
-
-  test.afterAll(() => {
-    if (!driverId) return;
-    removeDriverEulaAcceptances(driverId);
-    expect(driverEulaRows(driverId).count, 'no Driver App EULA acceptance is left for the test driver').toBe(0);
-  });
-
-  test('DEULA-01 GET /eula without a token is 401', async () => {
-    expect((await api.latest(null)).status).toBe(401);
-  });
-
-  test('DEULA-02 GET /eula shows the live Driver App EULA naming Quarry Connect, with no token, not yet accepted', async () => {
-    const result = await api.latest(accessToken);
-
-    expect(result.status).toBe(200);
-    expect(result.body.data?.eulaUuid.toLowerCase()).toBe(live.eulaUuid);
-    expect(result.body.data?.version).toBe(live.version);
-    expect(result.body.data?.text).toContain(DRIVER_APP_HOST_NAME);
-    expect(result.body.data?.text).not.toContain(HOST_NAME_TOKEN);
-    expect(result.body.data?.accepted).toBe(false);
-  });
-
-  test('DEULA-03 accepting with a wrong or empty eulaUuid is 400 on EulaUuid and stores nothing', async () => {
-    for (const body of [{ eulaUuid: '00000000-0000-0000-0000-000000000001' }, {}]) {
-      const result = await api.accept(accessToken, body);
-      expect(result.status, JSON.stringify(body)).toBe(400);
-      expect(Object.keys(result.body.validationErrors ?? {}).map((key) => key.toLowerCase())).toContain('eulauuid');
-    }
-    expect(driverEulaRows(driverId).count).toBe(0);
-  });
-
-  test('DEULA-04 accepting the live eulaUuid is 200 and stores one acceptance with the filled text', async () => {
-    const result = await api.accept(accessToken, { eulaUuid: live.eulaUuid });
-
-    expect(result.status).toBe(200);
-    expect(result.body.data?.accepted).toBe(true);
-    expect(driverEulaRows(driverId)).toEqual({ count: 1, filledTexts: 1, tokenTexts: 0 });
-  });
-
-  test('DEULA-05 accepting again is idempotent: still 200 and one acceptance', async () => {
-    const result = await api.accept(accessToken, { eulaUuid: live.eulaUuid });
-
-    expect(result.status).toBe(200);
-    expect(result.body.data?.accepted).toBe(true);
-    expect(driverEulaRows(driverId).count).toBe(1);
-  });
-
-  test('DEULA-06 GET /eula reports accepted after the accept', async () => {
-    const result = await api.latest(accessToken);
-
-    expect(result.status).toBe(200);
-    expect(result.body.data?.accepted).toBe(true);
-  });
-
-  test('DEULA-07 a driver without an acceptance lands on the Driver UI EULA, sees Quarry Connect, accepts and reaches home', async ({
-    browser,
-    playwright,
-  }) => {
-    test.skip(!env.driverUiClient, 'DRIVER_UI_CLIENT_ID / DRIVER_UI_REDIRECT_URI are not set.');
-    const probe = await playwright.request.newContext();
-    const driverUiUp = await probe
-      .get(env.driverUiClient!.redirectUri, { timeout: 10_000 })
-      .then((response) => response.ok())
-      .catch(() => false);
-    await probe.dispose();
-    test.skip(!driverUiUp, `The Driver UI (${env.driverUiClient!.redirectUri}) is not running.`);
-
-    removeDriverEulaAcceptances(driverId);
-    const { context, eula } = await newDriverUiSession(browser);
-    try {
-      await eula.signIn(env.driver!);
-      await eula.expectShown();
-      await eula.expectTextNames(DRIVER_APP_HOST_NAME);
-      await eula.accept.click();
-      await eula.expectPastTheEula();
-      expect(driverEulaRows(driverId).count).toBe(1);
-    } finally {
-      await context.close();
-    }
-  });
 });

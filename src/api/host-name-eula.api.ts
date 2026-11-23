@@ -1,11 +1,9 @@
 import type { APIRequestContext, APIResponse } from '@playwright/test';
 import { env } from '@config/env.config';
 import {
-  queryDriversDb,
   queryIdentityDb,
   querySingleValue,
   queryUnicodeText,
-  runDriversSeedScript,
   runIdentitySeedScript,
   runSeedScript,
 } from '@utils/localDb';
@@ -13,7 +11,6 @@ import type { ThrowawayUser } from '@utils/throwawayUsers';
 import { newAuthenticatorKey } from '@utils/totp';
 
 export const HOST_NAME_TOKEN = '{{HostName}}';
-export const DRIVER_APP_HOST_NAME = 'Quarry Connect';
 const QC909_EMAIL_LIKE = 'e2e.qc909.%@quarryconnect.test';
 
 export interface LiveHostEula {
@@ -27,13 +24,6 @@ export interface HostSignedEula {
   docId: number;
   version: string;
   text: string | null;
-}
-
-export interface DriverEulaBody {
-  eulaUuid: string;
-  version: string;
-  text: string;
-  accepted: boolean;
 }
 
 export interface ApiResult<T = unknown> {
@@ -163,29 +153,6 @@ export function htmlEncode(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-export function driverEulaRows(userId: string): { count: number; filledTexts: number; tokenTexts: number } {
-  const row = queryDriversDb(
-    `SELECT CONCAT(COUNT(*), '|', SUM(CASE WHEN EulaText LIKE N'%${DRIVER_APP_HOST_NAME}%' THEN 1 ELSE 0 END), '|', SUM(CASE WHEN EulaText LIKE N'%{{HostName}}%' THEN 1 ELSE 0 END)) FROM app.DriverSignedEulas WHERE UserID_FK = N'${sqlText(userId)}'`,
-  );
-  const [count, filledTexts, tokenTexts] = (row ?? '0|0|0').split('|').map((value) => Number(value || '0'));
-  return { count, filledTexts, tokenTexts };
-}
-
-export function liveDriverEula(): { eulaUuid: string; version: string } {
-  const row = queryDriversDb(
-    `SELECT TOP 1 CONCAT(LOWER(CONVERT(nvarchar(36), DriverEulaUuid)), '|', Version) FROM app.DriverEulas WHERE Active = 1 ORDER BY DriverEulaID DESC`,
-  );
-  if (!row) {
-    throw new Error('DRIVERS has no active Driver App EULA (app.DriverEulas).');
-  }
-  const [eulaUuid, version] = row.split('|');
-  return { eulaUuid, version };
-}
-
-export function removeDriverEulaAcceptances(userId: string): void {
-  runDriversSeedScript('drivers-qc909.remove.sql', { UserId: userId });
-}
-
 /** The host API's EULA endpoints (QC-909), against APP_API_URL with a host access token from identityexchange. */
 export class HostEulaApi {
   constructor(private readonly request: APIRequestContext) {}
@@ -219,23 +186,6 @@ export class HostEulaApi {
   }
 }
 
-/** The drivers API's Driver App EULA endpoints (QC-909): GET /eula and POST /eula/accept. */
-export class DriverEulaApi {
-  constructor(private readonly request: APIRequestContext) {}
-
-  async latest(accessToken: string | null): Promise<ApiResult<{ data?: DriverEulaBody }>> {
-    return read(
-      await this.request.get(`${driversApiUrl()}/eula`, { headers: accessToken ? bearer(accessToken) : {}, ignoreHTTPSErrors: env.ignoreHttpsErrors }),
-    );
-  }
-
-  async accept(accessToken: string, body: Record<string, unknown>): Promise<ApiResult<{ data?: DriverEulaBody; validationErrors?: Record<string, string[]> }>> {
-    return read(
-      await this.request.post(`${driversApiUrl()}/eula/accept`, { headers: bearer(accessToken), data: body, ignoreHTTPSErrors: env.ignoreHttpsErrors }),
-    );
-  }
-}
-
 async function read<T>(response: APIResponse): Promise<ApiResult<T>> {
   const text = await response.text();
   let body: unknown = null;
@@ -254,11 +204,6 @@ function bearer(accessToken: string): Record<string, string> {
 function hostApiUrl(): string {
   if (!env.appApiUrl) throw new Error('APP_API_URL is not set.');
   return env.appApiUrl;
-}
-
-function driversApiUrl(): string {
-  if (!env.driversApiUrl) throw new Error('DRIVERS_API_URL is not set.');
-  return env.driversApiUrl;
 }
 
 function sqlText(value: string): string {

@@ -28,7 +28,7 @@ DELETE app.OrderAssignments WHERE DriverUserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.DriverCommands WHERE UserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.SyncTombstones WHERE UserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.DeviceTokens WHERE UserUUID IN (SELECT Id FROM @Uuids);
-DELETE app.DriverSignedEulas WHERE UserUUID IN (SELECT Id FROM @Uuids);
+DELETE auth.UserSignedEULAs WHERE UserId IN (SELECT LOWER(CONVERT(nvarchar(36), Id)) FROM @Uuids);
 DELETE app.DriverHostLinks WHERE UserUUID IN (SELECT Id FROM @Uuids);
 SET @Links = @@ROWCOUNT;
 IF EXISTS (SELECT 1 FROM @AuthUsers)

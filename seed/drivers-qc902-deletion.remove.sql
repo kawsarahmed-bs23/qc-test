@@ -40,7 +40,7 @@ DELETE app.OrderAssignments WHERE DriverUserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.DriverCommands WHERE UserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.SyncTombstones WHERE UserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.DeviceTokens WHERE UserUUID IN (SELECT Id FROM @Uuids);
-DELETE app.DriverSignedEulas WHERE UserUUID IN (SELECT Id FROM @Uuids);
+DELETE auth.UserSignedEULAs WHERE UserId IN (SELECT LOWER(CONVERT(nvarchar(36), Id)) FROM @Uuids);
 DELETE app.DriverHostLinks WHERE UserUUID IN (SELECT Id FROM @Uuids);
 IF OBJECT_ID(N'app.DriverInvites', N'U') IS NOT NULL
     DELETE app.DriverInvites WHERE InvitedUserID IN (SELECT Id FROM @Users);

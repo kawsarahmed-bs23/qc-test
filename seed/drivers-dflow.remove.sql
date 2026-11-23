@@ -35,7 +35,7 @@ DELETE app.SyncTombstones
 WHERE EntityUUID IN (SELECT Id FROM @Assignments) OR EntityUUID IN (SELECT Id FROM @Trips) OR EntityUUID IN (SELECT Id FROM @Tickets) OR UserUUID IN (SELECT Id FROM @Uuids);
 DELETE app.OrderAssignments WHERE OrderAssignmentUUID IN (SELECT Id FROM @Assignments);
 DELETE app.DeviceTokens WHERE UserUUID IN (SELECT Id FROM @Uuids);
-DELETE app.DriverSignedEulas WHERE UserUUID IN (SELECT Id FROM @Uuids);
+DELETE auth.UserSignedEULAs WHERE UserId IN (SELECT LOWER(CONVERT(nvarchar(36), Id)) FROM @Uuids);
 DELETE app.DriverHostLinks WHERE UserUUID IN (SELECT Id FROM @Uuids);
 SET @Links = @@ROWCOUNT;
 IF EXISTS (SELECT 1 FROM @AuthUsers)
