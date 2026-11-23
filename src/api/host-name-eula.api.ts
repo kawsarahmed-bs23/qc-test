@@ -95,6 +95,41 @@ export function liveHostEula(): LiveHostEula {
   return { docId: Number(docId), version, sha256, text: text ?? '' };
 }
 
+export interface HostTermsVersion {
+  docId: number;
+  version: string;
+  updatedOn: string;
+}
+
+/** The live Terms of Use and Privacy Policy version (QC-986), with ActiveDate as stored, MM/dd/yyyy. */
+export function liveHostTerms(): HostTermsVersion {
+  return hostTermsRow('WHERE IsLive = 1 ORDER BY ActiveDate DESC', 'The host database has no live Terms of Use and Privacy Policy version.');
+}
+
+/** The newest version that is no longer live: what a user accepted before the live version came out. */
+export function previousHostTerms(): HostTermsVersion | null {
+  const count = Number(querySingleValue('SELECT COUNT(*) FROM auth.UserEULADocs WHERE IsLive = 0'));
+  return count > 0 ? hostTermsRow('WHERE IsLive = 0 ORDER BY ActiveDate DESC', 'No earlier version.') : null;
+}
+
+function hostTermsRow(whereOrder: string, missing: string): HostTermsVersion {
+  const row = querySingleValue(
+    `SELECT TOP 1 CONCAT(UserEULADocId, '|', Version, '|', CONVERT(varchar(10), ActiveDate, 101)) FROM auth.UserEULADocs ${whereOrder}`,
+  );
+  if (!row) {
+    throw new Error(missing);
+  }
+  const [docId, version, updatedOn] = row.split('|');
+  return { docId: Number(docId), version, updatedOn };
+}
+
+/** Moves the user's seeded acceptance to an earlier version, as a user who accepted before the live version came out. */
+export function moveAcceptanceToVersion(userId: string, terms: HostTermsVersion): void {
+  querySingleValue(
+    `SET NOCOUNT ON; UPDATE auth.UserSignedEULAs SET UserEULADocId = ${terms.docId}, EULAVersion = N'${sqlText(terms.version)}' WHERE UserId = N'${sqlText(userId)}'; SELECT 1`,
+  );
+}
+
 export function hostOrganisationName(): string {
   const name = querySingleValue(
     `SELECT o.OrganisationName FROM auth.Organisations o JOIN app.EnvironmentSetting s ON s.PropertyName = N'HostOrganisationId' AND TRY_CONVERT(int, s.PropertyValue) = o.OrganisationId`,
@@ -155,7 +190,9 @@ export function removeDriverEulaAcceptances(userId: string): void {
 export class HostEulaApi {
   constructor(private readonly request: APIRequestContext) {}
 
-  async signUserEula(accessToken: string): Promise<ApiResult<{ data?: { userEULADocId: number; eulaVersion: string; userEULADocText: string } }>> {
+  async signUserEula(
+    accessToken: string,
+  ): Promise<ApiResult<{ data?: { userEULADocId: number; eulaVersion: string; termsUpdatedOn: string; userEULADocText?: string } }>> {
     return read(
       await this.request.get(`${hostApiUrl()}/api/UserSignedEULAs/SignUserEULA`, { headers: bearer(accessToken), ignoreHTTPSErrors: env.ignoreHttpsErrors }),
     );

@@ -1,12 +1,11 @@
-// QC-909: the user EULA names the Host through a {{HostName}} token. The host API fills it with the Host organisation's
-// name (HTML-encoded) in SignUserEULA and stores the live doc's id, version and filled text on Accept, whatever the
-// client sends. The drivers API serves its own Driver App EULA with {{HostName}} filled as "Quarry Connect".
-// Local only. Host cases (HEULA-*) are API-level against APP_API_URL and run as e2e.qc909.* throwaway host admins seeded
+// QC-986 (replaces the QC-909 host model): the Host keeps no agreement text. auth.UserEULADocs holds one row per version
+// and the live row only refers to the website; SignUserEULA returns the live version and its date; Accept stores the live
+// doc id and version with no text; the sign-in check passes only for an acceptance of the live version.
+// Local only. Host cases (TERMS-*) are API-level against APP_API_URL and run as e2e.qc909.* throwaway host admins seeded
 // by seed/identity-qc909-user.apply.sql + seed/host-qc909-user.apply.sql and removed with every acceptance they make.
-// The QC-909 migration (seed/host-qc909-eula-token.apply.sql) is applied only for these cases, and only when the live
-// EULA has no token yet; its rollback always runs after them and the text's SHA-256 must be back to the original.
-// Driver cases (DEULA-*) run as DRIVER_EMAIL against DRIVERS_API_URL; they only run when that driver has no
-// app.DriverSignedEulas row, and remove every row they add.
+// They need the QC-986 Version 2 migration (an earlier, no longer live version must exist).
+// QC-909 Driver cases (DEULA-*) run as DRIVER_EMAIL against DRIVERS_API_URL; they only run when that driver has no
+// app.DriverSignedEulas row, and remove every row they add. They change with QC-988.
 import { test, expect } from '@fixtures/pageFixtures';
 import { env } from '@config/env.config';
 import { canSeedLocalDb, canUseDriversDb, canUseIdentityDb } from '@utils/localDb';
@@ -18,23 +17,22 @@ import {
   DriverEulaApi,
   HOST_NAME_TOKEN,
   HostEulaApi,
-  applyHostNameToken,
   driverEulaRows,
-  hostOrganisationName,
   hostSignedEulas,
-  htmlEncode,
   liveDriverEula,
   liveHostEula,
+  liveHostTerms,
+  moveAcceptanceToVersion,
+  previousHostTerms,
   remainingQc909Rows,
   removeDriverEulaAcceptances,
   removeQc909HostUsers,
-  rollBackHostNameToken,
   seedQc909HostUser,
-  type LiveHostEula,
+  type HostTermsVersion,
 } from '@api/host-name-eula.api';
 import { newDriverUiSession } from '@pages/driver-eula.page';
 
-test.describe('Host EULA names the Host through {{HostName}} (QC-909)', { tag: ['@write', '@regression'] }, () => {
+test.describe('Host Terms of Use and Privacy Policy: version check, no agreement text (QC-986)', { tag: ['@write', '@regression'] }, () => {
   test.describe.configure({ mode: 'serial' });
   test.skip(
     !canSeedLocalDb() || !canUseIdentityDb() || !env.admin || !env.appApiUrl || !env.hostClient,
@@ -42,27 +40,35 @@ test.describe('Host EULA names the Host through {{HostName}} (QC-909)', { tag: [
   );
 
   let api: HostEulaApi;
-  let original: LiveHostEula;
-  let tokenApplied = false;
-  let tokenized: LiveHostEula;
-  let filledText: string;
+  let live: HostTermsVersion;
+  let previous: HostTermsVersion;
   let fresh: ThrowawayUser;
-  let prior: ThrowawayUser;
-  const tokens: Record<'fresh' | 'prior', string> = { fresh: '', prior: '' };
+  let older: ThrowawayUser;
+  let current: ThrowawayUser;
+  const tokens: Record<'fresh' | 'older' | 'current', string> = { fresh: '', older: '', current: '' };
 
   test.beforeAll(async ({ browser, playwright }) => {
-    test.setTimeout(240_000);
+    test.setTimeout(300_000);
     const request = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
     const probe = await request.get(`${env.appApiUrl}/api/Account/CheckUserEULASign`).catch(() => null);
     test.skip(probe?.status() !== 401, `The host API (APP_API_URL ${env.appApiUrl}) is not running.`);
     api = new HostEulaApi(request);
 
+    live = liveHostTerms();
+    const earlier = previousHostTerms();
+    test.skip(!earlier, 'The host database has only one version; the QC-986 Version 2 migration has not run.');
+    previous = earlier!;
+
     removeQc909HostUsers();
     fresh = seedQc909HostUser('fresh', 'none');
-    prior = seedQc909HostUser('prior', 'accepted');
+    older = seedQc909HostUser('older', 'accepted');
+    current = seedQc909HostUser('current', 'accepted');
+    moveAcceptanceToVersion(older.userId, previous);
+
     for (const [key, user] of [
       ['fresh', fresh],
-      ['prior', prior],
+      ['older', older],
+      ['current', current],
     ] as const) {
       const context = await browser.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors, storageState: { cookies: [], origins: [] } });
       try {
@@ -74,69 +80,80 @@ test.describe('Host EULA names the Host through {{HostName}} (QC-909)', { tag: [
         await context.close();
       }
     }
-
-    original = liveHostEula();
-    if (!original.text.includes(HOST_NAME_TOKEN)) {
-      tokenApplied = true;
-      applyHostNameToken();
-    }
-    tokenized = liveHostEula();
-    filledText = tokenized.text.split(HOST_NAME_TOKEN).join(htmlEncode(hostOrganisationName()));
   });
 
   test.afterAll(() => {
-    try {
-      if (tokenApplied) {
-        rollBackHostNameToken();
-        expect(liveHostEula().sha256, 'the live EULA text is back to its original SHA-256').toBe(original.sha256);
-      }
-    } finally {
-      removeQc909HostUsers();
-      expect(remainingQc909Rows()).toEqual({ hostUsers: 0, acceptances: 0, identityUsers: 0 });
-    }
+    removeQc909HostUsers();
+    expect(remainingQc909Rows()).toEqual({ hostUsers: 0, acceptances: 0, identityUsers: 0 });
   });
 
-  test('HEULA-01 SignUserEULA returns the live EULA with {{HostName}} filled by the Host organisation name', async () => {
-    expect(tokenized.text, 'the live EULA uses the token while these cases run').toContain(HOST_NAME_TOKEN);
-
+  test('TERMS-01 SignUserEULA returns the live version and its date as MM/dd/yyyy, with no agreement text', async () => {
     const result = await api.signUserEula(tokens.fresh);
 
     expect(result.status).toBe(200);
-    expect(result.body.data?.userEULADocId).toBe(tokenized.docId);
-    expect(result.body.data?.eulaVersion).toBe(tokenized.version);
-    expect(result.body.data?.userEULADocText).not.toContain(HOST_NAME_TOKEN);
-    expect(result.body.data?.userEULADocText).toContain(htmlEncode(hostOrganisationName()));
-    expect(result.body.data?.userEULADocText).toBe(filledText);
+    expect(result.body.data?.userEULADocId).toBe(live.docId);
+    expect(result.body.data?.eulaVersion).toBe(live.version);
+    expect(result.body.data?.termsUpdatedOn).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    expect(result.body.data?.termsUpdatedOn, 'the date is the ActiveDate as stored').toBe(live.updatedOn);
+    expect(result.body.data).not.toHaveProperty('userEULADocText');
+    expect(liveHostEula().text, 'the live row holds only the reference').toBe('See quarryconnect.com/terms and quarryconnect.com/privacy for language');
   });
 
-  test('HEULA-02 a user who never accepted is not signed', async () => {
+  test('TERMS-02 a user with no acceptance is asked to accept', async () => {
     expect(await api.hasSignedLatest(tokens.fresh)).toBe(false);
     expect(hostSignedEulas(fresh.userId)).toEqual([]);
   });
 
-  test('HEULA-03 Accept ignores a tampered body and stores the live doc id, version and the filled text', async () => {
-    const result = await api.accept(tokens.fresh, { userEULADocId: 999, eulaVersion: '9.9', userEULADocText: 'TAMPERED', userId: prior.userId });
+  test('TERMS-03 a user who accepted only an earlier version is asked to accept', async () => {
+    expect(hostSignedEulas(older.userId).map((row) => row.version)).toEqual([previous.version]);
+    expect(await api.hasSignedLatest(tokens.older)).toBe(false);
+  });
+
+  test('TERMS-04 a user who accepted the live version is not asked', async () => {
+    expect(hostSignedEulas(current.userId).map((row) => row.version)).toEqual([live.version]);
+    expect(await api.hasSignedLatest(tokens.current)).toBe(true);
+  });
+
+  test('TERMS-05 Accept ignores a tampered body and stores the live doc id and version with no text', async () => {
+    const result = await api.accept(tokens.fresh, { userEULADocId: 999, eulaVersion: '9.9', userEULADocText: 'TAMPERED', userId: current.userId });
 
     expect(result.status).toBe(200);
     expect(result.body.data).toBe(true);
     const rows = hostSignedEulas(fresh.userId);
     expect(rows).toHaveLength(1);
-    expect(rows[0].docId).toBe(tokenized.docId);
-    expect(rows[0].version).toBe(tokenized.version);
-    expect(rows[0].text).not.toContain('TAMPERED');
-    expect(rows[0].text).not.toContain(HOST_NAME_TOKEN);
-    expect(rows[0].text).toBe(filledText);
-    expect(hostSignedEulas(prior.userId), "the body's userId does not sign for another user").toHaveLength(1);
+    expect(rows[0].docId).toBe(live.docId);
+    expect(rows[0].version).toBe(live.version);
+    expect(rows[0].text, 'no agreement text is stored with the acceptance').toBeNull();
+    expect(hostSignedEulas(current.userId), "the body's userId does not sign for another user").toHaveLength(1);
     expect(await api.hasSignedLatest(tokens.fresh)).toBe(true);
   });
 
-  test('HEULA-04 a user who accepted before the token change is still signed without accepting again', async () => {
-    expect(await api.hasSignedLatest(tokens.prior)).toBe(true);
-    const rows = hostSignedEulas(prior.userId);
-    expect(rows).toHaveLength(1);
-    expect(rows[0].docId).toBe(original.docId);
-    expect(rows[0].text, 'the pre-QC-909 acceptance has no stored text').toBeNull();
+  test('TERMS-06 accepting after an earlier version adds a new row and keeps the old one; accepting again adds nothing', async () => {
+    expect((await api.accept(tokens.older, {})).body.data).toBe(true);
+    expect((await api.accept(tokens.older, {})).body.data).toBe(true);
+
+    const rows = hostSignedEulas(older.userId);
+    expect(rows.map((row) => row.version).sort()).toEqual([previous.version, live.version].sort());
+    expect(await api.hasSignedLatest(tokens.older)).toBe(true);
   });
+
+  for (const [name, route, website] of [
+    ['TERMS-07', '/legal/terms', 'https://www.quarryconnect.com/terms'],
+    ['TERMS-08', '/legal/privacy', 'https://www.quarryconnect.com/privacy'],
+  ] as const) {
+    test(`${name} ${route} leaves the Host site for ${website}`, async ({ browser }) => {
+      test.skip(!env.appUrl, 'APP_URL is not set.');
+      const context = await browser.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors, storageState: { cookies: [], origins: [] } });
+      try {
+        const page = await context.newPage();
+        await page.route('https://www.quarryconnect.com/**', (r) => r.fulfill({ status: 200, contentType: 'text/html', body: '<h1>website</h1>' }));
+        await page.goto(`${env.appUrl}/#${route}`);
+        await expect(page).toHaveURL(website, { timeout: 30_000 });
+      } finally {
+        await context.close();
+      }
+    });
+  }
 });
 
 test.describe('Driver App EULA from the drivers API (QC-909)', { tag: ['@write', '@regression'] }, () => {

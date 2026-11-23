@@ -10,9 +10,9 @@ import type { ThrowawayUser } from '@utils/throwawayUsers';
 import { newAuthenticatorKey } from '@utils/totp';
 
 export const QC888_EMAIL_LIKE = 'e2e.qc888.%@quarryconnect.test';
-export const EULA_REJECTED_SIGN_IN = 'User EULA was rejected. Please contact the Administrator.';
-export const EULA_RESET_MESSAGE = 'EULA reset. The user will be asked to accept it at their next login.';
-export const EULA_NOT_REJECTED_MESSAGE = 'User has not rejected the EULA.';
+export const EULA_REJECTED_SIGN_IN = 'Terms of Use and Privacy Policy were rejected. Please contact the Administrator.';
+export const EULA_RESET_MESSAGE = 'Terms of Use and Privacy Policy acceptance reset. The user will be asked to accept at their next login.';
+export const EULA_NOT_REJECTED_MESSAGE = 'User has not rejected the Terms of Use and Privacy Policy.';
 export const EULA_ROUTE = '/legal/sign-user-agreement';
 
 export const HOST_ORGANISATION_ID = 30;
@@ -215,24 +215,24 @@ export class UserEulaStatus {
     this.row = page.locator('#eula-status');
     this.resetButton = page.locator('#reset-eula');
     this.dialog = page.getByRole('dialog');
-    this.dialogConfirm = this.dialog.getByRole('button', { name: 'Reset EULA' });
+    this.dialogConfirm = this.dialog.getByRole('button', { name: 'Reset acceptance' });
     this.successToast = page.locator('.success-snackbar');
   }
 
   async expectRejected(on: string): Promise<void> {
-    await expect(this.row).toHaveText(new RegExp(`^\\s*EULA:\\s*Rejected on ${escapeRegExp(on)}\\s*Reset EULA\\s*$`));
+    await expect(this.row).toHaveText(new RegExp(`^\\s*Terms of Use and Privacy Policy:\\s*Rejected on ${escapeRegExp(on)}\\s*Reset acceptance\\s*$`));
     await expect(this.resetButton).toBeVisible();
     await expect(this.resetButton).toBeEnabled();
   }
 
   async expectAccepted(on: string | RegExp): Promise<void> {
     const date = typeof on === 'string' ? escapeRegExp(on) : on.source;
-    await expect(this.row).toHaveText(new RegExp(`^\\s*EULA:\\s*Accepted on ${date}\\s*$`));
+    await expect(this.row).toHaveText(new RegExp(`^\\s*Terms of Use and Privacy Policy:\\s*Accepted on ${date}\\s*$`));
     await expect(this.resetButton).toHaveCount(0);
   }
 
   async expectNotYetAccepted(): Promise<void> {
-    await expect(this.row).toHaveText(/^\s*EULA:\s*Not yet accepted\s*$/);
+    await expect(this.row).toHaveText(/^\s*Terms of Use and Privacy Policy:\s*Not yet accepted\s*$/);
     await expect(this.resetButton).toHaveCount(0);
   }
 
@@ -247,8 +247,10 @@ export class UserEulaStatus {
   }
 
   async expectConfirmFor(userName: string): Promise<void> {
-    await expect(this.dialog).toContainText('Reset EULA');
-    await expect(this.dialog).toContainText(`Reset the EULA for ${userName}? They will be asked to accept it at their next login.`);
+    await expect(this.dialog).toContainText('Reset acceptance');
+    await expect(this.dialog).toContainText(
+      `Reset the Terms of Use and Privacy Policy acceptance for ${userName}? They will be asked to accept at their next login.`,
+    );
     await expect(this.dialogConfirm).toBeVisible();
     await expect(this.dialog.getByRole('button', { name: 'Cancel' })).toBeVisible();
   }
@@ -308,7 +310,10 @@ export class SignUserAgreementPage extends BasePage {
 
   async expectVisible(): Promise<void> {
     await expect(this.page).toHaveURL(new RegExp(`#${escapeRegExp(EULA_ROUTE)}$`), { timeout: 30_000 });
-    await expect(this.root.getByRole('heading', { name: 'End user legal agreement' })).toBeVisible({ timeout: 30_000 });
+    await expect(this.root.getByRole('heading', { name: /^Terms updated \d{2}\/\d{2}\/\d{4}$/ })).toBeVisible({ timeout: 30_000 });
+    await expect(this.root.getByRole('link', { name: 'Terms of Use' })).toHaveAttribute('href', 'https://www.quarryconnect.com/terms');
+    await expect(this.root.getByRole('link', { name: 'Privacy Policy' })).toHaveAttribute('href', 'https://www.quarryconnect.com/privacy');
+    await expect(this.root.locator('.eula-content')).not.toContainText('License Agreement');
     await expect(this.accept).toBeEnabled();
   }
 

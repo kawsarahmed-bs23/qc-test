@@ -73,9 +73,9 @@ test.describe('Sign-in opens Identity directly (QC-826)', { tag: ['@regression',
 
     test('SIR-05 a public page opened signed out renders and is not sent to Identity', async ({ page }) => {
       const watch = await SignInWatch.attach(page);
-      await page.goto(appUrl('/legal/terms'));
+      await page.goto(appUrl('/legal'));
       await expect(new AppTermsPage(page).heading).toBeVisible({ timeout: 30_000 });
-      await expect(page).toHaveURL(appUrl('/legal/terms'));
+      await expect(page).toHaveURL(appUrl('/legal'));
       expect(watch.identityAuthorizes(), 'no authorize request').toEqual([]);
       expect(
         watch.locations.filter((url) => url.startsWith(env.identityUrl)),

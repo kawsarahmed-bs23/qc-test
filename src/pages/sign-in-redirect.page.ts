@@ -180,8 +180,8 @@ export class AppTermsPage {
   readonly heading: Locator;
 
   constructor(page: Page) {
-    this.root = page.locator('app-terms');
-    this.heading = this.root.getByRole('heading', { name: 'Terms of Service' });
+    this.root = page.locator('app-license');
+    this.heading = this.root.getByRole('heading', { name: 'License' });
   }
 }
 
