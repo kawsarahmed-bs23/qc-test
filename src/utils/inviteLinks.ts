@@ -44,6 +44,7 @@ export interface InviteResultClaims {
   family_name?: string;
   user_type: string;
   complete_url: string;
+  terms_accepted?: string;
   iat: number;
   exp: number;
 }

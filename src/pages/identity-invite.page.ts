@@ -27,6 +27,8 @@ export class IdentityInvitePage extends BasePage {
   readonly password: Locator;
   readonly confirmPassword: Locator;
   readonly acceptTerms: Locator;
+  readonly termsLink: Locator;
+  readonly privacyLink: Locator;
   readonly save: Locator;
   readonly error: Locator;
   readonly existing: Locator;
@@ -56,6 +58,8 @@ export class IdentityInvitePage extends BasePage {
     this.password = this.setupForm.locator('#Input_Password');
     this.confirmPassword = this.setupForm.locator('#Input_ConfirmPassword');
     this.acceptTerms = page.getByLabel('I accept the Terms of Use and Privacy Policy');
+    this.termsLink = page.locator('#invite-terms-link');
+    this.privacyLink = page.locator('#invite-privacy-link');
     this.save = page.locator('#invite-save');
     this.error = this.setupForm.getByRole('alert');
     this.existing = page.locator('#invite-existing');
@@ -152,6 +156,40 @@ export class IdentityInvitePage extends BasePage {
   async saveSettings(input: InviteSetupInput): Promise<void> {
     await this.fillSetup(input);
     await this.save.click();
+  }
+
+  /** QC-987: the two names inside the tick's label are the links; the form has no other link and no agreement text. */
+  async expectTermsLinks(names: { sentence: string; terms: string; privacy: string }): Promise<void> {
+    const label = this.setupForm.locator('label[for="Input_AcceptTerms"]');
+    await expect(label).toHaveText(names.sentence);
+    await expect(label.locator('a')).toHaveCount(2);
+    await expect(this.termsLink).toHaveText(names.terms);
+    await expect(this.privacyLink).toHaveText(names.privacy);
+    await expect(this.termsLink).toHaveAttribute('href', /^https:\/\/[^/]+\/terms$/);
+    await expect(this.privacyLink).toHaveAttribute('href', /^https:\/\/[^/]+\/privacy$/);
+    for (const link of [this.termsLink, this.privacyLink]) {
+      await expect(link).toHaveAttribute('target', '_blank');
+      await expect(link).toHaveAttribute('rel', /noopener/);
+    }
+    await expect(this.setupForm.locator('a')).toHaveCount(2);
+    await expect(this.setupForm.locator('input[type="checkbox"]')).toHaveCount(1);
+  }
+
+  /** Clicking a name opens its page in a new tab and leaves the tick as it was. The website itself is answered in the browser. */
+  async openLegalLink(link: Locator): Promise<void> {
+    const href = (await link.getAttribute('href'))!;
+    await this.page.context().route(`${new URL(href).origin}/**`, (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: '<html><body>website</body></html>' }),
+    );
+    const [popup] = await Promise.all([this.page.waitForEvent('popup'), link.click()]);
+    await popup.waitForURL(href);
+    await popup.close();
+    await expect(this.acceptTerms).not.toBeChecked();
+  }
+
+  async expectNoTermsTick(): Promise<void> {
+    await expect(this.page.locator('input[type="checkbox"]')).toHaveCount(0);
+    await expect(this.termsLink).toHaveCount(0);
   }
 
   async expectTermsRequired(): Promise<void> {

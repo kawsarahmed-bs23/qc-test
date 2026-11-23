@@ -113,6 +113,7 @@ test.describe('Host-signed invite links on Identity (QC-914)', { tag: ['@write',
       email: newPerson.email,
       user_type: 'driver',
       complete_url: `${env.identityUrl}/invite/complete`,
+      terms_accepted: 'true',
     });
     expect(result.payload.sub?.toLowerCase(), 'sub is the UserUUID of the new user').toBe(userUuid);
     newPerson.sub = userUuid!;
@@ -151,6 +152,7 @@ test.describe('Host-signed invite links on Identity (QC-914)', { tag: ['@write',
     await identityInvitePage.open(invite.token);
     const hostName = await identityInvitePage.hostDisplayName();
     await identityInvitePage.expectExistingLogin(newPerson.email, hostName);
+    await identityInvitePage.expectNoTermsTick();
     await identityInvitePage.signInToConnect.click();
 
     await identityLoginPage.expectVisible();
@@ -158,12 +160,14 @@ test.describe('Host-signed invite links on Identity (QC-914)', { tag: ['@write',
     await identityLoginPage.signIn({ email: newPerson.email, password: newPerson.password });
 
     await identityInvitePage.expectAcceptQuestion(newPerson.email, hostName);
+    await identityInvitePage.expectNoTermsTick();
     await identityInvitePage.acceptConfirm.click();
 
     const result = await identityInvitePage.resultAt(returnUrl);
     await identityInvitePage.expectSignedByIdentity(result);
     expect(result.payload).toMatchObject({ invite: invite.jti, result: 'accepted', user_type: 'customer', email: newPerson.email });
     expect(result.payload.sub?.toLowerCase(), 'the same UserUUID as the account INV-01 created').toBe(newPerson.sub);
+    expect(result.payload, 'an existing login returns no acceptance').not.toHaveProperty('terms_accepted');
 
     await identityInvitePage.openComplete(result);
     await identityInvitePage.expectSetupComplete(false);
@@ -184,6 +188,7 @@ test.describe('Host-signed invite links on Identity (QC-914)', { tag: ['@write',
     await identityInvitePage.expectSignedByIdentity(result);
     expect(result.payload).toMatchObject({ invite: invite.jti, result: 'declined', email, user_type: 'host', given_name: 'Dee', family_name: 'Clined' });
     expect(result.payload.sub, 'a declined result names no user').toBeUndefined();
+    expect(result.payload, 'a declined result carries no acceptance').not.toHaveProperty('terms_accepted');
     expect(userUuidOf(email), 'no auth.Users row').toBeNull();
 
     await identityInvitePage.openComplete(result);
@@ -240,6 +245,8 @@ test.describe('Host-signed invite links on Identity (QC-914)', { tag: ['@write',
     await identityInvitePage.expectSignedByIdentity(result);
     expect(result.payload).toMatchObject({ invite: jti, result: 'accepted', user_type: 'driver', email: newPerson.email });
     expect(result.payload.sub?.toLowerCase(), 'the same UserUUID as INV-01').toBe(newPerson.sub);
+    expect(accepted!.payload.terms_accepted, 'the first answer for this invite carried the acceptance').toBe('true');
+    expect(result.payload, 'a replay by the existing login returns no acceptance').not.toHaveProperty('terms_accepted');
   });
 
   test('INV-10 a link whose return_url is not a registered return URL of the Host is refused', async ({ identityInvitePage }) => {
@@ -256,5 +263,29 @@ test.describe('Host-signed invite links on Identity (QC-914)', { tag: ['@write',
     expect(long.length, 'the signed link is over 2000 characters').toBeGreaterThan(2000);
     await identityInvitePage.open(long);
     await identityInvitePage.expectFailed();
+  });
+
+  test('INV-12 the tick names Terms of Use and Privacy Policy as links that open in a new tab, in English and Spanish (QC-987)', async ({
+    identityInvitePage,
+    page,
+  }) => {
+    const invite = link({ email: emailFor('links') });
+
+    await identityInvitePage.open(invite.token);
+    await identityInvitePage.expectTermsLinks({
+      sentence: 'I accept the Terms of Use and Privacy Policy',
+      terms: 'Terms of Use',
+      privacy: 'Privacy Policy',
+    });
+    await identityInvitePage.openLegalLink(identityInvitePage.termsLink);
+    await identityInvitePage.openLegalLink(identityInvitePage.privacyLink);
+
+    await page.context().addCookies([{ name: '.AspNetCore.Culture', value: 'c=es|uic=es', url: env.identityUrl }]);
+    await identityInvitePage.open(invite.token);
+    await identityInvitePage.expectTermsLinks({
+      sentence: 'Acepto las Condiciones de uso y la Política de privacidad',
+      terms: 'Condiciones de uso',
+      privacy: 'Política de privacidad',
+    });
   });
 });
