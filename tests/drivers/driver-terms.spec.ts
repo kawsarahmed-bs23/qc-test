@@ -6,14 +6,22 @@
 // them and a way to read the outbound LinkEstablished, which no helper offers; those cases are fixme with the reason.
 // DTERMS-11 waits for the purge, so run the drivers API with AccountDeletion__PurgeIntervalMinutes=1 (as DEL-08 needs).
 import { test, expect } from '@fixtures/pageFixtures';
+import * as fs from 'fs';
 import { env } from '@config/env.config';
-import { canUseDriversDb, queryDriversDb, runDriversSeedScript } from '@utils/localDb';
+import { canSeedLocalDb, canUseDriversDb, canUseIdentityDb, queryDriversDb, querySingleValue, runDriversSeedScript } from '@utils/localDb';
+import { HostDriversMode, type DriversMode } from '@api/sms-routing.api';
+import { DflowData, DflowHostAdminApi, dflowEmail, driversIsMigrated, removeDflowData, seedDflowWorld, waitForQueues } from '@api/driver-flows.api';
+import { activeInviteKeyCount } from '@api/invite-readiness.api';
+import { HostUserInvitesApi, Qc913Data, identityAcceptsLink, inviteEmailTo } from '@api/user-invites.api';
+import { MailSink } from '@pages/host-password-link.page';
+import { InviteeBrowser } from '@pages/user-invites.page';
 import { decodeJwt, isDriversApiReachable, PasswordGrantApi } from '@api/password-grant.api';
 import {
   DriverTermsApi,
   PRIVACY_URL,
   TERMS_URL,
   columnsOf,
+  hostSignedTerms,
   liveDocCount,
   liveTermsDoc,
   objectExists,
@@ -132,10 +140,46 @@ test.describe('Driver App Terms of Use and Privacy Policy in the Host table shap
     expect(result.body.data?.version).toBe(live.version);
   });
 
-  test('DTERMS-06 DriverInviteAccepted with TermsVersion 2.0 and TermsAcceptedAt stores that row and LinkEstablished carries 2.0', async () => {
+  test('DTERMS-12 five parallel accepts for a driver with no 2.0 row are all 200 and store exactly one row with no text', async () => {
+    removeSignedTerms(driverId);
+    try {
+      const results = await Promise.all([1, 2, 3, 4, 5].map(() => api.accept(accessToken, { version: live.version })));
+
+      expect(results.map((result) => result.status)).toEqual([200, 200, 200, 200, 200]);
+      expect(results.every((result) => result.body.data?.accepted === true)).toBe(true);
+      expect(signedTerms(driverId)).toEqual([expect.objectContaining({ docId: live.docId, version: '2.0', textIsNull: true })]);
+    } finally {
+      removeSignedTerms(driverId);
+      seedSignedTerms(driverId, live, null);
+    }
+    expect(signedTerms(driverId)).toHaveLength(1);
+  });
+
+  test('DTERMS-13 the accepted version is compared trimmed and without case: " 2.0 " is 200 and stores one 2.0 row; 9.9 and an empty body are still 400', async () => {
+    removeSignedTerms(driverId);
+    try {
+      const padded = await api.accept(accessToken, { version: ` ${live.version} ` });
+      expect(padded.status).toBe(200);
+      expect(padded.body.data?.accepted).toBe(true);
+      expect(signedTerms(driverId)).toEqual([expect.objectContaining({ docId: live.docId, version: '2.0', textIsNull: true })]);
+
+      for (const body of [{ version: '9.9' }, {}]) {
+        const rejected = await api.accept(accessToken, body);
+        expect(rejected.status, JSON.stringify(body)).toBe(400);
+        expect(Object.keys(rejected.body.validationErrors ?? {}).map((key) => key.toLowerCase())).toContain('version');
+      }
+      expect(signedTerms(driverId)).toHaveLength(1);
+    } finally {
+      removeSignedTerms(driverId);
+      seedSignedTerms(driverId, live, null);
+    }
+    expect(signedTerms(driverId)).toHaveLength(1);
+  });
+
+  test('DTERMS-06a DriverInviteAccepted envelope injected with TermsVersion 2.0 and TermsAcceptedAt stores that row and LinkEstablished carries 2.0', async () => {
     test.fixme(
       true,
-      'Not automatable here: only a Host raises DriverInviteAccepted (the Host API is not running and does not send TermsVersion yet), no helper injects the Wolverine envelope into DRIVERS, and none reads the outbound LinkEstablished. Manual: send DriverInviteAccepted for a throwaway UserUUID with TermsVersion 2.0 and TermsAcceptedAt T; expect one auth.UserSignedEULAs row (EULAVersion 2.0, CreatedDate T, UserEULADocText NULL) and LinkEstablished with TermsVersion 2.0 and TermsAcceptedAt T, sent only when the link is new.',
+      'Injecting the envelope is not automatable; the real Host path is DTERMS-06 in the Host to DRIVERS describe below. Original note: only a Host raises DriverInviteAccepted (the Host API is not running and does not send TermsVersion yet), no helper injects the Wolverine envelope into DRIVERS, and none reads the outbound LinkEstablished. Manual: send DriverInviteAccepted for a throwaway UserUUID with TermsVersion 2.0 and TermsAcceptedAt T; expect one auth.UserSignedEULAs row (EULAVersion 2.0, CreatedDate T, UserEULADocText NULL) and LinkEstablished with TermsVersion 2.0 and TermsAcceptedAt T, sent only when the link is new.',
     );
   });
 
@@ -192,5 +236,106 @@ test.describe('Driver App Terms of Use and Privacy Policy in the Host table shap
       runDriversSeedScript('drivers-qc902-deletion.remove.sql', { UserIds: ids });
     }
     expect(Object.values(PURGE).flatMap((id) => signedTerms(id))).toEqual([]);
+  });
+});
+
+test.describe('Host to DRIVERS Terms path: a new Driver accepts the invite with the Terms tick (QC-988)', { tag: ['@write', '@regression'] }, () => {
+  test.describe.configure({ mode: 'serial', timeout: 180_000 });
+  test.skip(env.name !== 'local' || !canSeedLocalDb() || !canUseDriversDb() || !canUseIdentityDb(), 'Needs the host, DRIVERS and Identity local databases (local only).');
+  test.skip(!env.appApiUrl || !env.driversApiUrl || !env.appAdmin , 'Needs APP_API_URL, DRIVERS_API_URL and APP_ADMIN_*.');
+
+  const person = { email: dflowEmail('terms'), firstName: 'Tess', lastName: 'Terms', password: `Trm!${Date.now().toString(36)}Zq9x`, userId: '', sub: '' };
+  let hostUuid = '';
+  let batchMark = '0';
+  let invites: HostUserInvitesApi;
+  let mode: HostDriversMode;
+  let originalMode: DriversMode | null = null;
+  let seeded = false;
+  let sinceLog = 0;
+
+  test.beforeAll(async ({ playwright }) => {
+    test.setTimeout(150_000);
+    const context = await playwright.request.newContext({ ignoreHTTPSErrors: env.ignoreHttpsErrors });
+    test.skip(!(await MailSink.isListening()), `The SMTP sink is not listening on 127.0.0.1:${env.smtpSinkPort}.`);
+    test.skip(!(await isDriversApiReachable(context)), 'The drivers API (DRIVERS_API_URL) is not running.');
+    test.skip(!driversIsMigrated() || !objectExists('auth.UserEULADocs'), 'DRIVERS is not migrated (QC-902 / QC-988).');
+    test.skip(!Qc913Data.hostHasTable('app.UserInvites') || !Qc913Data.sinkIsConfigured(), 'The host has no app.UserInvites or EmailSettings do not point at the SMTP sink.');
+    hostUuid = (querySingleValue(`SELECT LOWER(PropertyValue) FROM app.EnvironmentSetting WHERE GroupName = N'Messaging' AND PropertyName = N'HostUuid'`) ?? '').trim();
+    test.skip(!hostUuid || queryDriversDb(`SELECT COUNT(*) FROM app.Hosts WHERE HostUUID = '${hostUuid}' AND Active = 1`) !== '1', 'The host is not an active host in DRIVERS.');
+    test.skip(!env.hostApiLog || !fs.existsSync(env.hostApiLog), 'HOST_API_LOG does not point at the running host API log.');
+
+    batchMark = querySingleValue(`SELECT ISNULL(MAX(TicketBatchID), 0) FROM app.TicketBatches`) ?? '0';
+    removeDflowData(batchMark);
+    const world = seedDflowWorld(26, new Intl.DateTimeFormat('en-CA', { timeZone: env.appTimeZone ?? 'America/Chicago' }).format(new Date()));
+    seeded = true;
+
+    test.skip(activeInviteKeyCount(hostUuid, 'p1-local-1') !== 1, 'The host invite key p1-local-1 is not registered in HOST_MASTER; register it through the Admin API first (see DFLOW).');
+
+    mode = new HostDriversMode(context);
+    originalMode = mode.current();
+    await mode.set('On');
+    const admin = new DflowHostAdminApi(context);
+    expect(await admin.signIn(env.appAdmin!.email, env.appAdmin!.password)).toBe(200);
+    invites = new HostUserInvitesApi(context).withToken(admin.bearer());
+    const created = await admin.createDriver({ email: person.email, firstName: person.firstName, lastName: person.lastName, truckId: world.truckId });
+    expect(created.status, created.text).toBe(201);
+    person.userId = created.data!;
+    sinceLog = fs.statSync(env.hostApiLog!).size;
+  });
+
+  test.afterAll(async () => {
+    try {
+      await waitForQueues();
+    } finally {
+      try {
+        if (originalMode !== null && mode) await mode.set(originalMode);
+      } finally {
+        {
+          if (seeded) {
+            const removed = removeDflowData(batchMark);
+            expect(removed.host, 'host rows removed').toMatch(/left=0;leftInvites=0/);
+            expect(removed.identity, 'Identity logins removed').toMatch(/left=0/);
+            if (removed.drivers !== null) expect(removed.drivers, 'DRIVERS rows removed').toMatch(/leftLinks=0/);
+            if (person.sub) expect(signedTerms(person.sub), 'no DRIVERS Terms row is left').toEqual([]);
+          }
+        }
+      }
+    }
+  });
+
+  test('DTERMS-06 a new Driver accepting with the Terms tick: DRIVERS stores one 2.0 row with no text and the Host stores the version from LinkEstablished', async ({ browser, request }) => {
+    test.setTimeout(540_000);
+    const since = MailSink.mark();
+    const sent = await invites.sendInvite('manageusers', person.userId);
+    expect(sent.status, sent.text).toBe(200);
+    const mail = await inviteEmailTo(person.email, since);
+    await expect
+      .poll(() => identityAcceptsLink(request, new URL(mail.acceptUrl).searchParams.get('t')!), { message: 'Identity has loaded the host invite public key', timeout: 400_000, intervals: [5_000, 10_000] })
+      .toBe(true);
+
+    const invitee = await InviteeBrowser.open(browser);
+    try {
+      const outcome = await invitee.acceptAsNew(mail.acceptUrl, { email: person.email, firstName: person.firstName, lastName: person.lastName, password: person.password });
+      expect(outcome.status).toBe('recorded');
+    } finally {
+      await invitee.close();
+    }
+    person.sub = DflowData.identityUserUuid(person.email) ?? '';
+    expect(person.sub).toMatch(/^[0-9a-f-]{36}$/);
+    const doc = liveTermsDoc();
+
+    await expect.poll(() => DflowData.activeLinks(hostUuid, person.sub), { message: 'DRIVERS links the driver', timeout: 90_000, intervals: [1_000, 2_000, 5_000] }).toBe(1);
+    await expect.poll(() => signedTerms(person.sub).length, { message: 'DRIVERS stores the Host acceptance', timeout: 30_000 }).toBe(1);
+    const stored = signedTerms(person.sub);
+    expect(stored).toEqual([expect.objectContaining({ docId: doc.docId, version: '2.0', textIsNull: true })]);
+    expect(Math.abs(Date.now() - new Date(`${stored[0].createdDate}Z`).getTime()), 'CreatedDate is the Host time of the tick').toBeLessThan(15 * 60_000);
+    test.info().annotations.push({ type: 'DRIVERS row', description: JSON.stringify(stored[0]) });
+
+    await expect
+      .poll(() => fs.readFileSync(env.hostApiLog!, 'utf8').slice(sinceLog).includes(`Drivers linked invite ${mail.link.payload.jti}`), { message: 'the Host log shows LinkEstablished', timeout: 60_000 })
+      .toBe(true);
+    const hostRows = hostSignedTerms(person.userId);
+    test.info().annotations.push({ type: 'Host rows', description: JSON.stringify(hostRows) });
+    expect(hostRows.map((row) => row.version)).toContain('2.0');
   });
 });

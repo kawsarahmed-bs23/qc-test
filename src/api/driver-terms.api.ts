@@ -1,6 +1,6 @@
 import type { APIRequestContext, APIResponse } from '@playwright/test';
 import { env } from '@config/env.config';
-import { queryDriversDb } from '@utils/localDb';
+import { queryDriversDb, querySingleValue } from '@utils/localDb';
 
 export const TERMS_URL = 'https://www.quarryconnect.com/terms';
 export const PRIVACY_URL = 'https://www.quarryconnect.com/privacy';
@@ -65,6 +65,19 @@ export function signedTerms(userId: string): SignedTerms[] {
   return rows.split(';').map((row) => {
     const [docId, version, createdDate, textIsNull] = row.split('|');
     return { docId: Number(docId), version, createdDate, textIsNull: textIsNull === '1' };
+  });
+}
+
+/** The Host's own auth.UserSignedEULAs rows of one host user (QC-986 stores the version DRIVERS reports in LinkEstablished). */
+export function hostSignedTerms(hostUserId: string): { version: string; createdDate: string; textIsNull: boolean }[] {
+  const rows = querySingleValue(
+    `SELECT STRING_AGG(CONCAT(EULAVersion, '|', CONVERT(varchar(23), CreatedDate, 126), '|', IIF(UserEULADocText IS NULL, 1, 0)), ';') WITHIN GROUP (ORDER BY UserSignedEULAId)
+     FROM auth.UserSignedEULAs WHERE UserId = N'${sqlText(hostUserId)}'`,
+  );
+  if (!rows) return [];
+  return rows.split(';').map((row) => {
+    const [version, createdDate, textIsNull] = row.split('|');
+    return { version, createdDate, textIsNull: textIsNull === '1' };
   });
 }
 
