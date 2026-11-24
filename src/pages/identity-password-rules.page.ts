@@ -81,7 +81,7 @@ export class PasswordRulesPanel {
   async expectRulesShown(policy: PasswordPolicy): Promise<void> {
     const rules = expectedRules(policy);
     await expect(this.list).toBeVisible();
-    await expect(this.list.locator('li')).toHaveText(rules.map((r) => r.text));
+    await expect(this.list.locator('li')).toHaveText(rules.map((r) => `${r.text} (Not met yet)`));
     await expect(this.list.locator('li.met')).toHaveCount(0);
     await expect(this.password).toHaveAttribute('aria-describedby', /Input_Password_rules/);
     await expect(this.submit).toBeDisabled();
@@ -94,8 +94,10 @@ export class PasswordRulesPanel {
 
   async expectOnlyUnmet(kind: PasswordRuleKind, policy: PasswordPolicy): Promise<void> {
     for (const rule of expectedRules(policy)) {
-      if (rule.kind === kind) await expect(this.rule(rule.kind), `${rule.kind} is marked unmet`).not.toHaveClass(/\bmet\b/);
-      else await expect(this.rule(rule.kind), `${rule.kind} is marked met`).toHaveClass(/\bmet\b/);
+      if (rule.kind === kind) {
+        await expect(this.rule(rule.kind), `${rule.kind} is marked unmet`).not.toHaveClass(/\bmet\b/);
+        await expect(this.rule(rule.kind).locator('.qc-rule-state'), `${rule.kind} reads as not met`).toHaveText('(Not met yet)');
+      } else await expect(this.rule(rule.kind), `${rule.kind} is marked met`).toHaveClass(/\bmet\b/);
     }
     await expect(this.submit).toBeDisabled();
   }
@@ -110,13 +112,14 @@ export class PasswordRulesPanel {
     const valid = validPassword(policy);
     await this.type(valid, `${valid}x`);
     await expect(this.list.locator('li:not(.met)')).toHaveCount(0);
+    await expect(this.list.locator('.qc-rule-state')).toHaveText(expectedRules(policy).map(() => '(Met)'));
     await expect(this.submit).toBeDisabled();
     await this.type(valid);
     await expect(this.submit).toBeEnabled();
   }
 
   async expectRuleText(kind: PasswordRuleKind, text: string): Promise<void> {
-    await expect(this.rule(kind)).toHaveText(text);
+    await expect(this.rule(kind)).toContainText(text);
   }
 
   /** At phone width the rules are visible and the page does not scroll sideways. */
