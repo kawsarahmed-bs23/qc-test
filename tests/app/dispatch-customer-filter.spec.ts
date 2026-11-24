@@ -182,4 +182,27 @@ test.describe('Dispatch Customer filter (QC-1022)', { tag: ['@regression'] }, ()
     await filter.expectUrlCustomer(second.id);
     await filter.expectNoJobInUrl();
   });
+
+  test('CF-09 Live Map gives the Customer field the same width as the other filters (QC-1064)', async ({ dispatchCustomerFilterPage: filter, page }) => {
+    const [first] = customers;
+    await filter.open('map', DAY);
+    await filter.pickCustomer(first.name);
+
+    for (const width of [1440, 1200, 1000]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect
+        .poll(
+          async () => {
+            const widths = await filter.mapFilterWidths();
+            const customer = widths['Customer'];
+            const others = Object.entries(widths)
+              .filter(([label]) => label !== 'Customer')
+              .map(([, w]) => w);
+            return customer > 0 && others.length >= 5 && others.every((w) => Math.abs(w - customer) <= 2);
+          },
+          { message: `filters are not the same width at ${width}px` },
+        )
+        .toBe(true);
+    }
+  });
 });

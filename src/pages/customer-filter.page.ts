@@ -143,6 +143,14 @@ export class DispatchCustomerFilterPage extends BasePage {
     await expect(this.page).not.toHaveURL(/[?&]job=\d+/);
   }
 
+  async mapFilterWidths(): Promise<Record<string, number>> {
+    const fields = this.page.locator('.map-toolbar .dispatch-filters > *');
+    await expect(fields.first()).toBeVisible();
+    return fields.evaluateAll((els) =>
+      Object.fromEntries(els.map((el) => [el.querySelector('mat-label')?.textContent?.trim() ?? el.tagName, Math.round(el.getBoundingClientRect().width)])),
+    );
+  }
+
   async expectTicketCards(count: number): Promise<void> {
     await expect(this.ticketCards).toHaveCount(count);
   }
