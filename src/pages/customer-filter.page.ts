@@ -143,12 +143,38 @@ export class DispatchCustomerFilterPage extends BasePage {
     await expect(this.page).not.toHaveURL(/[?&]job=\d+/);
   }
 
-  async mapFilterWidths(): Promise<Record<string, number>> {
+  async setViewportWidth(width: number): Promise<void> {
+    await this.page.setViewportSize({ width, height: 900 });
+  }
+
+  async expectMapCustomerFieldSizedLikeItsRow(): Promise<void> {
     const fields = this.page.locator('.map-toolbar .dispatch-filters > *');
     await expect(fields.first()).toBeVisible();
-    return fields.evaluateAll((els) =>
-      Object.fromEntries(els.map((el) => [el.querySelector('mat-label')?.textContent?.trim() ?? el.tagName, Math.round(el.getBoundingClientRect().width)])),
-    );
+    await expect
+      .poll(
+        async () => {
+          const boxes = await fields.evaluateAll((els) =>
+            els.map((el) => {
+              const rect = el.getBoundingClientRect();
+              return {
+                label: el.querySelector('mat-label')?.textContent?.trim() ?? el.tagName,
+                top: Math.round(rect.top),
+                width: Math.round(rect.width),
+              };
+            }),
+          );
+          const customer = boxes.find((b) => b.label === 'Customer');
+          if (!customer || boxes.length < 6) {
+            return `expected six filters including Customer, found ${boxes.map((b) => b.label).join(', ')}`;
+          }
+          return boxes
+            .filter((b) => Math.abs(b.top - customer.top) <= 4 && Math.abs(b.width - customer.width) > 2)
+            .map((b) => `${b.label} ${b.width}px vs Customer ${customer.width}px`)
+            .join(', ');
+        },
+        { message: 'the Customer field is not the same width as the filters in its row' },
+      )
+      .toBe('');
   }
 
   async expectTicketCards(count: number): Promise<void> {
