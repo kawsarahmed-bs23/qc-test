@@ -161,7 +161,7 @@ export class IdentityLogoutPage {
   readonly signOut: Locator;
 
   constructor(private readonly page: Page) {
-    this.signOut = page.locator('form[method="post"] button[type="submit"]');
+    this.signOut = page.locator('form:has(input[name="LogoutId"]) button[type="submit"]');
   }
 
   async expectSignedIn(): Promise<void> {
