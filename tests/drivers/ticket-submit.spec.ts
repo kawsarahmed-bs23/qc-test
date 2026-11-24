@@ -143,7 +143,7 @@ test.describe(
     const photo = fs.readFileSync(TICKET_JPEG);
     const otherPhoto = Buffer.concat([photo, Buffer.from(`${MARKER} second photo`)]);
     const ticketFile = (buffer: Buffer) => ({ name: `${MARKER}-ticket.jpg`, mimeType: 'image/jpeg', buffer });
-    const work = { id: 0, uuid: '', tripUuid: '', ticketUuid: '' };
+    const work = { id: 0, uuid: '', tripUuid: '', ticketUuid: '', firstKey: '', firstUrl: '' };
     const second = { id: 0, uuid: '', tripUuid: '' };
     const submitted = { ticketNumber: `QC873-${Date.now() % 100_000}`, ticketDate: hostToday(), ticketQuantity: 12.5 };
 
@@ -340,9 +340,18 @@ test.describe(
         'one DRIVERS ticket on the trip with the photo SHA-256, not submitted',
       ).toBe(`${work.tripUuid}|${sha256Hex(photo)}|open`);
       expect([10, 20, 30], 'Status is 10 (or already read)').toContain(Number(driversTicket(work.ticketUuid, 'Status')));
-      expect(driversTicket(work.ticketUuid, 'ImageKey'), 'the S3 key').toMatch(
-        new RegExp(`drivers/tickets/${hostUuid}/${driverUuid}/${work.ticketUuid}\\.jpg$`, 'i'),
+      const organisation = driversValue(
+        `SELECT CONCAT(LOWER(CONVERT(nvarchar(36), o.OrganisationUUID)), '|', (SELECT COUNT(*) FROM auth.Users x WHERE x.OrganisationIdFk = o.OrganisationID)) ` +
+          `FROM auth.Users u JOIN auth.Organisations o ON o.OrganisationID = u.OrganisationIdFk WHERE u.UserUUID = '${driverUuid}'`,
       );
+      expect(organisation, 'the driver has one Driver organisation, and it has only this driver').toMatch(/^[0-9a-f-]{36}\|1$/);
+      work.firstKey = driversTicket(work.ticketUuid, 'ImageKey') ?? '';
+      work.firstUrl = driversTicket(work.ticketUuid, 'ImageUrl') ?? '';
+      const parts = new RegExp(
+        `^drivers/${organisation!.split('|')[0]}/tickets/${work.ticketUuid}/(\\d{4})/(\\d{2})/(\\d{2})/ticket_(\\d{8})T\\d{6}Z\\.jpg$`,
+      ).exec(work.firstKey);
+      expect(parts, `the S3 key ${work.firstKey} is drivers/{DriverOrgUUID}/tickets/{TicketUUID}/yyyy/MM/dd/ticket_{stamp}.jpg`).not.toBeNull();
+      expect(`${parts![1]}${parts![2]}${parts![3]}`, 'the date folders and the stamp are the same UTC day').toBe(parts![4]);
       await expect.poll(queuesDrained, { message: 'both queues settle', ...QUEUE }).toBe(true);
       expect(hostNumber(`SELECT COUNT(*) FROM app.Tickets WHERE TicketUUID = '${work.ticketUuid}'`), 'no host ticket with that TicketUUID').toBe(0);
       expect(hostTicketsOnTrip(work.tripUuid), 'no host ticket on the trip').toBe(0);
@@ -391,6 +400,43 @@ test.describe(
       expect(reprocessed.status(), await reprocessed.text()).toBe(202);
       expect(((await reprocessed.json()).data as { ticketStatus: string }).ticketStatus, 'answers uploaded').toBe('uploaded');
       await expect.poll(() => readDone(work.ticketUuid), { message: 'the reader finishes again', ...OCR }).toBe(true);
+    });
+
+    test('TSUB-23 a different photo before Submit gets a new key under the same ticket and the first file stays in S3; the first photo again gets a third key', async ({
+      playwright,
+    }) => {
+      expect(work.firstKey, 'TSUB-05 uploaded a photo').not.toBe('');
+      test.setTimeout(240_000);
+      await expect.poll(() => readDone(work.ticketUuid), { message: 'the reader is idle before the new photo', ...OCR }).toBe(true);
+
+      const replaced = await driver.upload(work.tripUuid, ticketFile(otherPhoto));
+      expect(replaced.status(), await replaced.text()).toBe(202);
+      expect(isReplayed(replaced), 'a different photo is not a replay').toBe(false);
+      const secondKey = driversTicket(work.ticketUuid, 'ImageKey') ?? '';
+      expect(secondKey, 'the new photo has its own key').not.toBe(work.firstKey);
+      expect(secondKey.split('/').slice(0, 4).join('/'), 'under the same organisation and ticket').toBe(work.firstKey.split('/').slice(0, 4).join('/'));
+      expect(driversTicket(work.ticketUuid, 'LOWER(ImageSha256)'), 'the row holds the new photo').toBe(sha256Hex(otherPhoto));
+      expect(driversNumber(`SELECT COUNT(*) FROM app.Tickets WHERE TripUUID = '${work.tripUuid}'`), 'still one DRIVERS ticket').toBe(1);
+
+      const s3 = await playwright.request.newContext();
+      try {
+        const first = await s3.get(work.firstUrl);
+        expect(first.status(), 'the first photo is still in S3 after the replacement').toBe(200);
+        expect(sha256Hex(await first.body()), 'and it is the first photo').toBe(sha256Hex(photo));
+        const second = await s3.get(driversTicket(work.ticketUuid, 'ImageUrl') ?? '');
+        expect(second.status(), 'the new photo is in S3').toBe(200);
+        expect(sha256Hex(await second.body()), 'and it is the new photo').toBe(sha256Hex(otherPhoto));
+      } finally {
+        await s3.dispose();
+      }
+
+      await expect.poll(() => readDone(work.ticketUuid), { message: 'the reader finishes the new photo', ...OCR }).toBe(true);
+      const back = await driver.upload(work.tripUuid, ticketFile(photo));
+      expect(back.status(), await back.text()).toBe(202);
+      const thirdKey = driversTicket(work.ticketUuid, 'ImageKey') ?? '';
+      expect([work.firstKey, secondKey], 'the first photo again still gets a new key').not.toContain(thirdKey);
+      expect(driversTicket(work.ticketUuid, 'LOWER(ImageSha256)')).toBe(sha256Hex(photo));
+      await expect.poll(() => readDone(work.ticketUuid), { message: 'the reader finishes it before Submit', ...OCR }).toBe(true);
     });
 
     test('TSUB-09 Submit without the quantity, number or date is 400 and submits nothing', async () => {
