@@ -96,7 +96,7 @@ export class IdentityTwoStepPage {
     this.code = page.locator('#Input_Code');
     this.error = page.locator('.custom-error-message[role="alert"]:not([hidden])');
     this.digits = page.getByRole('textbox', { name: /^Digit \d of 6$/ });
-    this.submit = page.locator('form[method="post"] button[type="submit"]');
+    this.submit = page.locator('form:has(#Input_Code) button[type="submit"]');
   }
 
   async expectVisible(): Promise<void> {
