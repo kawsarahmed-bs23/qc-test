@@ -3,6 +3,7 @@ import { env, type Credentials } from '@config/env.config';
 import { SIGN_IN_REDIRECT_TIMEOUT } from '@pages/admin-shell.page';
 import { markIdentityLog, resetLinkSince } from '@utils/identityLog';
 import { currentStep, secondsLeftInStep, totp } from '@utils/totp';
+import { PasswordRulesPanel } from './identity-password-rules.page';
 
 const lastStepUsed = new Map<string, number>();
 
@@ -181,12 +182,28 @@ export class IdentityLogoutPage {
 }
 
 export class IdentityPasswordResetPage {
-  constructor(private readonly page: Page) {}
+  readonly passwordRules: PasswordRulesPanel;
+
+  constructor(private readonly page: Page) {
+    this.passwordRules = new PasswordRulesPanel(page, page.locator('form:has(#Input_Password) button[type="submit"]'));
+  }
+
+  /** Opens the link's path and query on the Identity under test (IDENTITY_URL), whatever origin the email gave it. */
+  async openLink(link: string): Promise<void> {
+    const url = new URL(link);
+    await this.page.goto(`${env.identityUrl}${url.pathname}${url.search}`);
+    await expect(this.page.locator('#Input_Password')).toBeVisible();
+  }
+
+  async submitAndExpectDone(): Promise<void> {
+    await this.passwordRules.submit.click();
+    await expect(this.page).toHaveURL(/\/Account\/ResetPasswordConfirmation/i);
+  }
 
   async requestReset(email: string): Promise<void> {
     await this.page.goto(`${env.identityUrl}/Account/ForgotPassword`);
     await this.page.locator('#Input_Email').fill(email);
-    await this.page.locator('form[method="post"] button[type="submit"]').click();
+    await this.page.locator('form:has(#Input_Email) button[type="submit"]').click();
     await expect(this.page).toHaveURL(/\/Account\/ForgotPasswordConfirmation/i);
   }
 
@@ -215,7 +232,7 @@ export class IdentityPasswordResetPage {
     await this.page.goto(link);
     await this.page.locator('#Input_Password').fill(password);
     await this.page.locator('#Input_ConfirmPassword').fill(password);
-    await this.page.locator('form[method="post"] button[type="submit"]').click();
+    await this.passwordRules.submit.click();
     await expect(this.page).toHaveURL(/\/Account\/ResetPasswordConfirmation/i);
   }
 }

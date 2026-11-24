@@ -3,6 +3,7 @@ import { env } from '@config/env.config';
 import { inviteResultFrom, inviteResultSignedBy, type InviteResult } from '@utils/inviteLinks';
 import { identityAcceptsLink } from '@api/user-invites.api';
 import { BasePage } from './base.page';
+import { PasswordRulesPanel } from './identity-password-rules.page';
 
 export interface InviteSetupInput {
   password: string;
@@ -45,6 +46,7 @@ export class IdentityInvitePage extends BasePage {
   readonly acceptForm: Locator;
   readonly acceptQuestion: Locator;
   readonly acceptConfirm: Locator;
+  readonly passwordRules: PasswordRulesPanel;
   private returnRequests = 0;
 
   constructor(page: Page) {
@@ -76,6 +78,7 @@ export class IdentityInvitePage extends BasePage {
     this.acceptForm = page.locator('#invite-accept');
     this.acceptQuestion = page.locator('#invite-accept-question');
     this.acceptConfirm = page.locator('#invite-accept-confirm');
+    this.passwordRules = new PasswordRulesPanel(page, this.save);
   }
 
   async open(token: string): Promise<void> {

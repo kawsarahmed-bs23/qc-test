@@ -4,6 +4,7 @@ import { canSeedThrowawayUsers, removeIdentityUsers, seedIdentityUser } from '@u
 import { canReadIdentityLog, identityLogSince, markIdentityLog } from '@utils/identityLog';
 import { IdentityLoginPage, IdentityLogoutPage, IdentityPasswordResetPage } from '@pages/identity-login.page';
 import { env } from '@config/env.config';
+import { passwordPolicy, validPassword } from '@pages/identity-password-rules.page';
 
 function driverWhere(): string {
   return `Email = '${env.driver!.email.replace(/'/g, "''")}'`;
@@ -96,6 +97,31 @@ test.describe('Forgot password (QC-709)', { tag: ['@regression', '@auth'] }, () 
         await reset.expectInvalidLink(altered.toString());
       } finally {
         await elsewhere.close();
+        removeIdentityUsers(user.email);
+      }
+    });
+    test('RESET-06 the reset page lists the password rules before typing, marks each one live, keeps the button gray until every rule is met and the passwords match, fits a phone, and a valid password resets (QC-1032)', async ({
+      page,
+      request,
+      identityPasswordResetPage,
+    }) => {
+      test.skip(!canSeedThrowawayUsers(), 'Needs ADMIN_EMAIL / ADMIN_PASSWORD, whose password the throwaway account copies.');
+      const user = seedIdentityUser(`e2e.qc775.t.qc1032-reset06.${Date.now()}@quarryconnect.test`, 'QC-1032 Reset', false);
+      const rules = identityPasswordResetPage.passwordRules;
+
+      try {
+        const policy = await passwordPolicy(request);
+        const link = await identityPasswordResetPage.requestLink(user.email);
+
+        await page.setViewportSize({ width: 375, height: 812 });
+        await identityPasswordResetPage.openLink(link);
+        await rules.expectRulesShown(policy);
+        await rules.expectFitsPhone();
+        await rules.expectGating(policy);
+
+        await rules.type(validPassword(policy));
+        await identityPasswordResetPage.submitAndExpectDone();
+      } finally {
         removeIdentityUsers(user.email);
       }
     });

@@ -11,6 +11,7 @@ import {
   type InviteResult,
   publicInviteKeyOf,
 } from '@utils/inviteLinks';
+import { passwordPolicy } from '@pages/identity-password-rules.page';
 import { identityAcceptsLink, masterHasInviteKeys, masterInviteKeys, registerTestInviteKey, removeTestInviteKeys } from '@api/user-invites.api';
 
 const RUN = Date.now();
@@ -287,5 +288,24 @@ test.describe('Host-signed invite links on Identity (QC-914)', { tag: ['@write',
       terms: 'Condiciones de uso',
       privacy: 'Política de privacidad',
     });
+  });
+
+  test('INV-13 the setup form lists the password rules before typing, marks each one live, and keeps Save Settings gray until every rule is met and the passwords match, on a phone and in Spanish (QC-1032)', async ({
+    identityInvitePage,
+    page,
+    request,
+  }) => {
+    const policy = await passwordPolicy(request);
+    const invite = link({ email: emailFor('rules') });
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await identityInvitePage.open(invite.token);
+    await identityInvitePage.passwordRules.expectRulesShown(policy);
+    await identityInvitePage.passwordRules.expectFitsPhone();
+    await identityInvitePage.passwordRules.expectGating(policy);
+
+    await page.context().addCookies([{ name: '.AspNetCore.Culture', value: 'c=es|uic=es', url: env.identityUrl }]);
+    await identityInvitePage.open(invite.token);
+    await identityInvitePage.passwordRules.expectRuleText('length', `La contraseña debe tener al menos ${policy.requiredLength} caracteres.`);
   });
 });
