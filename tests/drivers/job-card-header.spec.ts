@@ -57,10 +57,10 @@ function blank(value: string | null | undefined): boolean {
 function card(row: AsHauledAssignment | undefined): CardFields | undefined {
   return (
     row && {
-      VendorName: row.VendorName,
+      VendorName: row.vendorName,
       truckNumber: row.truckNumber,
-      HostName: row.HostName,
-      HostUUID: String(row.HostUUID).toLowerCase(),
+      HostName: row.hostName,
+      HostUUID: String(row.hostUuid).toLowerCase(),
     }
   );
 }

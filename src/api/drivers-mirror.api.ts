@@ -4,12 +4,12 @@ import { env } from '@config/env.config';
 export const HOST_HEADER = 'X-Host-Uuid';
 
 export interface MirrorAssignment {
-  HostUUID: string;
-  HostName?: string | null;
-  VendorUUID?: string | null;
-  VendorName?: string | null;
-  TruckUUID?: string | null;
-  TruckName?: string | null;
+  hostUuid: string;
+  hostName?: string | null;
+  vendorUuid?: string | null;
+  vendorName?: string | null;
+  truckUuid?: string | null;
+  truckName?: string | null;
   orderAssignmentUuid: string;
   jobDocNameWithPrefix: string | null;
   origin: string | null;
@@ -31,7 +31,7 @@ export interface MirrorAssignment {
 }
 
 export interface MirrorTrip {
-  HostUUID?: string;
+  hostUuid?: string;
   tripUuid: string;
   orderAssignmentUuid: string;
   tripSequence: number;
@@ -44,7 +44,7 @@ export interface MirrorTrip {
 }
 
 export interface MirrorMessage {
-  HostUUID?: string;
+  hostUuid?: string;
   messageUuid: string;
   orderAssignmentUuid: string;
   isFromDispatch: boolean;
@@ -58,7 +58,7 @@ export interface MirrorThreadList {
   driverName: string | null;
   truckNumber: string | null;
   totalUnseenCount: number;
-  threads: { HostUUID: string; HostName: string | null; orderAssignmentUuid: string; unseenCount: number; messageCount: number }[];
+  threads: { hostUuid: string; hostName: string | null; orderAssignmentUuid: string; unseenCount: number; messageCount: number }[];
 }
 
 export interface DriverWorkRoute {

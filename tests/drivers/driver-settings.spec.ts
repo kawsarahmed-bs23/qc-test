@@ -15,11 +15,11 @@ import { env } from '@config/env.config';
 
 const DRIVER_EMAIL = 'e2e.qc902.driver@quarryconnect.test';
 const AS_HAULED = {
-  VendorUUID: randomUUID(),
-  VendorName: 'E2E QC-902 Vendor',
-  TruckUUID: randomUUID(),
-  TruckName: 'E2E QC-902 Truck',
-  HostName: 'E2E QC-902 Host as hauled',
+  vendorUuid: randomUUID(),
+  vendorName: 'E2E QC-902 Vendor',
+  truckUuid: randomUUID(),
+  truckName: 'E2E QC-902 Truck',
+  hostName: 'E2E QC-902 Host as hauled',
   truckNumber: 'A-902',
 };
 
@@ -114,11 +114,11 @@ test.describe('Driver settings and the as-hauled assignment copy in DRIVERS (QC-
     runDriversSeedScript('drivers-qc902.apply.sql', {
       UserId: sub,
       HostUuid: hostUuid,
-      VendorUuid: AS_HAULED.VendorUUID,
-      VendorName: AS_HAULED.VendorName,
-      TruckUuid: AS_HAULED.TruckUUID,
-      TruckName: AS_HAULED.TruckName,
-      AsHauledHostName: AS_HAULED.HostName,
+      VendorUuid: AS_HAULED.vendorUuid,
+      VendorName: AS_HAULED.vendorName,
+      TruckUuid: AS_HAULED.truckUuid,
+      TruckName: AS_HAULED.truckName,
+      AsHauledHostName: AS_HAULED.hostName,
       AssignmentTruckNumber: AS_HAULED.truckNumber,
     });
     assignmentUuid = queryDriversDb(
@@ -202,14 +202,14 @@ test.describe('Driver settings and the as-hauled assignment copy in DRIVERS (QC-
   test('DSET-07 GET /sync and the assignment details return the as-hauled HostName, vendor, truck and truckNumber with the HostUUID of the row', async ({
     driverSettingsApi,
   }) => {
-    const expected = { ...AS_HAULED, orderAssignmentUuid: assignmentUuid, HostUUID: hostUuid };
+    const expected = { ...AS_HAULED, orderAssignmentUuid: assignmentUuid, hostUuid };
     const lower = (row: Record<string, unknown> | undefined) =>
       row && {
         ...row,
         orderAssignmentUuid: String(row.orderAssignmentUuid).toLowerCase(),
-        HostUUID: String(row.HostUUID).toLowerCase(),
-        VendorUUID: String(row.VendorUUID).toLowerCase(),
-        TruckUUID: String(row.TruckUUID).toLowerCase(),
+        hostUuid: String(row.hostUuid).toLowerCase(),
+        vendorUuid: String(row.vendorUuid).toLowerCase(),
+        truckUuid: String(row.truckUuid).toLowerCase(),
       };
 
     const sync = await driverSettingsApi.syncAssignments(accessToken);

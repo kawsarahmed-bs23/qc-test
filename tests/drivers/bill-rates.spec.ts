@@ -130,14 +130,14 @@ function numbersIn(value: unknown, found: number[] = []): number[] {
 
 function shape(rates: DriverRate[] | null): Record<string, unknown>[] {
   return (rates ?? []).map((r) => ({
-    Code: r.Code,
-    Label: r.Label,
-    Amount: Number(r.Amount),
-    Unit: r.Unit,
-    EffectiveFrom: String(r.EffectiveFrom).slice(0, 10),
-    ...(r.WasAmount !== undefined ? { WasAmount: Number(r.WasAmount) } : {}),
-    ...(r.WasUnit !== undefined ? { WasUnit: r.WasUnit } : {}),
-    ...(r.ChangedAt !== undefined ? { ChangedAt: 'set' } : {}),
+    Code: r.code,
+    Label: r.label,
+    Amount: Number(r.amount),
+    Unit: r.unit,
+    EffectiveFrom: String(r.effectiveFrom).slice(0, 10),
+    ...(r.wasAmount !== undefined ? { WasAmount: Number(r.wasAmount) } : {}),
+    ...(r.wasUnit !== undefined ? { WasUnit: r.wasUnit } : {}),
+    ...(r.changedAt !== undefined ? { ChangedAt: 'set' } : {}),
   }));
 }
 
@@ -406,7 +406,7 @@ test.describe(
         { Code: 'freight', Label: 'Freight', Amount: 72.5, Unit: 'ton', EffectiveFrom: rateFrom },
         { Code: 'fuel-surcharge', Label: 'Fuel Surcharge', Amount: 3.3, Unit: 'percent', EffectiveFrom: rateFrom },
       ];
-      expect(shape(details.data.Rates), 'details Rates').toEqual(offered);
+      expect(shape(details.data.rates), 'details Rates').toEqual(offered);
       expect(
         numbersIn(details).filter((n) => CUSTOMER_SIDE.includes(n)),
         'the details response has no customer-side amount',
@@ -472,7 +472,7 @@ test.describe(
     test('BRATE-06 a rate change after Begin Haul is stored with NotAppliedReason haul-started and the current Rates stay as they were', async () => {
       const accepted = await driver.accept(first.uuid);
       expect(accepted.status(), await accepted.text()).toBe(202);
-      expect(shape((await accepted.json()).data?.Rates), 'the accept response carries Rates').toEqual([
+      expect(shape((await accepted.json()).data?.rates), 'the accept response carries Rates').toEqual([
         { Code: 'freight', Label: 'Freight', Amount: 75, Unit: 'ton', EffectiveFrom: rateFrom, WasAmount: 72.5, WasUnit: 'ton', ChangedAt: 'set' },
         { Code: 'fuel-surcharge', Label: 'Fuel Surcharge', Amount: 3.3, Unit: 'percent', EffectiveFrom: rateFrom },
       ]);

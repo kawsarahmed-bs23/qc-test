@@ -302,7 +302,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
       [offered.uuid, seeded.second.pending, seeded.second.accepted].sort(),
     );
     expect(
-      rows.map((a) => [a.orderAssignmentUuid.toLowerCase(), String(a.HostUUID).toLowerCase()]).sort(),
+      rows.map((a) => [a.orderAssignmentUuid.toLowerCase(), String(a.hostUuid).toLowerCase()]).sort(),
       'every row carries the HostUUID it belongs to',
     ).toEqual(
       [
@@ -1156,7 +1156,7 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
     const accepted = await api.accept(seeded.second.pending);
     expect(accepted.status(), JSON.stringify(await accepted.json())).toBe(202);
     expect((await accepted.json()).data).toMatchObject({ orderAssignmentUuid: seeded.second.pending, status: 'accepted' });
-    expect(String((await accepted.json()).data.HostUUID).toLowerCase()).toBe(seeded.secondHostUuid);
+    expect(String((await accepted.json()).data.hostUuid).toLowerCase()).toBe(seeded.secondHostUuid);
 
     const begin = await api.beginHaul(seeded.second.accepted);
     expect(begin.status(), JSON.stringify(await begin.json())).toBe(202);
@@ -1180,9 +1180,9 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
 
     const tickets = await api.myTickets();
     expect(tickets.status()).toBe(200);
-    const row = ((await tickets.json()).data.data as { tripUuid: string; HostUUID: string }[]).find((t) => t.tripUuid.toLowerCase() === secondTrip);
+    const row = ((await tickets.json()).data.data as { tripUuid: string; hostUuid: string }[]).find((t) => t.tripUuid.toLowerCase() === secondTrip);
     expect(row, 'my-tickets lists the finished second-host load').toBeDefined();
-    expect(String(row!.HostUUID).toLowerCase()).toBe(seeded.secondHostUuid);
+    expect(String(row!.hostUuid).toLowerCase()).toBe(seeded.secondHostUuid);
     expect(hostNumber(`SELECT COUNT(*) FROM app.Trips WHERE TripUUID = '${secondTrip}'`), 'nothing reached the first host for it').toBe(0);
   });
 
@@ -1262,20 +1262,20 @@ test.describe('Drivers API serves driver work from the DRIVERS mirror (QC-825)',
     const body = `e2e-qc825 second-host reply ${Date.now()}`;
     const sent = await api.sendMessage(seeded.second.accepted, body);
     expect(sent.status(), await sent.text()).toBe(202);
-    expect(String((await sent.json()).data.HostUUID).toLowerCase()).toBe(seeded.secondHostUuid);
+    expect(String((await sent.json()).data.hostUuid).toLowerCase()).toBe(seeded.secondHostUuid);
 
     const threads = (await api.threadList()).threads;
     const hostOf = (uuid: string) => threads.find((t) => t.orderAssignmentUuid.toLowerCase() === uuid);
     expect(hostOf(offered.uuid), "the first host's thread (DMIR-07, DMIR-12)").toMatchObject({ HostName: expect.any(String) });
-    expect(String(hostOf(offered.uuid)!.HostUUID).toLowerCase()).toBe(hostUuid);
+    expect(String(hostOf(offered.uuid)!.hostUuid).toLowerCase()).toBe(hostUuid);
     expect(hostOf(seeded.second.accepted), "the second host's thread").toMatchObject({ HostName: expect.any(String) });
-    expect(String(hostOf(seeded.second.accepted)!.HostUUID).toLowerCase()).toBe(seeded.secondHostUuid);
+    expect(String(hostOf(seeded.second.accepted)!.hostUuid).toLowerCase()).toBe(seeded.secondHostUuid);
 
     const thread = await api.thread(seeded.second.accepted);
     expect(thread.status()).toBe(200);
-    const data = (await thread.json()).data as { HostUUID: string; HostName: string; messages: { messageBody: string }[] };
-    expect(String(data.HostUUID).toLowerCase()).toBe(seeded.secondHostUuid);
-    expect(data.HostName).toBeTruthy();
+    const data = (await thread.json()).data as { hostUuid: string; hostName: string; messages: { messageBody: string }[] };
+    expect(String(data.hostUuid).toLowerCase()).toBe(seeded.secondHostUuid);
+    expect(data.hostName).toBeTruthy();
     expect(data.messages.map((m) => m.messageBody)).toContain(body);
   });
 

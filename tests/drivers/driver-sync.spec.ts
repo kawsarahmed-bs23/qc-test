@@ -788,15 +788,15 @@ test.describe('Drivers API local-first sync: delta reads, batched writes, idempo
     const all = await sync.changes();
     expect(all.reset).toBe(true);
     expect(uuidsOf(all.assignments, 'orderAssignmentUuid')).toEqual(allAssignments());
-    const hostOf = new Map(all.assignments.map((a) => [a.orderAssignmentUuid.toLowerCase(), String(a.HostUUID).toLowerCase()]));
+    const hostOf = new Map(all.assignments.map((a) => [a.orderAssignmentUuid.toLowerCase(), String(a.hostUuid).toLowerCase()]));
     for (const role of ROLES) expect(hostOf.get(seeded.uuids[role]), `${role} is a first-host row`).toBe(hostUuid);
     for (const uuid of secondRows()) expect(hostOf.get(uuid), 'a second-host row').toBe(seeded.secondHostUuid);
     expect(
-      all.messages.every((m) => String(m.HostUUID).toLowerCase() === hostOf.get(m.orderAssignmentUuid.toLowerCase())),
+      all.messages.every((m) => String(m.hostUuid).toLowerCase() === hostOf.get(m.orderAssignmentUuid.toLowerCase())),
       'each message carries the HostUUID of its assignment',
     ).toBe(true);
     expect(
-      all.trips.every((t) => String(t.HostUUID).toLowerCase() === hostOf.get(t.orderAssignmentUuid.toLowerCase())),
+      all.trips.every((t) => String(t.hostUuid).toLowerCase() === hostOf.get(t.orderAssignmentUuid.toLowerCase())),
       'each trip too',
     ).toBe(true);
 

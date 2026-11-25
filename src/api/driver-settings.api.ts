@@ -21,13 +21,13 @@ export interface DriversResult<T> {
 }
 
 export interface AsHauledAssignment {
-  HostUUID: string;
+  hostUuid: string;
   orderAssignmentUuid: string;
-  HostName: string | null;
-  VendorUUID: string | null;
-  VendorName: string | null;
-  TruckUUID: string | null;
-  TruckName: string | null;
+  hostName: string | null;
+  vendorUuid: string | null;
+  vendorName: string | null;
+  truckUuid: string | null;
+  truckName: string | null;
   truckNumber: string | null;
 }
 

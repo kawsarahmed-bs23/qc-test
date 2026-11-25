@@ -4,14 +4,14 @@ import { DriversMirrorApi } from '@api/drivers-mirror.api';
 
 /** One Bill rate on a Drivers API assignment (QC-827), PascalCase as the Drivers API sends it. */
 export interface DriverRate {
-  Code: string;
-  Label: string;
-  Amount: number;
-  Unit: string;
-  EffectiveFrom: string;
-  WasAmount?: number;
-  WasUnit?: string;
-  ChangedAt?: string;
+  code: string;
+  label: string;
+  amount: number;
+  unit: string;
+  effectiveFrom: string;
+  wasAmount?: number;
+  wasUnit?: string;
+  changedAt?: string;
 }
 
 export interface JobRateRow {
@@ -107,7 +107,7 @@ export class DriverBillRatesApi extends DriversMirrorApi {
   async rates(orderAssignmentUuid: string): Promise<DriverRate[] | null> {
     const response = await this.details(orderAssignmentUuid);
     if (response.status() !== 200) return null;
-    return ((await response.json()).data?.Rates ?? null) as DriverRate[] | null;
+    return ((await response.json()).data?.rates ?? null) as DriverRate[] | null;
   }
 
   async detailsText(orderAssignmentUuid: string): Promise<string> {
@@ -117,9 +117,9 @@ export class DriverBillRatesApi extends DriversMirrorApi {
   async listedRates(orderAssignmentUuid: string, range: { from?: string; to?: string }): Promise<DriverRate[] | null> {
     const response = await this.myAssignments(range);
     if (response.status() !== 200) throw new Error(`my-assignments answered ${response.status()}`);
-    const rows = (await response.json()).data.data as { orderAssignmentUuid: string; Rates?: DriverRate[] }[];
+    const rows = (await response.json()).data.data as { orderAssignmentUuid: string; rates?: DriverRate[] }[];
     const row = rows.find((a) => a.orderAssignmentUuid.toLowerCase() === orderAssignmentUuid);
-    return row ? (row.Rates ?? null) : null;
+    return row ? (row.rates ?? null) : null;
   }
 
   async syncedRates(orderAssignmentUuid: string): Promise<DriverRate[] | null> {
@@ -129,10 +129,10 @@ export class DriverBillRatesApi extends DriversMirrorApi {
     const rows = ((body.data ?? body).Assignments ?? (body.data ?? body).assignments ?? []) as {
       orderAssignmentUuid?: string;
       OrderAssignmentUUID?: string;
-      Rates?: DriverRate[];
+      rates?: DriverRate[];
     }[];
     const row = rows.find((a) => (a.orderAssignmentUuid ?? a.OrderAssignmentUUID ?? '').toLowerCase() === orderAssignmentUuid);
-    return row ? (row.Rates ?? null) : null;
+    return row ? (row.rates ?? null) : null;
   }
 
   beginHaulWithTrip(orderAssignmentUuid: string, tripUuid: string): Promise<APIResponse> {
