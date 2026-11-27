@@ -1,7 +1,8 @@
-// QC-933 (D64, D105, D106): a change one side makes to the other's copy of a Driver's details is a proposal the receiver approves
+// QC-933 (D64, D105): a change one side makes to the other's copy of a Driver's details is a proposal the receiver approves
 // or declines. This file is the Host side: saving a linked Driver or Vendor user (Manage Users and the Vendor Portal) holds
-// name, phone and Text messages back and sends them to the Driver; a Driver's own truck number arrives in Dispatch Messages
-// with Approve / Decline. The Driver side is tests/drivers/change-proposals.spec.ts.
+// the name back and sends it to the Driver; a Driver's own truck number arrives in Dispatch Messages with Approve / Decline.
+// QC-1009 (D114, replacing D106): the Phone Number is the Host's own, saved at once and never sent; for a linked user the
+// Host pages have no Text messages tick. The Driver side is tests/drivers/change-proposals.spec.ts.
 // Local only, against a host API, Drivers API and databases with the QC-933 tables (app.ChangeProposals on both) and a Host
 // that messages the Drivers API (Messaging). Throwaway data: seed/identity-qc933-user.apply.sql (two Identity drivers),
 // seed/host-qc933.apply.sql (a vendor, two trucks, host-only admin and vendor users, two linked drivers, one unlinked driver)
@@ -143,97 +144,43 @@ test.describe('Change proposals, Host side: editing a linked Driver and answerin
     expect(driversUser(world.driver.sub), 'the Driver copy waits for approval').toMatchObject({ firstName: BASE.firstName, lastName: BASE.driverLastName });
   });
 
-  test('CHG-04 a phone change from the Vendor Portal waits for the Driver: the Host phone stays, the Driver approves, and the Host phone follows once ChangeAnswered arrives', async ({
-    driverChangesApi,
-  }) => {
+  test('CHG-04 a phone change from the Vendor Portal saves the Host phone at once and sends nothing to the Driver (QC-1009)', async () => {
     const saved = await vendor.api.editUser('vendor', world.driver.hostUserId, { phoneNumber: '5125550934' });
     expect(saved.status, saved.text).toBe(200);
 
-    expect(digits(hostUser(world.driver.hostUserId).phone), 'the Host phone is not changed by the save').toBe(BASE.driverHostPhone);
-    const [sent] = hostProposals(world.driver.hostUserId);
-    expect(sent).toMatchObject({
-      kind: KIND.userDetails,
-      direction: DIRECTION.sent,
-      status: STATUS.pending,
-      mobilePhone: '+15125550934',
-      notifyBySms: null,
-      firstName: null,
-      lastName: null,
-    });
+    expect(digits(hostUser(world.driver.hostUserId).phone), 'the Host phone is saved').toBe('5125550934');
+    expect(hostProposals(world.driver.hostUserId), 'no proposal is recorded').toEqual([]);
     expect((await vendor.api.userEdit('vendor', world.driver.hostUserId)).data).toMatchObject({
-      PendingChanges: ['Waiting for the Driver to approve: phone +15125550934.'],
+      phoneNumber: '5125550934',
+      PendingChanges: [],
+      IsLinked: true,
     });
 
-    await expect
-      .poll(async () => (await driverChangesApi.list(world.driver.token)).body.data?.changes.length ?? 0, {
-        message: 'the proposal reaches the Driver',
-        ...POLL,
-      })
-      .toBe(1);
-    const pending = (await driverChangesApi.list(world.driver.token)).body.data!.changes[0];
-    expect(pending).toMatchObject({
-      changeUuid: sent.changeUuid,
-      kind: 'user-details',
-      direction: 'received',
-      status: 'pending',
-      mobilePhone: '+15125550934',
-      hostUuid: world.hostUuid,
-    });
-    expect(driversUser(world.driver.sub).phone, 'the Driver phone waits').toBe(BASE.driverE164);
-
-    const answered = await driverChangesApi.answer(world.driver.token, pending.changeUuid, 'approved');
-    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
-    expect(driversUser(world.driver.sub).phone, 'approving changes the Driver phone').toBe('+15125550934');
-
-    await expect.poll(() => hostProposals(world.driver.hostUserId)[0]?.status, { message: 'ChangeAnswered reaches the Host', ...POLL }).toBe(STATUS.approved);
-    expect(digits(hostUser(world.driver.hostUserId).phone), 'the Host phone follows the approval').toBe('15125550934');
-    expect(digits(hostSettingsPhone(world.driver.hostUserId))).toBe('15125550934');
-    expect((await vendor.api.userEdit('vendor', world.driver.hostUserId)).data).toMatchObject({ PendingChanges: [] });
     await waitForQueues();
-    expect(hostProposals(world.driver.hostUserId), 'nothing is sent back to the Driver').toHaveLength(1);
-    expect(driversProposals(world.driver.sub, world.hostUuid), 'the Driver adds no proposal of its own').toHaveLength(1);
+    expect(driversProposals(world.driver.sub), 'nothing reaches DRIVERS').toEqual([]);
+    expect(driversUser(world.driver.sub).phone, 'the Driver phone does not change').toBe(BASE.driverE164);
   });
 
-  test('CHG-05 turning Text messages on for a linked Driver waits for the Driver, and a save with Text messages off sends nothing', async ({
-    driverChangesApi,
-  }) => {
+  test('CHG-05 for a linked Driver both user forms have no Text messages tick, and posting notifyBySms true changes nothing and sends nothing (QC-1009)', async () => {
     const page = admin.adminUser;
     await page.open(world.driver.hostUserId);
-    await page.expectContactForDriverApproval();
-    await expect(page.textMessages.checkbox).not.toBeChecked();
-    await page.textMessages.checkbox.check();
-    expect(await page.saveExisting()).toBe(200);
+    await page.expectLinkedUser();
+    const portal = vendor.vendorUser;
+    await portal.open(world.driver.hostUserId);
+    await portal.expectLinkedUser();
 
-    expect(hostUser(world.driver.hostUserId).notifyBySms, 'the Host copy stays off until the Driver approves').toBe('0');
-    const [sent] = hostProposals(world.driver.hostUserId);
-    expect(sent).toMatchObject({
-      kind: KIND.userDetails,
-      direction: DIRECTION.sent,
-      status: STATUS.pending,
-      notifyBySms: '1',
-      mobilePhone: null,
-      firstName: null,
-      lastName: null,
-    });
-    await page.open(world.driver.hostUserId);
-    await expect(page.textMessages.checkbox).not.toBeChecked();
-    await expect(page.pendingChanges).toHaveText(['Waiting for the Driver to approve: Text messages on.']);
-
-    await expect.poll(async () => (await driverChangesApi.list(world.driver.token)).body.data?.changes.length ?? 0, { ...POLL }).toBe(1);
-    const pending = (await driverChangesApi.list(world.driver.token)).body.data!.changes[0];
-    expect(pending).toMatchObject({ kind: 'user-details', notifyBySms: true, mobilePhone: null });
-    expect(driversUser(world.driver.sub).notifyBySms, 'the Driver setting waits').not.toBe('1');
-
-    expect((await driverChangesApi.answer(world.driver.token, pending.changeUuid, 'approved')).status).toBe(200);
-    expect(driversUser(world.driver.sub).notifyBySms, 'approving turns Text messages on for the Driver').toBe('1');
-    await expect.poll(() => hostUser(world.driver.hostUserId).notifyBySms, { message: 'the Host copy follows ChangeAnswered', ...POLL }).toBe('1');
-    expect(hostProposals(world.driver.hostUserId)[0].status).toBe(STATUS.approved);
+    for (const [session, area] of [
+      [admin, 'manageusers'],
+      [vendor, 'vendor'],
+    ] as const) {
+      const on = await session.api.editUser(area, world.driver.hostUserId, { notifyBySms: true });
+      expect(on.status, on.text).toBe(200);
+      expect(hostUser(world.driver.hostUserId).notifyBySms, `${area}: the Host copy stays as the Driver set it`).toBe('0');
+    }
+    expect(hostProposals(world.driver.hostUserId), 'no proposal is recorded').toEqual([]);
     await waitForQueues();
-
-    const off = await admin.api.editUser('manageusers', world.driver.hostUserId, { notifyBySms: false });
-    expect(off.status, off.text).toBe(200);
-    expect(hostUser(world.driver.hostUserId).notifyBySms, 'Text messages off is not a change the Host can make for a linked Driver').toBe('1');
-    expect(hostProposals(world.driver.hostUserId), 'and it is not sent').toHaveLength(1);
+    expect(driversProposals(world.driver.sub), 'nothing reaches DRIVERS').toEqual([]);
+    expect(driversUser(world.driver.sub).notifyBySms, 'the Driver setting is untouched').not.toBe('1');
   });
 
   test('CHG-06 a save with nothing changed, and a save of an unlinked Driver, send no proposal', async () => {
@@ -373,63 +320,67 @@ test.describe('Change proposals, Host side: editing a linked Driver and answerin
     expect(driversUser(world.driver2.sub).truckNumber).toBe('E2E933-X');
   });
 
-  test('CHG-13 a phone change followed by a name-only save leaves one pending proposal carrying both, and approving it applies both', async ({
+  test('CHG-13 a phone change followed by a name-only save saves the phone at once and leaves one pending proposal carrying the name only (QC-1009)', async ({
     driverChangesApi,
   }) => {
     const page = admin.adminUser;
     await page.open(world.driver.hostUserId);
     await page.phone.input.fill('5125550934');
     expect(await page.saveExisting()).toBe(200);
+    expect(digits(hostUser(world.driver.hostUserId).phone), 'the phone is saved by the first save').toBe('5125550934');
+    expect(hostProposals(world.driver.hostUserId), 'and proposes nothing').toEqual([]);
 
     await page.open(world.driver.hostUserId);
+    await expect(page.phone.input).toHaveValue(/512.*555.*0934/);
     await page.firstName.fill('Merged');
     expect(await page.saveExisting()).toBe(200);
 
-    const hostRows = hostProposals(world.driver.hostUserId);
-    expect(hostRows.map((row) => row.status)).toEqual([STATUS.superseded, STATUS.pending]);
-    expect(hostRows[1]).toMatchObject({
+    const [sent, ...others] = hostProposals(world.driver.hostUserId);
+    expect(others, 'one proposal').toEqual([]);
+    expect(sent).toMatchObject({
       kind: KIND.userDetails,
       direction: DIRECTION.sent,
+      status: STATUS.pending,
       firstName: 'Merged',
       lastName: BASE.driverLastName,
-      mobilePhone: '+15125550934',
+      mobilePhone: null,
       notifyBySms: null,
     });
-    expect(hostUser(world.driver.hostUserId), 'nothing is applied on the Host yet').toMatchObject({ firstName: BASE.firstName });
-    expect(digits(hostUser(world.driver.hostUserId).phone)).toBe(BASE.driverHostPhone);
+    expect(hostUser(world.driver.hostUserId), 'the name waits for the Driver').toMatchObject({ firstName: BASE.firstName });
 
-    await expect.poll(() => driversProposals(world.driver.sub, world.hostUuid).length, { message: 'both proposals reach DRIVERS', ...POLL }).toBe(2);
+    await expect
+      .poll(async () => (await driverChangesApi.list(world.driver.token)).body.data?.changes.length ?? 0, {
+        message: 'the proposal reaches the Driver',
+        ...POLL,
+      })
+      .toBe(1);
     const [pending] = (await driverChangesApi.list(world.driver.token)).body.data!.changes;
-    expect((await driverChangesApi.list(world.driver.token)).body.data!.changes, 'one pending proposal for the Driver').toHaveLength(1);
-    expect(pending).toMatchObject({ changeUuid: hostRows[1].changeUuid, firstName: 'Merged', lastName: BASE.driverLastName, mobilePhone: '+15125550934' });
-    expect(
-      driversProposals(world.driver.sub, world.hostUuid)
-        .map((row) => row.status)
-        .sort(),
-    ).toEqual([STATUS.pending, STATUS.superseded]);
+    expect(pending).toMatchObject({ changeUuid: sent.changeUuid, firstName: 'Merged', mobilePhone: null });
 
     expect((await driverChangesApi.answer(world.driver.token, pending.changeUuid, 'approved')).status).toBe(200);
-    expect(driversUser(world.driver.sub)).toMatchObject({ firstName: 'Merged', lastName: BASE.driverLastName, phone: '+15125550934' });
-    await expect.poll(() => hostProposals(world.driver.hostUserId)[1]?.status, { message: 'ChangeAnswered reaches the Host', ...POLL }).toBe(STATUS.approved);
+    expect(driversUser(world.driver.sub), 'the Driver keeps its own phone').toMatchObject({ firstName: 'Merged', phone: BASE.driverE164 });
+    await expect.poll(() => hostProposals(world.driver.hostUserId)[0]?.status, { message: 'ChangeAnswered reaches the Host', ...POLL }).toBe(STATUS.approved);
     expect(hostUser(world.driver.hostUserId).firstName).toBe('Merged');
-    expect(digits(hostUser(world.driver.hostUserId).phone)).toBe('15125550934');
+    expect(digits(hostUser(world.driver.hostUserId).phone), 'the Host phone stays the Host value').toBe('5125550934');
   });
 
-  test('CHG-14 with Drivers:Mode Off a linked user keeps phone and Text messages locked in Edit User and a save proposes nothing', async ({ request }) => {
+  test('CHG-14 with Drivers:Mode Off a linked user shows no Text messages tick and an editable phone, and a save stores the phone and proposes nothing (QC-1009)', async ({
+    request,
+  }) => {
     const modes = new HostDriversMode(request);
     await modes.set('Off');
     try {
       const page = admin.adminUser;
       await page.open(world.driver.hostUserId);
-      await page.expectContactLocked();
-      expect((await admin.api.userEdit('manageusers', world.driver.hostUserId)).data).toMatchObject({ IsContactLocked: true, IsContactProposed: false });
+      await page.expectLinkedUser();
+      expect((await admin.api.userEdit('manageusers', world.driver.hostUserId)).data).toMatchObject({ IsLinked: true });
       const portal = vendor.vendorUser;
       await portal.open(world.driver.hostUserId);
-      await portal.expectContactLocked();
+      await portal.expectLinkedUser();
 
       const saved = await admin.api.editUser('manageusers', world.driver.hostUserId, { phoneNumber: '5125550935', notifyBySms: true });
       expect(saved.status, saved.text).toBe(200);
-      expect(digits(hostUser(world.driver.hostUserId).phone), 'the phone stays').toBe(BASE.driverHostPhone);
+      expect(digits(hostUser(world.driver.hostUserId).phone), 'the phone is saved').toBe('5125550935');
       expect(hostUser(world.driver.hostUserId).notifyBySms, 'Text messages stays').toBe('0');
       expect(hostProposals(world.driver.hostUserId), 'no proposal is created').toEqual([]);
       await waitForQueues();
@@ -439,25 +390,40 @@ test.describe('Change proposals, Host side: editing a linked Driver and answerin
     }
   });
 
-  test('CHG-15 with Drivers:Mode On clearing the phone is refused and saves nothing, and with Text messages already on the tick is disabled', async () => {
+  test("CHG-15 with Drivers:Mode On the Host can clear a linked Driver's phone: it saves, the name still waits as a proposal, and the Driver phone stays (QC-1009)", async () => {
     for (const [session, area] of [
       [admin, 'manageusers'],
       [vendor, 'vendor'],
     ] as const) {
-      const refused = await session.api.editUser(area, world.driver.hostUserId, { firstName: 'ShouldNotSave', phoneNumber: '' });
-      expect(refused.status, `${area}: ${refused.text.slice(-300)}`).toBe(400);
-      expect(refused.text.toLowerCase(), `${area}: the error names the phone`).toContain('phonenumber');
-      expect(hostUser(world.driver.hostUserId), `${area}: nothing is saved`).toMatchObject({ firstName: BASE.firstName });
-      expect(digits(hostUser(world.driver.hostUserId).phone)).toBe(BASE.driverHostPhone);
+      await resetWorld(world);
+      const cleared = await session.api.editUser(area, world.driver.hostUserId, { firstName: 'Cleared', phoneNumber: '' });
+      expect(cleared.status, `${area}: ${cleared.text.slice(-300)}`).toBe(200);
+      expect(hostUser(world.driver.hostUserId), `${area}: the phone is cleared and the name waits`).toMatchObject({ firstName: BASE.firstName, phone: '' });
+      const [sent, ...others] = hostProposals(world.driver.hostUserId);
+      expect(others).toEqual([]);
+      expect(sent, `${area}: the proposal carries the name only`).toMatchObject({ firstName: 'Cleared', mobilePhone: null, notifyBySms: null });
     }
-    expect(hostProposals(world.driver.hostUserId), 'and nothing is proposed').toEqual([]);
+    await waitForQueues();
+    expect(driversUser(world.driver.sub).phone, 'the Driver phone stays').toBe(BASE.driverE164);
+  });
 
-    hostValue(`UPDATE app.UserSettings SET NotifyBySms = 1 WHERE UserID_FK = N'${world.driver.hostUserId}'`);
-    expect((await admin.api.userEdit('manageusers', world.driver.hostUserId)).data).toMatchObject({ IsContactProposed: true, notifyBySms: true });
-    await admin.adminUser.open(world.driver.hostUserId);
-    await admin.adminUser.expectTextsOnlyDriverCanTurnOff();
-    await vendor.vendorUser.open(world.driver.hostUserId);
-    await vendor.vendorUser.expectTextsOnlyDriverCanTurnOff();
+  test('CHG-18 a phone the Driver changes in the Driver App reaches the Host as its copy only: auth.Users.PhoneNumber stays and no approval appears in Dispatch (QC-1009)', async ({
+    driverSettingsApi,
+  }) => {
+    driversValue(`UPDATE auth.Users SET PhoneNumber = N'+15125550938' WHERE UserUUID = '${world.driver.sub}'`);
+    const saved = await driverSettingsApi.saveSettings(world.driver.token, { notifyBySms: true });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+
+    await expect
+      .poll(() => digits(hostSettingsPhone(world.driver.hostUserId)), { message: 'DriverContactChanged reaches the Host copy', ...POLL })
+      .toBe('15125550938');
+    expect(hostUser(world.driver.hostUserId), 'the Host phone is the Host value; the text setting copy follows the Driver').toMatchObject({
+      phone: BASE.driverHostPhone,
+      notifyBySms: '1',
+    });
+    expect(hostProposals(world.driver.hostUserId), 'no proposal is recorded').toEqual([]);
+    expect(hostChangeMessages(world.driver.hostUserId), 'no approval appears in Dispatch Messages').toEqual([]);
+    expect((await admin.api.userEdit('manageusers', world.driver.hostUserId)).data).toMatchObject({ phoneNumber: BASE.driverHostPhone });
   });
 });
 

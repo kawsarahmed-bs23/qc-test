@@ -6,7 +6,9 @@ import { HostDriversMode } from '@api/sms-routing.api';
 
 const SEEDED = ['admin', 'vendor', 'linked', 'plain', 'staff'] as const;
 type Seeded = (typeof SEEDED)[number];
-const TRUCK = 'E2E QC-936 Truck';
+const VENDOR = 'E2E QC-936 Vendor';
+const ADMIN_TRUCK = 'E2E QC-936 Truck 3';
+const PORTAL_TRUCK = 'E2E QC-936 Truck 4';
 const LINKED_PHONE = '5125559361';
 const PLAIN_PHONE = '5125559362';
 const ORG_CACHE = { timeout: 120_000, intervals: [5_000] };
@@ -91,8 +93,8 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
         async () => [
           (await admin.api.userEdit('manageusers', id.linked)).status,
           (await vendor.api.userEdit('vendor', id.linked)).status,
-          names((await admin.api.organisationOptions('Driver')).data?.availableOrganisations).includes(TRUCK),
-          names((await vendor.api.userCreate('vendor')).data?.availableTrucks).includes(TRUCK),
+          names((await admin.api.organisationOptions('Driver')).data?.availableOrganisations).includes(ADMIN_TRUCK),
+          names((await vendor.api.userCreate('vendor')).data?.availableTrucks).includes(PORTAL_TRUCK),
         ],
         {
           message: 'the host API sees the new vendor and truck once its organisation tree cache (Auth:OrganisationTreeCacheSeconds) expires',
@@ -119,26 +121,29 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
     }
   });
 
-  test('SMSSET-01 user-edit of a Driver with no app.UserSettings row answers notifyBySms true and not contact-locked, and both create models start ticked', async () => {
+  test('SMSSET-01 user-edit of a Driver with no app.UserSettings row answers notifyBySms true and not linked, and both create models start unticked because there is no phone yet (QC-991)', async () => {
     const manage = await admin.api.userEdit('manageusers', id.plain);
     expect(manage.status, manage.text).toBe(200);
-    expect(manage.data).toMatchObject({ notifyBySms: true, showNotifyBySms: true, IsContactLocked: false });
+    expect(manage.data).toMatchObject({ notifyBySms: true, showNotifyBySms: true, IsLinked: false });
 
     const portal = await vendor.api.userEdit('vendor', id.plain);
     expect(portal.status, portal.text).toBe(200);
-    expect(portal.data).toMatchObject({ notifyBySms: true, IsContactLocked: false });
+    expect(portal.data).toMatchObject({ notifyBySms: true, IsLinked: false });
 
     const create = await admin.api.userCreate('manageusers');
     expect(create.status, create.text).toBe(200);
-    expect(create.data, 'Create New User starts with no role, so the tick is hidden but defaults on').toMatchObject({ notifyBySms: true, showNotifyBySms: false });
+    expect(create.data, 'Create New User starts with no role and no phone, so the tick is hidden and off').toMatchObject({
+      notifyBySms: false,
+      showNotifyBySms: false,
+    });
     const portalCreate = await vendor.api.userCreate('vendor');
     expect(portalCreate.status, portalCreate.text).toBe(200);
-    expect(portalCreate.data).toMatchObject({ notifyBySms: true });
+    expect(portalCreate.data, 'no phone yet, so off').toMatchObject({ notifyBySms: false });
 
     expect(setting(id.plain), 'reading the user adds no app.UserSettings row').toBeNull();
   });
 
-  test('SMSSET-02 Manage Users > Create New User hides Text messages until a Vendor or Driver role is chosen and shows it ticked for Vendor and Driver, following the role as it changes', async () => {
+  test('SMSSET-02 Manage Users > Create New User hides Text messages until a Vendor or Driver role is chosen, shows it disabled until a valid phone is typed, then ticked, following the role as it changes (QC-991)', async () => {
     for (const [role, shown] of [
       ['Admin', false],
       ['Sales', false],
@@ -156,8 +161,9 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
     await expect(page.textMessages.root).toHaveCount(0);
 
     await page.chooseRole('Vendor');
-    await expect(page.textMessages.checkbox).toBeVisible();
-    await expect(page.textMessages.checkbox, 'ticked by default on create').toBeChecked();
+    await page.expectTextsNeedPhone();
+    await page.phone.input.fill('5125559366');
+    await expect(page.textMessages.checkbox, 'ticked once a valid phone is typed').toBeChecked();
     await page.expectContactEditable();
 
     await page.chooseRole('Driver');
@@ -176,13 +182,13 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
     await page.fillPerson(address, 'E2E', 'QC-936 Created Admin');
     await page.phone.input.fill('5125559363');
     await page.chooseRole('Driver');
-    await page.chooseOrganisation(TRUCK);
+    await page.chooseVendorTruck(VENDOR, ADMIN_TRUCK);
     await expect(page.textMessages.checkbox).toBeChecked();
     await page.textMessages.checkbox.uncheck();
     const created = await page.saveNew();
 
     expect(setting(created)).toEqual({ notifyBySms: '0', phone: '5125559363' });
-    expect((await admin.api.userEdit('manageusers', created)).data).toMatchObject({ notifyBySms: false, IsContactLocked: false });
+    expect((await admin.api.userEdit('manageusers', created)).data).toMatchObject({ notifyBySms: false, IsLinked: false });
 
     await page.open(created);
     await expect(page.textMessages.checkbox, 'unticked after a reload').not.toBeChecked();
@@ -196,24 +202,24 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
     expect(value(`SELECT COUNT(*) FROM app.UserSettings WHERE UserID_FK = N'${created}'`), 'one row per user').toBe('1');
   });
 
-  test('SMSSET-04 Vendor Portal > My Users: the tick shows for drivers and non-drivers; a driver created unticked stores NotifyBySms 0, and ticking it stores 1', async () => {
+  test('SMSSET-04 Vendor Portal > My Users: the tick shows for drivers and non-drivers, needs a phone first (QC-991); a driver created unticked stores NotifyBySms 0, and ticking it stores 1', async () => {
     const address = email('created.vendor');
     const page = vendor.vendorUser;
     await page.open();
     await expect(page.truckDriver).not.toBeChecked();
-    await expect(page.textMessages.checkbox, 'shown for a non-driver').toBeVisible();
-    await expect(page.textMessages.checkbox).toBeChecked();
-    await page.expectContactEditable();
+    await page.expectTextsNeedPhone();
 
     await page.fillPerson(address, 'E2E', 'QC-936 Created Vendor');
     await page.phone.input.fill('5125559365');
-    await page.chooseTruck(TRUCK);
+    await expect(page.textMessages.checkbox, 'shown for a non-driver and ticked once a valid phone is typed').toBeChecked();
+    await page.expectContactEditable();
+    await page.chooseTruck(PORTAL_TRUCK);
     await expect(page.textMessages.checkbox, 'shown for a driver').toBeVisible();
     await page.textMessages.checkbox.uncheck();
     const created = await page.saveNew();
 
     expect(setting(created)).toEqual({ notifyBySms: '0', phone: '5125559365' });
-    expect((await vendor.api.userEdit('vendor', created)).data).toMatchObject({ notifyBySms: false, isDriver: true, IsContactLocked: false });
+    expect((await vendor.api.userEdit('vendor', created)).data).toMatchObject({ notifyBySms: false, isDriver: true, IsLinked: false });
 
     await page.open(created);
     await expect(page.textMessages.checkbox, 'unticked after a reload').not.toBeChecked();
@@ -225,49 +231,52 @@ test.describe('Text messages (NotifyBySms) on Manage Users and Vendor Portal My 
     await expect(page.textMessages.checkbox, 'ticked after a reload').toBeChecked();
   });
 
-  test('SMSSET-05 a linked user (UserUUID set) shows Text messages disabled and unticked and the phone read-only with "Set by the Driver in the Driver App." on both forms, and a Save keeps them', async () => {
+  test('SMSSET-05 a linked user (UserUUID set) shows no Text messages tick and an editable phone with the usual hint on both forms, and a Save with nothing changed keeps the row and the phone (QC-1009)', async () => {
     const before = settingStamp(id.linked);
     expect(before, 'the seeded row is NotifyBySms 0 with the phone').toMatch(new RegExp(`^0\\|${LINKED_PHONE}\\|`));
 
     const manage = admin.adminUser;
     await manage.open(id.linked);
-    await expect(manage.textMessages.checkbox).not.toBeChecked();
-    await manage.expectContactLocked();
+    await manage.expectLinkedUser();
     await expect(manage.phone.input).toHaveValue(/512.*555.*9361/);
     expect(await manage.saveExisting()).toBe(200);
     expect(settingStamp(id.linked), 'saving the page leaves the row untouched').toBe(before);
-    expect(storedPhone(id.linked)).toBe(LINKED_PHONE);
+    expect(digits(storedPhone(id.linked))).toBe(LINKED_PHONE);
 
     const portal = vendor.vendorUser;
     await portal.open(id.linked);
-    await expect(portal.textMessages.checkbox).not.toBeChecked();
-    await portal.expectContactLocked();
+    await portal.expectLinkedUser();
     expect(await portal.saveExisting()).toBe(200);
     expect(settingStamp(id.linked), 'saving the Vendor Portal page leaves the row untouched').toBe(before);
-    expect(storedPhone(id.linked)).toBe(LINKED_PHONE);
+    expect(digits(storedPhone(id.linked))).toBe(LINKED_PHONE);
   });
 
-  test('SMSSET-06 for a linked user, posting user-edit with notifyBySms true and another phone changes neither the row nor the phone (Manage Users and Vendor Portal)', async () => {
+  test('SMSSET-06 for a linked user, user-edit saves another phone to auth.Users.PhoneNumber and ignores notifyBySms true, leaving app.UserSettings as it is (Manage Users and Vendor Portal, QC-1009)', async () => {
     const before = settingStamp(id.linked);
-    for (const [session, area] of [
-      [admin, 'manageusers'],
-      [vendor, 'vendor'],
-    ] as const) {
-      const model = await session.api.userEdit(area, id.linked);
-      expect(model.status, model.text).toBe(200);
-      expect(model.data).toMatchObject({ notifyBySms: false, IsContactLocked: true });
-      const saved = await session.api.saveUserEdit(area, {
-        ...model.data,
-        notifyBySms: true,
-        phoneNumber: '5125550936',
-        password: null,
-        confirmPassword: null,
-      });
-      expect(saved.status, saved.text).toBe(200);
-      expect(settingStamp(id.linked), `${area}: app.UserSettings is not touched`).toBe(before);
-      expect(storedPhone(id.linked), `${area}: auth.Users.PhoneNumber stays as stored`).toBe(LINKED_PHONE);
-      expect((await session.api.userEdit(area, id.linked)).data).toMatchObject({ notifyBySms: false, phoneNumber: LINKED_PHONE });
+    try {
+      for (const [session, area, phone] of [
+        [admin, 'manageusers', '5125550936'],
+        [vendor, 'vendor', '5125550937'],
+      ] as const) {
+        const model = await session.api.userEdit(area, id.linked);
+        expect(model.status, model.text).toBe(200);
+        expect(model.data).toMatchObject({ IsLinked: true });
+        const saved = await session.api.saveUserEdit(area, {
+          ...model.data,
+          notifyBySms: true,
+          phoneNumber: phone,
+          password: null,
+          confirmPassword: null,
+        });
+        expect(saved.status, saved.text).toBe(200);
+        expect(digits(storedPhone(id.linked)), `${area}: the Host saves its own phone`).toBe(phone);
+        expect(settingStamp(id.linked), `${area}: app.UserSettings is not touched`).toBe(before);
+        expect((await session.api.userEdit(area, id.linked)).data).toMatchObject({ notifyBySms: false, IsLinked: true });
+      }
+    } finally {
+      value(`UPDATE auth.Users SET PhoneNumber = N'${LINKED_PHONE}' WHERE Id = N'${id.linked}'`);
     }
+    expect(storedPhone(id.linked), 'the linked phone is back').toBe(LINKED_PHONE);
   });
 
   test('SMSSET-07 an unlinked Driver posted through user-edit saves the new phone and NotifyBySms; a Sales user gets no app.UserSettings row', async () => {

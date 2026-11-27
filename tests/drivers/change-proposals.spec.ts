@@ -1,4 +1,4 @@
-// QC-933 (D64, D93, D105, D106): the Driver side of change proposals. A name, phone, Text messages or truck number change a
+// QC-933 (D64, D93, D105; QC-1009 D114 replaces D106): the Driver side of change proposals. A name or truck number change a
 // Host proposes reaches DRIVERS as a pending proposal the Driver approves or declines through GET /me/change-proposals and
 // POST /me/change-proposals/{changeUuid}/answer (the Driver App is not in the workspace, so these calls stand in for it).
 // Approving applies the value to the Driver's own copy and sends ChangeAnswered back to the proposing Host only; a truck
@@ -376,29 +376,28 @@ test.describe('Change proposals, Driver side: approving, declining and the rules
     expect(digits(hostUser(world.driver.hostUserId).phone)).toBe(BASE.driverHostPhone);
   });
 
-  test("CHG-16 a phone-only proposal approved after the Driver was renamed on the Driver side keeps the Driver's new name", async ({
+  test('CHG-16 a Host phone save offers the Driver nothing and a later name proposal carries no phone, so approving it keeps the Driver phone (QC-1009)', async ({
     changeProposalsApi,
     driverChangesApi,
   }) => {
     const admin = await signedIn(changeProposalsApi);
     expect((await admin.editUser('manageusers', world.driver.hostUserId, { phoneNumber: '5125550936' })).status).toBe(200);
-    const [pending] = await pendingFor(driverChangesApi, world.driver.token, 1);
-    expect(pending).toMatchObject({ mobilePhone: '+15125550936', firstName: null, lastName: null });
+    expect(digits(hostUser(world.driver.hostUserId).phone), 'the Host saves its own phone').toBe('5125550936');
+    await waitForQueues();
+    expect((await driverChangesApi.list(world.driver.token)).body.data?.changes ?? [], 'nothing is offered to the Driver').toEqual([]);
 
-    driversValue(`UPDATE auth.Users SET FirstName = N'Renamed' WHERE UserUUID = '${world.driver.sub}'`);
+    expect((await admin.editUser('manageusers', world.driver.hostUserId, { firstName: 'Renamed' })).status).toBe(200);
+    const [pending] = await pendingFor(driverChangesApi, world.driver.token, 1);
+    expect(pending).toMatchObject({ firstName: 'Renamed', mobilePhone: null });
     expect((await driverChangesApi.answer(world.driver.token, pending.changeUuid, 'approved')).status).toBe(200);
-    expect(driversUser(world.driver.sub), 'the phone is applied and the Driver keeps its new name').toMatchObject({
+    expect(driversUser(world.driver.sub), 'the name is applied and the Driver keeps its own phone').toMatchObject({
       firstName: 'Renamed',
-      phone: '+15125550936',
+      phone: BASE.driverE164,
     });
-    expect(driversUser(world.driver.sub).notifyBySms, 'Text messages is not turned on by a phone proposal').not.toBe('1');
 
     await expect.poll(() => hostProposals(world.driver.hostUserId)[0]?.status, { message: 'ChangeAnswered reaches the Host', ...POLL }).toBe(STATUS.approved);
-    expect(digits(hostUser(world.driver.hostUserId).phone)).toBe('15125550936');
-    expect(hostUser(world.driver.hostUserId), 'the Host name is untouched and Text messages stays off').toMatchObject({
-      firstName: BASE.firstName,
-      notifyBySms: '0',
-    });
+    expect(hostUser(world.driver.hostUserId), 'the Host keeps its phone and takes the name').toMatchObject({ firstName: 'Renamed', notifyBySms: '0' });
+    expect(digits(hostUser(world.driver.hostUserId).phone)).toBe('5125550936');
   });
 
   test('CHG-17 answering a proposal after the Driver left that Host is refused with 409', async ({ changeProposalsApi, driverChangesApi }) => {

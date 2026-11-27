@@ -1,14 +1,16 @@
 -- QC-936: host-side data for the "Text messages" (NotifyBySms) cases (tests/app/notify-by-sms.spec.ts), in the host database
 -- (LOCAL_SQL_DATABASE):
 --   * a throwaway vendor 'E2E QC-936 Vendor' (short E2E936V) under the host organisation (EnvironmentSetting
---     HostOrganisationId) with an app.VendorSettings row, and its truck 'E2E QC-936 Truck' (E2E936T),
+--     HostOrganisationId) with an app.VendorSettings row, and its trucks 'E2E QC-936 Truck' (E2E936T) and
+--     'E2E QC-936 Truck 2' (E2E936T2), one Driver each, since a Truck has one Driver, and the empty trucks
+--     'E2E QC-936 Truck 3' (E2E936T3) and 'E2E QC-936 Truck 4' (E2E936T4) for the Drivers the cases create,
 --   * host-only users e2e.qc936.<name>@quarryconnect.test (no Identity rows), all with the live EULA signed:
 --       admin  (Admin, host organisation)  and vendor (Vendor, the vendor): they sign in to the host API's own
 --              api/account/login with the password of $(SourceEmail), whose PasswordHash is read from [$(IdentityDb)]
 --              (same server, read only); each has a UserUUID,
 --       linked (Driver, the truck, phone 5125559361) with UserUUID set to a new GUID, so the host treats its phone and
 --              Text messages as set by the Driver App, and an app.UserSettings row with NotifyBySms 0 and that phone,
---       plain  (Driver, the truck, phone 5125559362) with no UserUUID and no app.UserSettings row,
+--       plain  (Driver, truck 2, phone 5125559362) with no UserUUID and no app.UserSettings row,
 --       staff  (Sales, host organisation) with no UserUUID and no app.UserSettings row.
 -- host-qc936.remove.sql deletes all of it, plus the users the cases create (e2e.qc936.created.*) and their rows; run it first.
 SET NOCOUNT ON;
@@ -39,7 +41,7 @@ INSERT @People (Name, Role, Org, Phone, Linked, SignsIn) VALUES
     (N'admin', N'Admin', N'host', NULL, 1, 1),
     (N'vendor', N'Vendor', N'vendor', NULL, 1, 1),
     (N'linked', N'Driver', N'truck', N'5125559361', 1, 0),
-    (N'plain', N'Driver', N'truck', N'5125559362', 0, 0),
+    (N'plain', N'Driver', N'truck2', N'5125559362', 0, 0),
     (N'staff', N'Sales', N'host', NULL, 0, 0);
 
 DECLARE @LocationId int = ISNULL((SELECT TOP 1 OrganisationLocationIdFk FROM auth.Users WHERE OrganisationIdFk = @HostOrganisationId AND OrganisationLocationIdFk IS NOT NULL), 0);
@@ -61,6 +63,10 @@ EXEC sp_executesql @OrgInsert, @OrgParams, @HostOrganisationId, N'E2E QC-936 Ven
 DECLARE @Vendor int = (SELECT MAX(OrganisationID) FROM auth.Organisations WHERE OrganisationName = N'E2E QC-936 Vendor');
 EXEC sp_executesql @OrgInsert, @OrgParams, @Vendor, N'E2E QC-936 Truck', 'E2E936T', @TruckType;
 DECLARE @Truck int = (SELECT MAX(OrganisationID) FROM auth.Organisations WHERE OrganisationName = N'E2E QC-936 Truck');
+EXEC sp_executesql @OrgInsert, @OrgParams, @Vendor, N'E2E QC-936 Truck 2', 'E2E936T2', @TruckType;
+DECLARE @Truck2 int = (SELECT MAX(OrganisationID) FROM auth.Organisations WHERE OrganisationName = N'E2E QC-936 Truck 2');
+EXEC sp_executesql @OrgInsert, @OrgParams, @Vendor, N'E2E QC-936 Truck 3', 'E2E936T3', @TruckType;
+EXEC sp_executesql @OrgInsert, @OrgParams, @Vendor, N'E2E QC-936 Truck 4', 'E2E936T4', @TruckType;
 
 INSERT app.VendorSettings (OrganisationID_FK, Created, Updated, Active, NeedsSync, QBOrganisationName, BillToUserId_Fk, DispatchContactUserID_FK)
 VALUES (@Vendor, GETUTCDATE(), GETUTCDATE(), 1, 0, N'E2E936V', NULL, NULL);
@@ -78,7 +84,7 @@ SELECT p.Id, CASE WHEN p.Linked = 1 THEN NEWID() END,
        UPPER(REPLACE(CONVERT(nvarchar(36), NEWID()), N'-', N'')), CONVERT(nvarchar(36), NEWID()),
        p.Phone, 0, 0, 1, 0, N'E2E', N'QC-936 ' + UPPER(LEFT(p.Name, 1)) + SUBSTRING(p.Name, 2, 20),
        SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(), SYSDATETIMEOFFSET(),
-       CASE p.Org WHEN N'host' THEN @HostOrganisationId WHEN N'vendor' THEN @Vendor ELSE @Truck END,
+       CASE p.Org WHEN N'host' THEN @HostOrganisationId WHEN N'vendor' THEN @Vendor WHEN N'truck2' THEN @Truck2 ELSE @Truck END,
        CASE p.Org WHEN N'host' THEN @LocationId ELSE 0 END, 0, 1, 0, 0
 FROM @People p;
 
