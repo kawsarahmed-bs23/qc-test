@@ -23,6 +23,7 @@ const OCR = { timeout: 90_000, intervals: [2_000, 5_000] };
 const RECEIVED = { timeout: 60_000, intervals: [1_000, 2_000, 5_000] };
 const TICKET_JPEG = path.join(TEST_DATA_DIR, 'qc803', 'logo-solid.jpg');
 const RUNNING_HAUL = 'This load is running. Ask the Driver to End Haul first.';
+const LOCKED_AFTER_SAVE = 'The date, vendor and truck cannot be changed once the assignment has been saved.';
 
 function sqlText(value: string): string {
   return `N'${value.replace(/'/g, "''")}'`;
@@ -637,7 +638,7 @@ test.describe(
       if (truck) expect(me.host?.truck, 'the as-hauled truck').toBe(truck);
     });
 
-    test('TSUB-16 while a load is running the host refuses to cancel it or move it to another driver with the End Haul message, and nothing changes', async () => {
+    test('TSUB-16 while a load is running the host refuses to cancel it with the End Haul message, refuses to move it to another truck and driver (locked after save, QC-1021), and nothing changes', async () => {
       await offerAcceptBegin(second, assignment({ orderId: orders.second, loadsAssigned: 1, notes: `${MARKER} dh21` }));
       const version = driversAssignment(second.uuid, 'Status, Version');
 
@@ -650,7 +651,7 @@ test.describe(
         assignment({ orderId: orders.second, loadsAssigned: 1, truckId: SECOND_TRUCK_ID, driverUserId: SECOND_DRIVER_ID, notes: `${MARKER} dh21` }),
       );
       expect(moved.status).toBe(400);
-      expect(moved.text).toContain(RUNNING_HAUL);
+      expect(moved.text).toContain(LOCKED_AFTER_SAVE);
 
       expect(hostStatus(second.id), 'the host assignment stays Running').toBe(4);
       expect(hostValue(`SELECT DriverUserID_FK FROM app.OrderAssignments WHERE OrderAssignmentID = ${second.id}`), 'the driver is unchanged').toBe(driverId);
