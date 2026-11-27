@@ -285,12 +285,12 @@ test.describe(
       });
       expect(edited.status(), await edited.text()).toBe(200);
       await expect
-        .poll(() => driversTicket(work.ticketUuid, `ISNULL(HostDecision, '-'), HostTicketQuantity, HostTicketNumber, CAST(HostBillingLocked AS int)`), {
+        .poll(() => driversTicket(work.ticketUuid, `ISNULL(HostDecision, '-'), TicketQuantity, TicketNumber, CAST(HostBillingLocked AS int)`), {
           message: 'TicketAdjusted reaches DRIVERS',
           ...QUEUE,
         })
         .toBe(`adjusted|11.25|${submitted.ticketNumber}|0`);
-      expect(driversTicket(work.ticketUuid, 'TicketNumber, TicketQuantity'), 'the Driver values are untouched (DH19)').toBe(`${submitted.ticketNumber}|12.50`);
+      expect(driversTicket(work.ticketUuid, 'vendorTicketNumber, vendorTicketQuantity'), 'the Driver values are untouched in vendorTicket* (DH19)').toBe(`${submitted.ticketNumber}|12.50`);
     });
 
     test('HCS-06 removing the Driver ticket as a duplicate sends TicketRejected: DRIVERS keeps the ticket and marks the Host decision rejected', async () => {

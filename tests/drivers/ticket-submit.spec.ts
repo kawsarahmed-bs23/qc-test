@@ -393,13 +393,20 @@ test.describe(
       expect(driversTicket(work.ticketUuid, 'CONVERT(varchar(30), Updated, 126)'), 'the ticket row is untouched').toBe(updated);
     });
 
-    test('TSUB-08 reprocess re-queues the photo (Status 10) and the reader finishes it again', async () => {
+    test('TSUB-08 reprocess re-queues only a failed read (Status 30 to 10, QC-1100 Host rule); a read ticket is answered unchanged', async () => {
       expect(work.ticketUuid, 'TSUB-05 uploaded a photo').not.toBe('');
       test.setTimeout(120_000);
+      const failed = Number(driversTicket(work.ticketUuid, 'Status')) === 30;
       const reprocessed = await driver.reprocess(work.tripUuid);
       expect(reprocessed.status(), await reprocessed.text()).toBe(202);
-      expect(((await reprocessed.json()).data as { ticketStatus: string }).ticketStatus, 'answers uploaded').toBe('uploaded');
-      await expect.poll(() => readDone(work.ticketUuid), { message: 'the reader finishes again', ...OCR }).toBe(true);
+      const answered = ((await reprocessed.json()).data as { ticketStatus: string }).ticketStatus;
+      if (failed) {
+        expect(answered, 'a failed read is queued again').toBe('uploaded');
+      } else {
+        expect(isReplayed(reprocessed), 'a read ticket is not read again').toBe(true);
+        expect(answered, 'and stays processed').toBe('processed');
+      }
+      await expect.poll(() => readDone(work.ticketUuid), { message: 'the reader is done', ...OCR }).toBe(true);
     });
 
     test('TSUB-23 a different photo before Submit gets a new key under the same ticket and the first file stays in S3; the first photo again gets a third key', async ({
@@ -408,6 +415,14 @@ test.describe(
       expect(work.firstKey, 'TSUB-05 uploaded a photo').not.toBe('');
       test.setTimeout(240_000);
       await expect.poll(() => readDone(work.ticketUuid), { message: 'the reader is idle before the new photo', ...OCR }).toBe(true);
+
+      if (Number(driversTicket(work.ticketUuid, 'Status')) !== 30) {
+        const refused = await driver.upload(work.tripUuid, ticketFile(otherPhoto));
+        expect(refused.status(), await refused.text()).toBe(409);
+        expect(await refused.text(), 'the Host rule: a read ticket keeps its photo').toContain('already has a scale ticket');
+        expect(driversTicket(work.ticketUuid, 'ImageKey'), 'the photo is unchanged').toBe(work.firstKey);
+        return;
+      }
 
       const replaced = await driver.upload(work.tripUuid, ticketFile(otherPhoto));
       expect(replaced.status(), await replaced.text()).toBe(202);
@@ -460,9 +475,9 @@ test.describe(
       expect(
         driversTicket(
           work.ticketUuid,
-          `CASE WHEN SubmittedAt IS NULL THEN 'open' ELSE 'submitted' END, TicketNumber, CONVERT(varchar(10), TicketDate, 23), TicketQuantity`,
+          `CASE WHEN SubmittedAt IS NULL THEN 'open' ELSE 'submitted' END, vendorTicketNumber, CONVERT(varchar(10), vendorTicketDate, 23), vendorTicketQuantity`,
         ),
-        'DRIVERS keeps the driver values',
+        'DRIVERS keeps the driver values in vendorTicket*',
       ).toBe(`submitted|${submitted.ticketNumber}|${submitted.ticketDate}|12.50`);
       expect([40, 50], 'Status 40 (or already received)').toContain(Number(driversTicket(work.ticketUuid, 'Status')));
       expect(
@@ -475,7 +490,7 @@ test.describe(
         .poll(
           () =>
             hostValue(
-              `SELECT CONCAT(COUNT(*), '|', MIN(TicketNumber), '|', MIN(CONVERT(varchar(20), CAST(TicketQuantity AS decimal(18, 2)))), '|', MIN(TripID_FK), '|', MIN(CASE WHEN ISNULL(ImagePath, '') = '' THEN 'no-image' ELSE 'image' END)) FROM app.Tickets WHERE TicketUUID = '${work.ticketUuid}' AND Active = 1`,
+              `SELECT CONCAT(COUNT(*), '|', MIN(vendorTicketNumber), '|', MIN(CONVERT(varchar(20), CAST(vendorTicketQuantity AS decimal(18, 2)))), '|', MIN(TripID_FK), '|', MIN(CASE WHEN ISNULL(ImagePath, '') = '' THEN 'no-image' ELSE 'image' END)) FROM app.Tickets WHERE TicketUUID = '${work.ticketUuid}' AND Active = 1`,
             ),
           { message: 'TicketSubmitted makes one host ticket with the DRIVERS TicketUUID, the values, the trip and the copied image', ...RECEIVED },
         )
@@ -486,6 +501,36 @@ test.describe(
           ...RECEIVED,
         })
         .toBe('50|received');
+    });
+
+    test('TSUB-24 the host and DRIVERS hold the same ticket columns: ai*, aiResponseObject, vendorTicket*, TicketNumber/Date/Quantity, TicketStatusID_FK, Invoiced and Billed (QC-1100)', async () => {
+      expect(work.ticketUuid, 'TSUB-05 uploaded a photo').not.toBe('');
+      const columns = [
+        'ISNULL(aiTicketNumber, N\'-\')',
+        "ISNULL(CONVERT(varchar(10), aiTicketDate, 23), '-')",
+        "ISNULL(CONVERT(varchar(20), CAST(aiTicketQuantity AS decimal(18, 2))), '-')",
+        'ISNULL(aiTruckNumber, N\'-\')',
+        "ISNULL(CONVERT(varchar(5), aiTicketTime, 108), '-')",
+        "ISNULL(CONVERT(varchar(64), HASHBYTES('SHA2_256', CAST(aiResponseObject AS varchar(max))), 2), '-')",
+        'ISNULL(vendorTicketNumber, N\'-\')',
+        "ISNULL(CONVERT(varchar(10), vendorTicketDate, 23), '-')",
+        "ISNULL(CONVERT(varchar(20), CAST(vendorTicketQuantity AS decimal(18, 2))), '-')",
+        'ISNULL(TicketNumber, N\'\')',
+        "ISNULL(CONVERT(varchar(10), TicketDate, 23), '-')",
+        "CONVERT(varchar(20), CAST(ISNULL(TicketQuantity, 0) AS decimal(18, 2)))",
+        'TicketStatusID_FK',
+        'Invoiced',
+        'Billed',
+      ].join(', ');
+      const query = `SELECT CONCAT_WS('|', ${columns}) FROM app.Tickets WHERE TicketUUID = '${work.ticketUuid}' AND Active = 1`;
+      await expect.poll(() => hostValue(query), { message: 'the host has the ticket', ...RECEIVED }).not.toBeNull();
+      const onHost = hostValue(query);
+      test.info().annotations.push({ type: 'host-ticket', description: onHost ?? '-' });
+      expect(driversValue(query), 'DRIVERS holds exactly the host values').toBe(onHost);
+      expect(
+        driversTicket(work.ticketUuid, "CASE WHEN aiResponseObject IS NULL OR aiResponseObject LIKE '{_Error_:%' OR aiTicketNumber IS NOT NULL THEN 'host-shape' ELSE 'other' END"),
+        'a read fills ai*, a failed read is {"Error":...}',
+      ).toBe('host-shape');
     });
 
     test('TSUB-11 Submit again with the same values replays, with other values is 409, and a new photo after Submit is 409', async () => {
