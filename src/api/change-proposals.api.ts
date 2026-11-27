@@ -116,6 +116,16 @@ export class ChangeProposalsApi extends NotifyBySmsApi {
   answerChange(messageId: number, answer: ChangeAnswerValue | string, comment?: string): Promise<HostAnswer<CommsMessage>> {
     return this.put(`/api/dispatch/messages/${messageId}/change`, { answer, comment: comment ?? null });
   }
+
+  /** A text arriving at the Host's Twilio number, posted to the unsigned inbound webhook (local only; 403 when `Twilio:ValidateSignature` is on). */
+  textFromPhone(from: string, body: string): Promise<HostAnswer<unknown>> {
+    return this.postForm('/api/dispatch/messages/inbound', {
+      MessageSid: `SME1009${Date.now()}${Math.floor(Math.random() * 1000)}`,
+      From: from,
+      To: '+15005550006',
+      Body: body,
+    });
+  }
 }
 
 /** QC-933 Drivers API calls the Driver App would make: the pending / all change proposals and the answer to one. */

@@ -128,6 +128,11 @@ export class DispatchContactApi {
     return read(await this.request.post(`${hostApiUrl()}${path}`, { headers: this.headers(), data, ignoreHTTPSErrors: env.ignoreHttpsErrors }));
   }
 
+  /** Posts a form without the bearer token, the way Twilio calls an anonymous webhook. */
+  protected async postForm<T>(path: string, form: Record<string, string>): Promise<HostAnswer<T>> {
+    return read(await this.request.post(`${hostApiUrl()}${path}`, { form, ignoreHTTPSErrors: env.ignoreHttpsErrors }));
+  }
+
   private headers(): Record<string, string> {
     return { Authorization: `Bearer ${this.accessToken}` };
   }

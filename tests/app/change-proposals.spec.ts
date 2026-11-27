@@ -13,6 +13,7 @@ import { env } from '@config/env.config';
 import { isDriversApiReachable } from '@api/password-grant.api';
 import { HostDriversMode } from '@api/sms-routing.api';
 import { ChangeProposalsSession } from '@pages/change-proposals.page';
+import { driversOptOutOf, restoreDriversOptOut, restoreSmsOptOut, smsOptOutOf } from '@pages/reply-page.page';
 import {
   ADMIN_EMAIL,
   BASE,
@@ -424,6 +425,58 @@ test.describe('Change proposals, Host side: editing a linked Driver and answerin
     expect(hostProposals(world.driver.hostUserId), 'no proposal is recorded').toEqual([]);
     expect(hostChangeMessages(world.driver.hostUserId), 'no approval appears in Dispatch Messages').toEqual([]);
     expect((await admin.api.userEdit('manageusers', world.driver.hostUserId)).data).toMatchObject({ phoneNumber: BASE.driverHostPhone });
+  });
+
+  test("CHG-19 a text from a linked Driver's own number matches that Driver although the Host phone differs, and STOP from it is recorded (QC-1009)", async ({
+    driverSettingsApi,
+  }) => {
+    const ownPhone = '+15125550939';
+    driversValue(`UPDATE auth.Users SET PhoneNumber = N'${ownPhone}' WHERE UserUUID = '${world.driver.sub}'`);
+    expect((await driverSettingsApi.saveSettings(world.driver.token, { notifyBySms: true })).status).toBe(200);
+    await expect
+      .poll(() => hostSettingsPhone(world.driver.hostUserId), { message: "the Host keeps the Driver's own number as its copy", ...POLL })
+      .toBe(ownPhone);
+    expect(digits(hostUser(world.driver.hostUserId).phone), 'the Host phone stays the Host value').toBe(BASE.driverHostPhone);
+
+    const reply = `E2E-QC1009-REPLY-${Date.now()}`;
+    const replied = await admin.api.textFromPhone(ownPhone, reply);
+    test.skip(replied.status === 403, 'The local API validates Twilio signatures (Twilio:ValidateSignature), so an unsigned webhook is refused.');
+    expect(replied.status, replied.text).toBe(204);
+    expect(hostValue(`SELECT DriverUserID_FK FROM app.Messages WHERE MessageBody = ${sqlText(reply)}`), 'the reply lands with the Driver').toBe(
+      world.driver.hostUserId,
+    );
+
+    const optOutBefore = smsOptOutOf(ownPhone);
+    const driversBefore = driversOptOutOf(world.driver.sub, world.hostUuid);
+    try {
+      const stop = await admin.api.textFromPhone(ownPhone, 'STOP');
+      expect(stop.status, stop.text).toBe(204);
+      expect(smsOptOutOf(ownPhone).optedOut, "STOP from the Driver's own number is recorded").toBe(1);
+      expect(
+        hostValue(`SELECT TOP 1 DriverUserID_FK FROM app.Messages WHERE PhoneNumber = N'${ownPhone}' AND MessageBody = N'STOP' ORDER BY MessageID DESC`),
+        'and lands with the Driver',
+      ).toBe(world.driver.hostUserId);
+      await expect.poll(() => driversOptOutOf(world.driver.sub, world.hostUuid).smsOptedOut, { message: 'SmsOptOutChanged reaches DRIVERS', ...POLL }).toBe(1);
+    } finally {
+      await waitForQueues();
+      restoreSmsOptOut(ownPhone, optOutBefore);
+      restoreDriversOptOut(world.driver.sub, world.hostUuid, driversBefore);
+    }
+  });
+
+  test('CHG-20 a pending proposal from before QC-1009 that still carries a phone and Text messages shows only the name on Edit User (QC-1009)', async () => {
+    hostValue(
+      `INSERT app.ChangeProposals (ChangeUUID, Kind, Direction, Status, UserID, DriverUserUUID, FirstName, LastName, MobilePhone, NotifyBySms, ChangedBy, ChangedByName, ChangedAt, Created, Updated, Active, CreatedBy, UpdatedBy)
+       VALUES (NEWID(), ${KIND.userDetails}, ${DIRECTION.sent}, ${STATUS.pending}, N'${world.driver.hostUserId}', '${world.driver.sub}', N'Older', N'${BASE.driverLastName}', N'+15125550944', 1, 'host', N'E2E', GETUTCDATE(), GETUTCDATE(), GETUTCDATE(), 1, N'E2E', N'E2E')`,
+    );
+    expect((await admin.api.userEdit('manageusers', world.driver.hostUserId)).data).toMatchObject({
+      PendingChanges: [`Waiting for the Driver to approve: name Older ${BASE.driverLastName}.`],
+    });
+
+    hostValue(`UPDATE app.ChangeProposals SET FirstName = NULL, LastName = NULL WHERE UserID = N'${world.driver.hostUserId}'`);
+    expect((await admin.api.userEdit('manageusers', world.driver.hostUserId)).data, 'a phone and Text messages alone show no note').toMatchObject({
+      PendingChanges: [],
+    });
   });
 });
 
