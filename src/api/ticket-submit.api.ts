@@ -81,9 +81,9 @@ export class DriverTicketSubmitApi extends DriverEventsApi {
     return (await response.json()).data as TicketTrip;
   }
 
-  gpsPings(pings: GpsPing[], deviceId: string, hostUuid?: string): Promise<APIResponse> {
+  gpsPings(pings: GpsPing[], deviceId: string, hostUuid?: string, key?: string): Promise<APIResponse> {
     return this.http.post(`${baseUrl()}/driver-location/pings`, {
-      headers: { ...this.auth(), 'X-Device-Id': deviceId },
+      headers: { ...this.auth(), 'X-Device-Id': deviceId, ...(key ? { 'Idempotency-Key': key } : {}) },
       data: hostUuid === undefined ? { pings } : { HostUUID: hostUuid, pings },
     });
   }

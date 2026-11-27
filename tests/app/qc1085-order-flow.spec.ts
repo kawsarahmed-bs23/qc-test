@@ -158,14 +158,17 @@ test.describe(`QC-1085 dev order flow (Host to Drivers API and back)`, { tag: ['
     expect(trips, 'one trip only after the replay').toHaveLength(1);
   });
 
-  test('7. Driver: GPS ping', async () => {
-    const response = await tickets.gpsPings(
-      [{ TripGpsUUID: run.gps, lat: 30.2672, lng: -97.7431, isMoving: true, recordedAt: new Date().toISOString(), accuracyMeters: 10, tripUuid: run.tripUuid, orderAssignmentUuid: run.assignmentUuid }],
-      `${PREFIX}-device`,
-    );
+  test('7. Driver: GPS ping (replayed) - counted once', async () => {
+    const pings = [{ TripGpsUUID: run.gps, lat: 30.2672, lng: -97.7431, isMoving: true, recordedAt: new Date().toISOString(), accuracyMeters: 10, tripUuid: run.tripUuid, orderAssignmentUuid: run.assignmentUuid }];
+    const response = await tickets.gpsPings(pings, `${PREFIX}-device`, undefined, keys.ping);
     expect(response.status(), await response.text()).toBe(202);
-    expect((await response.json()).data.accepted).toBe(1);
-    // Known gap found in the first run: the pings route does not read Idempotency-Key (no Idempotent-Replayed header).
+    expect(isReplayed(response), 'first send is not a replay').toBe(false);
+    expect((await response.json()).data).toMatchObject({ accepted: 1, duplicates: 0 });
+
+    const replay = await tickets.gpsPings(pings, `${PREFIX}-device`, undefined, keys.ping);
+    expect(replay.status(), await replay.text()).toBe(202);
+    expect(isReplayed(replay), 'ping replay is flagged Idempotent-Replayed').toBe(true);
+    expect((await replay.json()).data, 'the replayed point counts as a duplicate, not a new row').toMatchObject({ accepted: 0, duplicates: 1 });
   });
 
   test('8. Driver: upload the photo and submit the ticket (replayed) - Host shows one ticket', async ({ page }) => {
